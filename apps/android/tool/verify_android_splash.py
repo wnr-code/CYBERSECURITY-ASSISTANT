@@ -130,7 +130,11 @@ def main() -> int:
         if arguments.apk:
             verify_apk(arguments.apk)
     except (OSError, RuntimeError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
-        print(f"Android splash verification failed: {error}", file=sys.stderr)
+        message = f"Android splash verification failed: {error}"
+        print(message, file=sys.stderr)
+        if os.environ.get("GITHUB_ACTIONS"):
+            escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error title=Native splash APK verification::{escaped}")
         return 1
     return 0
 
