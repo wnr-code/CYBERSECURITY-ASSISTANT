@@ -20,7 +20,7 @@ The provider details UI can store user-entered API keys or scoped tokens through
 
 ## Run when Flutter is installed
 
-This app currently requires Flutter >=3.47.0 and Dart >=3.13 because it uses the standalone `material_ui` package. The repository contains Dart/Flutter source and package metadata but no generated Android Gradle wrapper/platform project. Flutter/Dart/Java/Android SDK tools are not installed in the current coding environment. GitHub Actions is configured to generate the Android scaffold, apply and test the native hardening configuration, resolve packages, run `flutter analyze` and `flutter test`, build a debug APK, and publish the APK plus generated lockfile as a short-lived artifact. The workflow has not run yet. From this directory on a machine with Flutter and Android SDK installed, generate the platform scaffold, apply the hardening script, then run:
+This app currently requires Flutter >=3.47.0 and Dart >=3.13 because it uses the standalone `material_ui` package. The repository contains Dart/Flutter source and package metadata but no committed/generated Android Gradle wrapper or platform project; the coding environment has no Flutter, Dart, Java, Android SDK, ADB, or emulator toolchain. GitHub Actions generates the Android scaffold temporarily and runs the hardening, dependency, analyzer, test, APK build, and artifact-upload steps. CI passed on commit `77f54f5`; this confirms runner build/test only, not a device or emulator run. From this directory on a machine with Flutter and Android SDK installed, generate the platform scaffold, apply the hardening script, then run:
 
 ```sh
 flutter create --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
@@ -33,4 +33,4 @@ flutter build apk --debug
 flutter run
 ```
 
-The generated Android app must include the Android `INTERNET` permission for network checks. Apply the [Android hardening checklist](../../docs/android-hardening.md), including minimum-SDK, backup, and cleartext settings, before building or connecting credentials. Review generated/native files before committing them.
+The CI verification on commit `77f54f5` generated a temporary Android scaffold, applied the [Android hardening checklist](../../docs/android-hardening.md), resolved dependencies, passed `flutter analyze` and `flutter test`, built a debug APK, and uploaded the APK plus generated lockfile. The artifact is available from [Actions run 45242263160](https://github.com/wnr-code/CYBERSECURITY-ASSISTANT/actions/runs/45242263160) for seven days. The generated native project and lockfile are not committed. No emulator or physical-device test has been performed. Follow the [manual device test guide](../../docs/android-device-testing.md) before treating the MVP as device-verified or entering real credentials.

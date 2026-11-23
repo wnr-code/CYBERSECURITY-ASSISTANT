@@ -1,63 +1,44 @@
 # Static Security Audit — Flutter Foundation
 
 - **Review date:** 2026-11-23
-- **Review type:** Source-level static review of the current prototype
-- **Status:** Source findings have fixes; Flutter/Android verification is still in progress
-- **Not a certification:** No successful Dart/Flutter test run, Android build, device test, dynamic analysis, or penetration test has completed. Eight Python unit tests for the hardening/analyzer helpers passed locally.
+- **Review type:** Source-level review plus GitHub Actions compile/test verification
+- **Current verified commit:** `77f54f5f89194b8aea2349810ce125d02727fb17`
+- **Status:** CI checks and debug build passed; Android device/emulator verification is still pending
+- **Not a certification:** No physical-device run, emulator run, dynamic analysis, penetration test, or production release signing has been completed.
 
 ## Scope
 
-Reviewed the Android Flutter foundation, including target policy and network adapters, tool orchestration, provider credential handling, local result persistence and export, GitHub release metadata parsing, the Connection Manager and provider dialogs, CI workflow, and security/setup documentation.
+Reviewed the Flutter Android foundation, target policy/network adapters, orchestration, provider credential handling, local result persistence/export, GitHub release metadata parsing, Android hardening configurator, CI workflow, and security/setup documentation.
 
-## Findings addressed in this review
+## Controls and residual limitations
 
-### Authorization must track the exact endpoint or target
+- Network operations use a registry-only orchestrator, explicit self-attestation, narrow HTTPS-origin validation, and bounded timeouts. Authorization confirmation is a UX gate, not proof of legal authorization.
+- DNS uses the device resolver; TLS inspects one connection on port 443; the HTTP header check makes one HTTPS GET to `/`, does not follow redirects, and does not read/display the response body.
+- Header and response-value secret redaction is heuristic and not comprehensive. Review exported reports before sharing.
+- Results are session-only unless a user explicitly saves an individual result to app-private SQLite. The SQLite database is not encrypted or synced. Deletion and persistence still need device-level verification.
+- `flutter_secure_storage` UI/wrapper exists, but the Android Keystore implementation has not been runtime-tested. Do not enter real credentials until device-level read/write/delete, restore/backup, and key invalidation behavior is checked. Provider entries are guidance only; no provider-authenticated requests are implemented.
+- GitHub release handling reads allowlisted release metadata only; it does not download, verify, install, or execute assets.
+- Android debug APK is debug-signed. No production keystore or release signing is configured.
 
-**Risk:** A previously accepted self-attestation could remain selected after editing a target, making a later request appear authorized for a different destination.
+## CI verification
 
-**Change:** Editing a target or endpoint clears the authorization checkbox and previous outcome. Inputs are disabled while a network check is in progress. Connection checks require authorization before constructing the HTTP client. Widget coverage was added for target-change invalidation; it has not been run.
+GitHub Actions run [45242263160](https://github.com/wnr-code/CYBERSECURITY-ASSISTANT/actions/runs/45242263160) on commit `77f54f5` completed successfully. Its job passed Android scaffold generation, native hardening tests/application, Flutter dependency resolution, `flutter analyze`, `flutter test`, debug APK build, and artifact upload. The artifact `cybersecurity-assistant-android-verification` was available and not expired when checked; GitHub reported the ZIP artifact size as 90,401,423 bytes. That is the archive size, not the individual APK size. The sandbox could not download the archive because its GitHub redirect target is outside the allowed outbound host list, so the APK's inner size/hash has not been measured here. The workflow retains artifacts for seven days.
 
-### Malformed URL ports must fail closed
+The Python tooling suite was run locally and passed 10 tests. The coding environment has no Flutter/Dart/ADB/emulator executables; therefore there has been no emulator or physical-device testing. In particular, APK installation, exact merged manifest/target SDK/ABI verification, actual Android network behavior, SQLite lifecycle persistence/deletion, and Keystore behavior remain unverified. Refer to [Android Device Testing & MVP Stabilization](android-device-testing.md) for the manual checklist and explicit outstanding cases.
 
-**Risk:** URI parsing and port access may reject malformed ports at different stages. An uncaught format error could escape the UI instead of producing a validation message.
+## Android configuration verified in CI
 
-**Change:** Tool-target port/host extraction now handles `FormatException`; the Connection Manager validates HTTPS authority, host, credentials, query/fragment, and numeric port range before networking. Malformed-port cases were added to tests; they have not been run.
+`apps/android/tool/configure_android.py` is exercised against generated Gradle/manifest fixtures and applied to the CI scaffold. It enforces minimum SDK 23, adds the normal `android.permission.INTERNET` permission, disables cleartext traffic and backup, and writes backup/data-extraction exclusions. These generated native files are temporary runner outputs and are not committed. Exact `targetSdk` and the final merged manifest should be inspected from the downloaded APK/build before release. No runtime permission should be required for `INTERNET`; verify there are no unexpected permissions on the installed package.
 
-### Response-header values can carry credentials
+## Prior issues resolved before this verification
 
-**Risk:** Redacting only `Set-Cookie` and authorization header names can still expose secrets in redirect URLs, custom headers, bearer values, JWT-like values, or URL user information.
+- Deprecated Material imports and related analyzer diagnostics were migrated to `material_ui` and current widget APIs.
+- Flutter widget tests were repaired for scroll visibility and target authorization state. The final full CI test suite passed.
+- CI test failure output was made available through bounded GitHub annotations to diagnose earlier failures.
 
-**Change:** The HTTP adapter now redacts known sensitive header names and applies heuristic sanitization to common token/query/JWT/basic-auth/userinfo patterns. `Location`, `Content-Location`, and `Refresh` are wholly redacted. Tests cover examples but have not been run. This is not comprehensive secret detection; review reports before sharing.
+## Release/MVP gates still open
 
-### CI and generated local configuration
-
-**Risk:** Mutable action tags and default workflow permissions increase supply-chain exposure; generated local build/signing files may be accidentally committed.
-
-**Change:** CI actions are pinned to commit SHAs with `contents: read` permission. A repository `.gitignore` excludes Flutter/Gradle output, Python caches, machine-local Android configuration, and signing key files, while intentionally not ignoring `pubspec.lock`. The CI workflow generates a temporary Android scaffold, applies the hardening script, runs tests/analyzer, builds a debug APK, and uploads the APK plus generated lockfile for review. That workflow has not run yet.
-
-## CI verification attempts
-
-The first GitHub Actions run on commit `f32fa91` generated the Android scaffold, applied the native configuration, and resolved dependencies successfully. `flutter analyze` failed, so Flutter tests and APK build were skipped. GitHub check annotations identified deprecated `package:flutter/material.dart` imports in Flutter 3.47+, deprecated `DropdownButtonFormField.value`, and a missing `const`; these were corrected by migrating to `material_ui`, using `initialValue`, and adding `const`. A second CI run on commit `cc3f255` passed scaffold generation, hardening configuration, dependency resolution, and `flutter analyze`, but reported 28 Flutter tests passed and 3 failed; APK build was skipped. Detailed test output could not be retrieved from the current sandbox because GitHub's log archive host is outside its network allowlist. The test wrapper now exposes the captured failure output as a check annotation for the next run. Do not treat either run as a successful test/build.
-
-## Residual risks and release blockers
-
-- Flutter/Dart are unavailable here. `flutter pub get`, `flutter analyze`, `flutter test`, Dart formatting, and Android compilation have **not** run. CI has not run either.
-- There is no generated Android Gradle project in this workspace. The CI job is configured to generate and harden a runner-local scaffold; until that job succeeds, no native manifest/Gradle build has been verified or committed.
-- Android Keystore behavior, secure-storage backup/restore/key invalidation, and minimum-SDK behavior are unverified. Do not enter production credentials.
-- SQLite history is app-private but unencrypted. Save is opt-in and the UI warns about the limitation.
-- Provider entries remain guides; credentials are stored locally only and are not used by authenticated connectors.
-- GitHub release handling is metadata-only. No asset is downloaded, digest-verified, installed, or executed. A publisher digest is not a signature.
-- External tool licenses and Android/device compatibility have not been independently verified.
-- No `pubspec.lock` exists yet. Once Flutter is available, resolve dependencies, review the lockfile, and commit it for reproducible app builds before treating CI as repeatable.
-
-## Push guidance
-
-**Not yet ready for a verification-backed push.** First run from `apps/android` on a Flutter-equipped environment:
-
-```sh
-flutter pub get
-flutter analyze
-flutter test
-```
-
-Fix all failures, review the generated `pubspec.lock`, and confirm CI passes on this branch. This is the minimum gate for pushing the code changes. Before any release or use of real credentials, also generate the Android project, apply `docs/android-hardening.md`, build a release APK, and verify secure storage on supported Android devices/emulators. A passing Dart test suite alone does not validate Android Keystore or backup behavior.
+1. Download the artifact from GitHub, record the APK's exact size and SHA-256, and inspect package metadata/merged permissions/target SDK/ABIs.
+2. Complete the manual device checklist on at least one real Android device; use an emulator/API level as a second environment when available.
+3. Verify network-loss errors/timeouts, target consent/validation, SQLite save/load/restart/delete, and secure storage behavior on Android.
+4. Do not use production credentials or distribute as a release until device checks pass and user-controlled release signing is configured.

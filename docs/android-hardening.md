@@ -1,6 +1,6 @@
 # Android hardening checklist (apply after native scaffold generation)
 
-The workspace currently has Flutter source but no generated `apps/android/android` project. `apps/android/tool/configure_android.py` applies the baseline below after `flutter create` (API 23 minimum, INTERNET permission, cleartext disabled, and backup disabled/excluded). GitHub Actions is configured to generate a temporary scaffold and apply the script. Neither the native output nor its Gradle build has been verified yet; this file remains the review checklist, not an applied local manifest.
+The repository contains Flutter source but no committed `apps/android/android` project. `apps/android/tool/configure_android.py` applies the baseline below after `flutter create` (API 23 minimum, INTERNET permission, cleartext disabled, and backup disabled/excluded). GitHub Actions generated a temporary scaffold, applied and tested this configuration, and successfully built a debug APK on commit `77f54f5`. The generated native files are not retained in the repository. CI build success does not verify installation, runtime permissions, Keystore behavior, or app operation on a device; use the [Android device test guide](android-device-testing.md) for those checks.
 
 ## Required before connecting credentials or releasing an APK
 
