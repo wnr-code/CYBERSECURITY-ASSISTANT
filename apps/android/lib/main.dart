@@ -710,7 +710,15 @@ class _LocalFirstHero extends StatelessWidget {
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.check_circle_outline, size: 16, color: _mint),
                     const SizedBox(width: 6),
-                    Text(context.tr('Local mode · Works offline'), style: const TextStyle(color: _mint, fontSize: 11, fontWeight: FontWeight.w700)),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .6),
+                      child: Text(
+                        context.tr('Local mode · Works offline'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _mint, fontSize: 11, fontWeight: FontWeight.w700),
+                      ),
+                    ),
                   ]),
                 ),
               ]),
