@@ -2,7 +2,8 @@
 
 This directory contains the first Flutter app foundation for Cybersecurity Assistant:
 
-- Dashboard, standalone-mode indicator, and primary navigation.
+- Animated local-history startup splash; dashboard and standalone-mode indicator.
+- Five stable primary destinations with borderless transparent bottom navigation on compact layouts, a centered secondary AI shortcut, and a NavigationRail on wide layouts. Reports remains a primary destination; the AI screen is still an unconnected placeholder.
 - Searchable, category-filtered Tool Registry with version, compatibility, license-status, dependency, and permission metadata.
 - Allowlisted GitHub latest-release metadata viewer with constrained URL validation and publisher digest display; it does not download or execute assets.
 - Executable P0 DNS, TLS certificate, and HTTP response-header adapters; common cookie, authentication, token, secret, and API-key-like response headers are redacted before results are shown or exported.
@@ -20,7 +21,7 @@ The provider details UI can store user-entered API keys or scoped tokens through
 
 ## Run when Flutter is installed
 
-This app currently requires Flutter >=3.47.0 and Dart >=3.13 because it uses the standalone `material_ui` package. The repository contains Dart/Flutter source and package metadata but no committed/generated Android Gradle wrapper or platform project; the coding environment has no Flutter, Dart, Java, Android SDK, ADB, or emulator toolchain. GitHub Actions generates the Android scaffold temporarily and runs the hardening, dependency, analyzer, test, APK build, and artifact-upload steps. CI passed on commit `77f54f5`; this confirms runner build/test only, not a device or emulator run. From this directory on a machine with Flutter and Android SDK installed, generate the platform scaffold, apply the hardening script, then run:
+This app currently requires Flutter >=3.47.0 and Dart >=3.13 because it uses the standalone `material_ui` package. The repository contains Dart/Flutter source and package metadata but no committed/generated Android Gradle wrapper or platform project. This coding environment does not have a local Flutter/Android toolchain; GitHub Actions generates the Android scaffold temporarily and runs hardening, dependency resolution, analyzer, tests, APK build, and artifact upload. From this directory on a machine with Flutter and Android SDK installed, generate the platform scaffold, apply the hardening script, then run:
 
 ```sh
 flutter create --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
@@ -33,4 +34,4 @@ flutter build apk --debug
 flutter run
 ```
 
-The CI verification on commit `77f54f5` generated a temporary Android scaffold, applied the [Android hardening checklist](../../docs/android-hardening.md), resolved dependencies, passed `flutter analyze` and `flutter test`, built a debug APK, and uploaded the APK plus generated lockfile. The artifact is available from [Actions run 45242263160](https://github.com/wnr-code/CYBERSECURITY-ASSISTANT/actions/runs/45242263160) for seven days. The generated native project and lockfile are not committed. No emulator or physical-device test has been performed. Follow the [manual device test guide](../../docs/android-device-testing.md) before treating the MVP as device-verified or entering real credentials.
+The latest application-code CI verification before this documentation-only update passed analysis, Flutter tests, and debug APK build on [Actions run 45273085060](https://github.com/wnr-code/CYBERSECURITY-ASSISTANT/actions/runs/45273085060). The generated native project and lockfile are not committed. No emulator or physical-device test has been performed. Follow the [manual device test guide](../../docs/android-device-testing.md) before treating the MVP as device-verified or entering real credentials. AI/provider connections, the Embedded Runtime, internal package management, and a bundled Termux environment are not implemented; see the [AI Engine blueprint](../../docs/ai-cybersecurity-expert-engine.md) and [Embedded Runtime blueprint](../../docs/embedded-runtime-implementation.md).

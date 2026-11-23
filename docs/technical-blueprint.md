@@ -1,20 +1,21 @@
 # Cybersecurity Assistant — Final Technical Blueprint
 
-- **Status:** Baseline architecture and roadmap
-- **Platform:** Android
-- **Product description:** AI-powered Android cybersecurity platform
-- **Architecture principles:** Local-first, hybrid AI, BYOI (Bring Your Own Infrastructure), BYOK (Bring Your Own Key), and a GitHub-based tool ecosystem.
+- **Status:** Product/architecture blueprint; AI Cybersecurity Expert Engine and Embedded Runtime remain planned, not implemented.
+- **Platform:** Android-first
+- **Product description:** Local-first Android cybersecurity assistant with a planned AI Cybersecurity Expert Engine.
+- **Architecture principles:** Local-first, hybrid AI, BYOI (Bring Your Own Infrastructure), BYOK (Bring Your Own Key), a user-controlled tool ecosystem, and no mandatory developer backend.
 
-> **Implementation note:** The repository now includes an initial Flutter UI, an in-app registry for four P0 entries, a registry-only tool orchestration boundary, guarded DNS/TLS/HTTP-header adapters with a self-attestation audit marker, session-only result analysis/export plus opt-in SQLite history, a namespaced secure-credential wrapper and provider-details UI for local credential entry/status/deletion (not wired to connectors; Android runtime behavior is unverified), an HTTPS endpoint reachability prototype, a guide-only provider catalog, an allowlisted GitHub release-metadata viewer, and initial tests. These are an early foundation, not a complete or release-ready implementation. See [`apps/android/README.md`](../apps/android/README.md) for current limitations and setup.
+> **Implementation note:** The repository contains a Flutter UI with splash, dashboard, primary navigation and a secondary Assistant screen; an in-app registry for four P0 entries; a registry-ID-only tool orchestration boundary; guarded DNS/TLS/HTTP-header adapters with a self-attestation audit marker; result analysis/export and opt-in SQLite history; a namespaced secure-credential wrapper and provider-details UI (not wired to provider connectors; Android runtime behavior is unverified); an HTTPS endpoint reachability prototype; a guide-only provider catalog; an allowlisted GitHub release-metadata viewer; and tests. The Assistant is a UI placeholder: no AI model/provider, knowledge base, AI reasoning engine, AI router, internal terminal/runtime, or embedded package manager is implemented. These are early foundations, not a complete or release-ready product. See [`apps/android/README.md`](../apps/android/README.md), [AI Cybersecurity Expert Engine](ai-cybersecurity-expert-engine.md), and [Embedded Runtime Blueprint](embedded-runtime-implementation.md) for details.
 
 ## 1. Product concept
 
-Cybersecurity Assistant is an Android application for discovering, managing, and safely using cybersecurity tools with AI assistance. It is composed of four major parts:
+Cybersecurity Assistant is an Android application for discovering, managing, and safely using cybersecurity tools. It is planned around five cooperating parts:
 
 1. **Android application** — user interface and control center.
 2. **Cybersecurity Tool Engine** — registry, policy checks, adapters, and execution of compatible tools.
-3. **AI Assistant** — tool discovery, parameter guidance, result interpretation, and reporting.
-4. **User-owned cloud infrastructure** — optional services configured and controlled by each user.
+3. **AI Cybersecurity Expert Engine (planned)** — cybersecurity reasoning, attributable knowledge retrieval, guarded tool planning, evidence analysis, remediation drafts, and report intelligence. See the [dedicated AI architecture](ai-cybersecurity-expert-engine.md). It is not implemented by the current Assistant UI.
+4. **Cybersecurity Knowledge and Result Services** — versioned security references, normalized local findings, provenance, and report contracts shared with the AI and tools (planned or partial as marked in the AI ledger).
+5. **User-owned cloud infrastructure** — optional services configured and controlled by each user; it is not a mandatory developer backend.
 
 The project provides the application, engine, integration framework, catalog metadata, documentation, and infrastructure templates. Users provide any external accounts, domains, API keys, tokens, storage, and services they choose to connect. The application must not depend on a mandatory developer-operated backend.
 
@@ -75,12 +76,20 @@ The application should provide configuration guidance and templates without requ
 
 ## 5. System architecture and data flow
 
-Primary tool flow:
+Guarded AI-assisted tool flow (all AI functions are planned):
 
 ```text
-GitHub sources → Tool Catalog → Tool Registry → Policy Engine
-              → Android Execution Engine → Local Results → AI Analysis
+User + authorized scope
+  → Assistant UI → AI Cybersecurity Expert Engine
+  → Knowledge Base / Tool Registry (read-only lookup)
+  → Policy Engine (scope, parameters, compatibility, consent, limits)
+  → Tool Orchestrator → Local Execution Engine / approved adapter
+  → Evidence + Result Analyzer + SQLite
+  → AI evidence interpretation → Remediation / Report draft
+  → user review → optional export or explicitly approved sharing
 ```
+
+The model proposes, but never authorizes or executes. No free-form shell or policy bypass is allowed. The full module boundary, evidence model, data-sharing consent, and phased plan are specified in the [AI Engine blueprint](ai-cybersecurity-expert-engine.md).
 
 Optional user-owned services:
 
@@ -88,7 +97,7 @@ Optional user-owned services:
 Android App ↔ User-configured backend ↔ User-configured database/storage
 ```
 
-The AI layer can use an installed local model or a cloud provider configured by the user. The app must remain useful without a cloud account or API key.
+When the planned AI layer is implemented, it may use a compatible local model or a provider configured by the user. Local tools and core application functions must remain useful without a cloud account or API key; local-only mode must never silently fall back to cloud inference.
 
 ## 6. Android Execution Engine
 
@@ -97,8 +106,8 @@ Planned technologies:
 - Flutter for the cross-platform UI.
 - Kotlin for Android-native integration.
 - ARM64 support where available, with runtime and device checks.
-- Optional Termux adapter, subject to explicit setup and compatibility checks.
-- `llama.cpp` as a possible local inference runtime.
+- An app-managed Embedded Runtime is a future option for specifically supported, reviewed Android-compatible tools. Core supported workflows must not require users to install the external Termux app; this does not imply arbitrary Linux tools are compatible. No embedded terminal, shell executor, or package manager is currently implemented. See the [Embedded Runtime Blueprint](embedded-runtime-implementation.md).
+- `llama.cpp` is a possible future local-inference runtime, subject to model license, device/ABI/memory/thermal compatibility, and a separate implementation review.
 
 Prioritized tools:
 
@@ -108,17 +117,15 @@ Prioritized tools:
 
 A binary being built for ARM64 does not make it Android-compatible. Linux, root, Docker, special drivers, or external services may be unavailable. The registry must declare these requirements, and the app must not silently bypass platform restrictions.
 
-## 7. AI Assistant and orchestration
+## 7. AI Cybersecurity Expert Engine and orchestration
 
-The AI Assistant helps users:
+The target is a cybersecurity-focused AI Expert Engine, not a generic chatbot. Its planned capabilities include: curated/versioned cybersecurity knowledge with provenance; security reasoning; evidence-based vulnerability and code analysis; network/infrastructure interpretation; static-first malware assistance; exploit/PoC explanation without automatic execution; timestamped CVE/threat intelligence; remediation drafts; and evidence-grounded reports. It should explain its basis, separate facts from indications and hypotheses, expose limitations, and never claim that a system is secure merely because checks found nothing.
 
-- Search and explain registry tools.
-- Check requirements and compatibility.
-- Propose and validate parameters.
-- Explain risks and request confirmation before execution.
-- Interpret results, group findings, suggest remediation, and prepare reports.
+Future findings use four labels: **Confirmed Finding**, **Potential Finding**, **Informational**, and **False Positive**. Each result separates confidence from risk and carries evidence/source references, an “as of” date for changing intelligence, limitations, impact, and next steps. CVE details must not be invented.
 
-The AI must not execute arbitrary shell commands. All actions must resolve to a registered tool and pass through the Policy Engine with validated parameters. Active checks require an appropriately authorized target and explicit user confirmation. Cloud AI must not receive sensitive evidence without the user's informed consent.
+The model is an untrusted planner/interpreter. It cannot access arbitrary shell commands, raw credentials, or direct tool adapters. Any proposed action must use a registered Tool ID and typed parameters, then pass independently through the Tool Registry, Policy Engine, and Tool Orchestrator. Active checks require the existing authorization/scope controls and explicit user approval. No automatic exploit or malware execution is allowed. Evidence stays local by default; sending code, findings, or other sensitive data to cloud AI requires informed consent.
+
+Planned providers are Gemini, OpenAI, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, and optional local `llama.cpp`/GGUF inference. This is BYOK and local-first hybrid AI: no developer key, mandatory paid provider, or silent cloud fallback. Provider/model managers, smart routing, usage controls, and the full AI engine are not implemented. The current Assistant screen and local rule-based Result Analyzer are not an AI engine. See [AI Cybersecurity Expert Engine — Architecture Blueprint](ai-cybersecurity-expert-engine.md) for full capabilities, source/version model, integration contracts, conceptual module map, security guardrails, current implementation ledger, and staged rollout.
 
 ## 8. Download Manager
 
@@ -145,7 +152,7 @@ The Connection Manager organizes optional integrations by category:
 - Security Intelligence APIs.
 - Custom Services.
 
-Potential connectors include Cloudflare Workers, Firebase, Supabase, R2, S3-compatible storage, WebDAV, OpenAI, Gemini, Anthropic, OpenRouter, VirusTotal, Shodan, and URLScan. Each connection should provide endpoint/configuration fields, authentication setup, a **Test Connection** action, connection status, and provider-specific setup guidance. Tests should use the least-privileged request possible and avoid logging secrets or sending unnecessary data.
+Potential connectors include Cloudflare Workers, Firebase, Supabase, R2, S3-compatible storage, WebDAV, OpenAI, Gemini, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, VirusTotal, Shodan, and URLScan. Each connection should provide endpoint/configuration fields, authentication setup, a **Test Connection** action, connection status, and provider-specific setup guidance. Tests should use the least-privileged request possible and avoid logging secrets or sending unnecessary data. AI providers remain optional BYOK integrations; no developer API key is bundled, no provider is active by default, and cloud data transfer requires explicit consent. The existing catalog is guide-only and stored credentials are not used by provider connectors.
 
 API keys and tokens must be stored encrypted using Android Keystore-backed protection. Do not embed developer credentials or cloud administrator/master keys in the APK. Secret values should be masked in the UI and excluded from logs, reports, crash data, and analytics.
 
@@ -156,7 +163,7 @@ API keys and tokens must be stored encrypted using Android Keystore-backed prote
 - SQLite and local history.
 - Locally available tools and registry.
 - Local reports.
-- Optional local AI after a model is installed.
+- Planned optional local AI after a compatible model/runtime is installed; not implemented.
 - No cloud account or API key required.
 
 ### Connected Mode
@@ -175,10 +182,24 @@ engine/policies
 engine/download_manager
 catalog/tools
 catalog/providers
-ai/local
-ai/cloud
-ai/orchestrator
+ai/core
+ai/reasoning
+ai/knowledge_base
+ai/vulnerability_analysis
+ai/code_security
+ai/network_security
+ai/malware_analysis
+ai/exploit_analysis
+ai/threat_intelligence
+ai/remediation
+ai/report_intelligence
+ai/providers
+ai/local_inference
+ai/cloud_inference
 ai/model_manager
+ai/smart_router
+ai/context_manager
+ai/security_guardrails
 integrations/backend
 integrations/database
 integrations/storage
@@ -212,7 +233,7 @@ Directories should be introduced as their components are implemented; this is a 
 2. **Sprint 2 — Tool Ecosystem:** Tool Registry, metadata catalog, categories, search, compatibility checks, and basic Download Manager.
 3. **Sprint 3 — Android Execution:** Kotlin integration, tool adapters, Policy Engine, and the four P0 local checks.
 4. **Sprint 4 — GitHub Integration:** repository metadata, release checking, download verification, tool updates, and per-tool documentation.
-5. **Sprint 5 — Hybrid AI:** `llama.cpp`, Model Manager, BYOK cloud AI, and AI tool orchestration.
+5. **Sprint 5 — AI foundations (future; gated):** contracts, guardrails, curated Knowledge Base, evidence/source formats, then local reasoning and opt-in BYOK/local providers. AI-assisted tool plans remain policy-mediated. Follow the phased gates in the [AI Engine blueprint](ai-cybersecurity-expert-engine.md); this documentation update does not start implementation.
 6. **Sprint 6 — User-Owned Cloud:** backend, database, and storage connectors; Test Connection; optional synchronization.
 7. **Sprint 7 — Security and Release:** encryption, compatibility and security testing, documentation, and APK release.
 
@@ -224,7 +245,7 @@ Cybersecurity Assistant is more than a directory of tool links. It is an Android
 - **Tool Registry:** source of truth for tool metadata and compatibility.
 - **Download Manager:** controlled retrieval, validation, installation, and updates.
 - **Android Execution Engine:** runs supported tools on-device.
-- **AI Assistant:** helps select, configure, and analyze tools through guarded orchestration.
+- **AI Cybersecurity Expert Engine (planned):** will help select, configure, and interpret tools through guarded, policy-mediated orchestration; the current Assistant is only a UI placeholder.
 - **User-owned cloud:** optional backend, database, storage, synchronization, and coordination.
 - **SQLite:** primary local persistence.
 - **Connection Manager:** configuration and testing of user-owned external services.
