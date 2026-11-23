@@ -218,8 +218,8 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertIn("minSdk = 23", gradle_text)
             self.assertIn("androidx.core:core-splashscreen:1.0.1", gradle_text)
             activity_text = main_activity.read_text(encoding="utf-8")
-            self.assertIn("SplashScreen.installSplashScreen(this)", activity_text)
-            self.assertLess(activity_text.index("SplashScreen.installSplashScreen(this)"), activity_text.index("super.onCreate"))
+            self.assertIn("installSplashScreen()", activity_text)
+            self.assertLess(activity_text.index("installSplashScreen()"), activity_text.index("super.onCreate"))
 
 
 if __name__ == "__main__":

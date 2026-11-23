@@ -281,23 +281,24 @@ def configure_splash_activity(android_root: Path) -> None:
         raise RuntimeError(f"Expected one generated MainActivity source; found {len(candidates)}.")
     activity_file = candidates[0]
     source = activity_file.read_text(encoding="utf-8")
-    install_call = "SplashScreen.installSplashScreen(this)"
-    if install_call in source:
-        if source.index(install_call) > source.find("super.onCreate"):
-            raise RuntimeError("SplashScreen.installSplashScreen(this) must run before super.onCreate().")
+    install_calls = ("installSplashScreen()", "SplashScreen.installSplashScreen(this)")
+    existing_call = next((call for call in install_calls if call in source), None)
+    if existing_call:
+        if source.index(existing_call) > source.find("super.onCreate"):
+            raise RuntimeError("SplashScreen installation must run before super.onCreate().")
         return
 
     if activity_file.suffix == ".kt":
         package_line = re.search(r"(?m)^package\s+[\w.]+\s*$", source)
         if package_line is None:
             raise RuntimeError(f"No Kotlin package declaration found in {activity_file}.")
-        imports = "\nimport android.os.Bundle\nimport androidx.core.splashscreen.SplashScreen\n"
+        imports = "\nimport android.os.Bundle\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen\n"
         source = source[:package_line.end()] + imports + source[package_line.end():]
         declaration = re.compile(r"class\s+MainActivity\s*:\s*FlutterActivity\(\)\s*(?:\{\s*\})?")
         replacement = (
             "class MainActivity : FlutterActivity() {\n"
             "    override fun onCreate(savedInstanceState: Bundle?) {\n"
-            "        SplashScreen.installSplashScreen(this)\n"
+            "        installSplashScreen()\n"
             "        super.onCreate(savedInstanceState)\n"
             "    }\n"
             "}"
