@@ -67,11 +67,12 @@ def verify_sources(android_root: Path) -> None:
     v31_styles = ET.parse(resource / "values-v31/styles.xml").getroot()
     launch_v31 = next((node for node in v31_styles.findall("style") if node.get("name") == "LaunchTheme"), None)
     _require(launch_v31 is not None, "Android 12+ LaunchTheme is missing")
-    _require(launch_v31.get("parent") == "@android:style/Theme.SplashScreen", "Android 12+ LaunchTheme must inherit Theme.SplashScreen")
+    _require(launch_v31.get("parent") == "@android:style/Theme.Light.NoTitleBar", "Android 12+ LaunchTheme must use the platform theme without AndroidX-only dependencies")
     v31_items = {node.get("name"): (node.text or "").strip() for node in launch_v31.findall("item")}
+    _require(v31_items.get("android:windowBackground") == "@drawable/launch_background", "Android 12+ launch fallback background is missing")
     _require(v31_items.get("android:windowSplashScreenBackground") == "@color/startup_navy", "Android 12+ splash background is missing")
     _require(v31_items.get("android:windowSplashScreenAnimatedIcon") == "@drawable/splash_brand_mark", "Android 12+ splash logo is missing")
-    _require(v31_items.get("android:postSplashScreenTheme") == "@style/NormalTheme", "Android 12+ post-splash theme is not configured")
+    _require("android:postSplashScreenTheme" not in v31_items, "Unexpected AndroidX-only postSplashScreenTheme attribute")
 
     icon = resource / "drawable/splash_brand_mark.xml"
     _require(icon.is_file(), "Native splash vector logo is missing")
@@ -115,7 +116,7 @@ def verify_apk(apk: Path) -> None:
     theme_mapping = re.search(rf"resource\s+0x{launch_theme_id}\s+[^\n]*style/LaunchTheme", resources_dump, re.IGNORECASE)
     _require(theme_mapping is not None, "Compiled APK launcher theme does not resolve to LaunchTheme")
     for marker in ("style/LaunchTheme", "style/NormalTheme", "drawable/splash_brand_mark", "drawable/launch_background",
-                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon", "postSplashScreenTheme"):
+                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon"):
         _require(marker in resources_dump, f"Compiled APK is missing native splash resource: {marker}")
     print(f"Built APK native splash verified: {apk} (compiled manifest and resource table inspected with aapt).")
 

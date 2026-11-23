@@ -67,8 +67,8 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
             self.assertEqual(items["android:windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
             self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
-            self.assertEqual(items["android:postSplashScreenTheme"], "@style/NormalTheme")
-            self.assertEqual(launch_style.get("parent"), "@android:style/Theme.SplashScreen")
+            self.assertEqual(items["android:windowBackground"], "@drawable/launch_background")
+            self.assertEqual(launch_style.get("parent"), "@android:style/Theme.Light.NoTitleBar")
 
             base_styles = ET.parse(resource_root / "values/styles.xml").getroot()
             base_launch = next(style for style in base_styles.findall("style") if style.get("name") == "LaunchTheme")
