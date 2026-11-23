@@ -152,7 +152,7 @@ void main() {
     await tester.ensureVisible(checkStatusButton);
     await tester.tap(checkStatusButton);
     await tester.pumpAndSettle();
-    expect(find.text('Credential storage: present'), findsOneWidget);
+    expect(find.text('Credential storage status: present'), findsOneWidget);
     expect(find.text('A credential is stored; its value was not displayed.'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Delete').first);
