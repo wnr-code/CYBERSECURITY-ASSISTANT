@@ -70,16 +70,16 @@ void main() {
     tester.view.physicalSize = const Size(320, 640);
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(MaterialApp(
-      locale: const Locale('id'),
+    await tester.pumpWidget(const MaterialApp(
+      locale: Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: const [
         AppLocalizationsDelegate(),
         ...GlobalMaterialLocalizations.delegates,
       ],
-      home: MediaQuery(
-        data: const MediaQueryData(disableAnimations: true),
-        child: const AnimatedSplashScreen(),
+      home: const MediaQuery(
+        data: MediaQueryData(disableAnimations: true),
+        child: AnimatedSplashScreen(),
       ),
     ));
     await tester.pump();
