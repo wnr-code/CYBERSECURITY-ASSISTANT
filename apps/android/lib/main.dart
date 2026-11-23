@@ -104,7 +104,7 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
         ),
       ),
       home: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
+        duration: const Duration(milliseconds: 560),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         transitionBuilder: (child, animation) {

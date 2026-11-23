@@ -6,6 +6,7 @@ import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
+import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -64,6 +65,36 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('animated splash renders the digital map, orbiting shield and four feature marks on compact screens', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        ...GlobalMaterialLocalizations.delegates,
+      ],
+      home: MediaQuery(
+        data: const MediaQueryData(disableAnimations: true),
+        child: const AnimatedSplashScreen(),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('splash-digital-world-and-circuits')), findsOneWidget);
+    expect(find.byKey(const ValueKey('splash-animated-shield')), findsOneWidget);
+    expect(find.text('ANALISIS · LINDUNGI · PERBAIKI'), findsOneWidget);
+    expect(find.text('Keamanan terpadu'), findsOneWidget);
+    expect(find.text('AI Expert'), findsOneWidget);
+    expect(find.text('Tools lengkap'), findsOneWidget);
+    expect(find.text('Analisis mendalam'), findsOneWidget);
+    expect(find.text('Memuat aplikasi...'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('branded splash hands off to dashboard while SQLite history is pending', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
@@ -74,7 +105,7 @@ void main() {
     expect(history.loadCalls, 1);
     expect(find.byKey(const ValueKey('main-shell')), findsOneWidget);
     expect(find.text('Beranda'), findsOneWidget);
-    expect(find.text('Initializing local history…'), findsNothing);
+    expect(find.text('Memuat aplikasi...'), findsOneWidget);
 
     initialization.complete(const []);
     await tester.pumpAndSettle();
