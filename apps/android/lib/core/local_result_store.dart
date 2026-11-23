@@ -4,9 +4,16 @@ import 'package:sqflite/sqflite.dart' as sqflite;
 import 'security_tools.dart';
 import 'tool_result_codec.dart';
 
+abstract interface class ResultHistoryStore {
+  Future<int> save(ToolRunResult result);
+  Future<List<ToolRunResult>> loadRecent({int limit = 30});
+  Future<void> clear();
+  Future<void> close();
+}
+
 /// SQLite-backed local history for explicitly saved, completed tool checks.
 /// This stores no provider API keys and never syncs data to a remote service.
-class LocalResultStore {
+class LocalResultStore implements ResultHistoryStore {
   LocalResultStore({
     sqflite.DatabaseFactory? databaseFactory,
     Future<String> Function()? databasePathProvider,
@@ -81,6 +88,7 @@ class LocalResultStore {
     }
   }
 
+  @override
   Future<int> save(ToolRunResult result) async {
     if (result.toolId == 'response_analyzer') {
       throw ArgumentError.value(result.toolId, 'result.toolId', 'Derived analyzer summaries are not stored.');
@@ -104,6 +112,7 @@ class LocalResultStore {
     });
   }
 
+  @override
   Future<List<ToolRunResult>> loadRecent({int limit = 30}) async {
     final safeLimit = limit < 1 ? 1 : limit > maxRecords ? maxRecords : limit;
     final db = await _open();
@@ -113,11 +122,13 @@ class LocalResultStore {
     ];
   }
 
+  @override
   Future<void> clear() async {
     final db = await _open();
     await db.delete(tableName);
   }
 
+  @override
   Future<void> close() async {
     final pending = _opening;
     if (pending != null) await pending;
