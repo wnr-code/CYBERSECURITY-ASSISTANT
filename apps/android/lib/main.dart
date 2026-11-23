@@ -48,7 +48,6 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
         AppLocalizationsDelegate(),
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
       ],
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

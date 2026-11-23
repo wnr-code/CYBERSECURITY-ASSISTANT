@@ -44,7 +44,6 @@ void main() {
         AppLocalizationsDelegate(),
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
       ],
       home: MainShell(resultStore: history),
     ));

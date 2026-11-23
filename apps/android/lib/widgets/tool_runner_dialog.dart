@@ -64,11 +64,13 @@ String _resultDetail(String detail, BuildContext context) {
 
 String _toolError(String error, BuildContext context) {
   for (final prefix in ['DNS lookup failed: ', 'Could not connect to HTTPS service: ', 'Could not reach HTTPS service: ']) {
-    if (error.startsWith(prefix)) return '${context.tr(switch (prefix) {
-      'DNS lookup failed: ' => 'Pencarian DNS gagal',
-      'Could not connect to HTTPS service: ' => 'Tidak dapat terhubung ke layanan HTTPS',
-      _ => 'Layanan HTTPS tidak dapat dijangkau',
-    })}: ${error.substring(prefix.length)}';
+    if (error.startsWith(prefix)) {
+      return '${context.tr(switch (prefix) {
+        'DNS lookup failed: ' => 'Pencarian DNS gagal',
+        'Could not connect to HTTPS service: ' => 'Tidak dapat terhubung ke layanan HTTPS',
+        _ => 'Layanan HTTPS tidak dapat dijangkau',
+      })}: ${error.substring(prefix.length)}';
+    }
   }
   return context.tr(error);
 }

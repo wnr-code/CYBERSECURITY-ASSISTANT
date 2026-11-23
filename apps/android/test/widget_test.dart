@@ -122,7 +122,6 @@ void main() {
         AppLocalizationsDelegate(),
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
       ],
       home: Scaffold(
         body: Builder(builder: (context) => TextButton(
