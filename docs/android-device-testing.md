@@ -41,19 +41,25 @@ If using ADB: `adb install -r app-debug.apk`. Record Android version with `adb s
 
 Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level plus a short note. Current status for every manual case below is **NOT RUN**.
 
-### 1. Installation and first launch
+### 1. Installation, native splash, and first launch
 
-- [ ] Install APK without package/signature/parse error; launch to the Home dashboard.
+- [ ] Install APK without package/signature/parse error. On cold launch, confirm the Android native splash appears immediately with the navy background and shield/lock mark; verify the app label is **Cybersecurity Assistant**.
+- [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 6–11 (API 23–30), verify the legacy launch-window fallback uses the same navy and shield mark.
+- [ ] Confirm there is no white/black blank frame or visible mismatched icon between native splash, Flutter splash, and Dashboard. Check cold launch after force-stop as well as warm relaunch.
+- [ ] Confirm the Flutter splash is shown while actual local history initialization is pending and fades/scales smoothly to Dashboard when it completes. If initialization is quick, it may be brief; the app must not add a minimum-duration delay.
+- [ ] Simulate an unavailable/slow local history database if safely possible. Confirm startup still reaches Dashboard after the bounded fallback and never stays on an infinite spinner. Verify Reports can retry history.
 - [ ] Confirm the app remains in standalone/local-first mode and no login, developer-owned server, or API key is required for built-in checks.
 - [ ] Confirm Android displays no unexpected runtime permission prompt. `INTERNET` is expected in the manifest, not as a runtime dialog.
 - [ ] Force-stop and relaunch; app returns without crash or a setup loop.
 
 ### 2. Navigation and UI stability
 
-- [ ] Visit Home, Tools, Assistant placeholder, and Connections repeatedly; no crash, blank screen, overflow, or stuck loading indicator.
+- [ ] Verify the compact bottom bar has four primary destinations—Home, Tools, Reports, Settings—and exactly one centered secondary Chat AI shortcut (five visible actions total). Connections must open from Settings, not as a bottom destination.
+- [ ] Verify the floating bar has fully rounded ends, stays above the Android system navigation area, and does not cover content. Try a small phone viewport and a larger tablet/emulator viewport if available.
+- [ ] Confirm functional icons and provider-specific brand marks appear in the provider catalog; provider marks are visual identifiers only and do not indicate active connections.
 - [ ] Scroll long content; open and close tool/provider dialogs using both close/cancel controls and system Back.
-- [ ] Exercise keyboard input, hide keyboard, rotate if supported, background/foreground the app, and use system Back; UI remains usable.
-- [ ] Try a small phone viewport and a larger tablet/emulator viewport if available; controls remain reachable and text is not clipped.
+- [ ] Exercise keyboard input, hide keyboard, rotate the device and confirm the app remains portrait-locked, background/foreground the app, and use system Back; UI remains usable.
+- [ ] Confirm no crash, blank screen, overflow, or stuck loading indicator during navigation and settings-to-connections routing.
 
 ### 3. DNS Lookup
 

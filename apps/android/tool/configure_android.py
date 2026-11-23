@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Apply the prototype's Android security baseline to a Flutter scaffold.
+"""Apply Android startup branding and security defaults to a Flutter scaffold.
 
 Run only after `flutter create --platforms=android ...` has generated the
-Android project. The script deliberately fails when the generated Gradle
-layout is unfamiliar rather than silently leaving an unsafe default.
+Android project. The script deliberately fails when key manifest or Gradle
+structure is unfamiliar rather than silently leaving an unsafe default.
 """
 
 from __future__ import annotations
@@ -15,6 +15,9 @@ from pathlib import Path
 
 ANDROID_NS = "http://schemas.android.com/apk/res/android"
 TOOLS_NS = "http://schemas.android.com/tools"
+SPLASH_NAVY = "#030817"
+ELECTRIC_BLUE = "#168DFF"
+BRAND_WHITE = "#EAF8FF"
 ET.register_namespace("android", ANDROID_NS)
 ET.register_namespace("tools", TOOLS_NS)
 
@@ -82,6 +85,114 @@ def _write_backup_rules(android_root: Path) -> None:
     )
 
 
+def _set_style_item(style: ET.Element, name: str, value: str) -> None:
+    item_name = _android_attribute("name")
+    item = next((node for node in style.findall("item") if node.get(item_name) == name), None)
+    if item is None:
+        item = ET.SubElement(style, "item", {item_name: name})
+    item.text = value
+
+
+def _ensure_style(resources: ET.Element, name: str, parent: str) -> ET.Element:
+    style = next((node for node in resources.findall("style") if node.get("name") == name), None)
+    if style is None:
+        style = ET.SubElement(resources, "style", {"name": name})
+    style.set("parent", parent)
+    return style
+
+
+def _write_brand_vector(drawable_root: Path) -> None:
+    vector = drawable_root / "splash_brand_mark.xml"
+    vector.write_text(
+        f'''<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="{ELECTRIC_BLUE}"
+        android:pathData="M12,2.5L3.5,6v5.9c0,4.8 3.5,9.1 8.5,10.6 5,-1.5 8.5,-5.8 8.5,-10.6V6L12,2.5z" />
+    <path android:fillColor="{BRAND_WHITE}" android:pathData="M8,11h8v6H8z" />
+    <path android:fillColor="#00000000" android:strokeColor="{BRAND_WHITE}"
+        android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9,11V8.5a3,3 0 0,1 6,0V11" />
+</vector>
+''',
+        encoding="utf-8",
+    )
+
+
+def configure_splash_resources(android_root: Path) -> None:
+    """Install a matching legacy window background and Android 12+ splash theme."""
+    resource_root = android_root / "app" / "src" / "main" / "res"
+    values_root = resource_root / "values"
+    values_v31_root = resource_root / "values-v31"
+    drawable_root = resource_root / "drawable"
+    for directory in (values_root, values_v31_root, drawable_root):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    colors_file = values_root / "colors.xml"
+    colors = ET.parse(colors_file).getroot() if colors_file.exists() else ET.Element("resources")
+    if colors.tag != "resources":
+        raise RuntimeError(f"Unexpected Android colors resource root in {colors_file}.")
+    for name, value in (("startup_navy", SPLASH_NAVY),):
+        color = next((node for node in colors.findall("color") if node.get("name") == name), None)
+        if color is None:
+            color = ET.SubElement(colors, "color", {"name": name})
+        color.text = value
+    ET.indent(colors, space="    ")
+    ET.ElementTree(colors).write(colors_file, encoding="utf-8", xml_declaration=True)
+
+    _write_brand_vector(drawable_root)
+    (drawable_root / "launch_background.xml").write_text(
+        '''<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/startup_navy" />
+    <item android:gravity="center" android:drawable="@drawable/splash_brand_mark" />
+</layer-list>
+''',
+        encoding="utf-8",
+    )
+    (drawable_root / "startup_window_background.xml").write_text(
+        f'''<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="{SPLASH_NAVY}" />
+</shape>
+''',
+        encoding="utf-8",
+    )
+
+    base_styles_file = values_root / "styles.xml"
+    base_styles = ET.parse(base_styles_file).getroot() if base_styles_file.exists() else ET.Element("resources")
+    if base_styles.tag != "resources":
+        raise RuntimeError(f"Unexpected Android styles resource root in {base_styles_file}.")
+    launch_style = _ensure_style(base_styles, "LaunchTheme", "@android:style/Theme.Light.NoTitleBar")
+    _set_style_item(launch_style, "android:windowBackground", "@drawable/launch_background")
+    _set_style_item(launch_style, "android:statusBarColor", "@color/startup_navy")
+    _set_style_item(launch_style, "android:navigationBarColor", "@color/startup_navy")
+    _set_style_item(launch_style, "android:windowLightStatusBar", "false")
+    normal_style = _ensure_style(base_styles, "NormalTheme", "@android:style/Theme.Light.NoTitleBar")
+    _set_style_item(normal_style, "android:windowBackground", "@drawable/startup_window_background")
+    _set_style_item(normal_style, "android:statusBarColor", "@color/startup_navy")
+    _set_style_item(normal_style, "android:navigationBarColor", "@color/startup_navy")
+    _set_style_item(normal_style, "android:windowLightStatusBar", "false")
+    ET.indent(base_styles, space="    ")
+    ET.ElementTree(base_styles).write(base_styles_file, encoding="utf-8", xml_declaration=True)
+
+    v31_styles_file = values_v31_root / "styles.xml"
+    v31_styles = ET.parse(v31_styles_file).getroot() if v31_styles_file.exists() else ET.Element("resources")
+    if v31_styles.tag != "resources":
+        raise RuntimeError(f"Unexpected Android API 31 styles resource root in {v31_styles_file}.")
+    launch_v31 = _ensure_style(v31_styles, "LaunchTheme", "@android:style/Theme.Light.NoTitleBar")
+    _set_style_item(launch_v31, "android:windowBackground", "@drawable/launch_background")
+    _set_style_item(launch_v31, "android:windowSplashScreenBackground", "@color/startup_navy")
+    _set_style_item(launch_v31, "android:windowSplashScreenAnimatedIcon", "@drawable/splash_brand_mark")
+    _set_style_item(launch_v31, "android:statusBarColor", "@color/startup_navy")
+    _set_style_item(launch_v31, "android:navigationBarColor", "@color/startup_navy")
+    _set_style_item(launch_v31, "android:windowLightStatusBar", "false")
+    _set_style_item(launch_v31, "android:windowLightNavigationBar", "false")
+    ET.indent(v31_styles, space="    ")
+    ET.ElementTree(v31_styles).write(v31_styles_file, encoding="utf-8", xml_declaration=True)
+
+
 def configure_manifest(manifest_file: Path) -> None:
     tree = ET.parse(manifest_file)
     manifest = tree.getroot()
@@ -100,10 +211,48 @@ def configure_manifest(manifest_file: Path) -> None:
     application = manifest.find("application")
     if application is None:
         raise RuntimeError(f"No <application> element found in {manifest_file}.")
+    application.set(_android_attribute("label"), "Cybersecurity Assistant")
     application.set(_android_attribute("usesCleartextTraffic"), "false")
     application.set(_android_attribute("allowBackup"), "false")
     application.set(_android_attribute("fullBackupContent"), "@xml/backup_rules")
     application.set(_android_attribute("dataExtractionRules"), "@xml/data_extraction_rules")
+
+    launcher_activities = []
+    for activity in application.findall("activity"):
+        has_main_action = any(
+            action.get(permission_name) == "android.intent.action.MAIN"
+            for intent_filter in activity.findall("intent-filter")
+            for action in intent_filter.findall("action")
+        )
+        has_launcher_category = any(
+            category.get(permission_name) == "android.intent.category.LAUNCHER"
+            for intent_filter in activity.findall("intent-filter")
+            for category in intent_filter.findall("category")
+        )
+        if has_main_action and has_launcher_category:
+            launcher_activities.append(activity)
+    if len(launcher_activities) != 1:
+        raise RuntimeError(
+            f"Expected one MAIN/LAUNCHER activity in {manifest_file}; "
+            f"found {len(launcher_activities)}."
+        )
+    launcher = launcher_activities[0]
+    launcher.set(_android_attribute("screenOrientation"), "portrait")
+    launcher.set(_android_attribute("theme"), "@style/LaunchTheme")
+
+    normal_theme_name = "io.flutter.embedding.android.NormalTheme"
+    normal_theme = next(
+        (
+            node
+            for node in launcher.findall("meta-data")
+            if node.get(permission_name) == normal_theme_name
+        ),
+        None,
+    )
+    if normal_theme is None:
+        normal_theme = ET.SubElement(launcher, "meta-data")
+    normal_theme.set(permission_name, normal_theme_name)
+    normal_theme.set(_android_attribute("resource"), "@style/NormalTheme")
 
     ET.indent(tree, space="  ")
     tree.write(manifest_file, encoding="utf-8", xml_declaration=True)
@@ -124,6 +273,7 @@ def configure_project(android_root: Path) -> None:
     configure_gradle(gradle_files[0])
     configure_manifest(manifest_file)
     _write_backup_rules(android_root)
+    configure_splash_resources(android_root)
 
 
 def main() -> int:
@@ -140,7 +290,7 @@ def main() -> int:
     except (OSError, ET.ParseError, RuntimeError) as error:
         print(f"Android hardening configuration failed: {error}", file=sys.stderr)
         return 1
-    print("Configured minSdk >= 23, INTERNET, HTTPS-only traffic, and backup exclusions.")
+    print("Configured Android 12+ and legacy branded splash, portrait launch, HTTPS-only traffic, minSdk >= 23, and backup exclusions.")
     return 0
 
 

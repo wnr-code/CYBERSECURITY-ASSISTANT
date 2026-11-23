@@ -56,11 +56,19 @@ Future<void> _pumpApp(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
+  await tester.tap(find.text('Pengaturan'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Koneksi dan provider'));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('splash shows real local initialization then opens the dashboard', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
+    expect(find.byKey(const ValueKey('animated-splash')), findsOneWidget);
     await tester.pump();
 
     expect(history.loadCalls, 1);
@@ -86,15 +94,38 @@ void main() {
     expect(history.loadCalls, 1);
   });
 
-  testWidgets('shows the primary navigation destinations', (tester) async {
+  testWidgets('floating mobile navigation has four destinations and a centered AI shortcut', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await _pumpApp(tester);
 
     expect(find.text('Beranda'), findsOneWidget);
     expect(find.text('Alat'), findsOneWidget);
     expect(find.text('Laporan'), findsOneWidget);
-    expect(find.text('Koneksi'), findsOneWidget);
     expect(find.text('Pengaturan'), findsOneWidget);
+    expect(find.text('Chat AI'), findsOneWidget);
+    expect(find.text('Koneksi'), findsNothing);
+    expect(find.byKey(const ValueKey('bottom-navigation-ai-chat')), findsOneWidget);
+    for (var index = 0; index < 4; index++) {
+      expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
+    }
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
+  });
+
+  testWidgets('floating navigation stays within a narrow phone viewport', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 720);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pumpApp(tester);
+
+    expect(find.byKey(const ValueKey('bottom-navigation-ai-chat')), findsOneWidget);
+    for (var index = 0; index < 4; index++) {
+      expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('center AI chat shortcut opens the existing secondary assistant route', (tester) async {
@@ -135,8 +166,8 @@ void main() {
     expect(find.text('Home'), findsOneWidget);
     expect(find.text('Tools'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
-    expect(find.text('Connections'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Connections'), findsNothing);
     expect(find.text('Assistant'), findsNothing);
   });
 
@@ -190,8 +221,7 @@ void main() {
 
   testWidgets('provider catalog search opens an explicitly unconnected guide', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Koneksi'));
-    await tester.pumpAndSettle();
+    await _openConnectionsFromSettings(tester);
 
     final providerSearch = find.byWidgetPredicate(
       (widget) => widget is TextField && widget.decoration?.hintText == 'Cari penyedia layanan',
@@ -205,6 +235,7 @@ void main() {
     await tester.pump();
     final openAiTile = find.widgetWithText(ListTile, 'OpenAI');
     expect(openAiTile, findsOneWidget);
+    expect(find.text('OAI'), findsOneWidget);
     expect(find.widgetWithText(ListTile, 'Supabase'), findsNothing);
 
     await tester.scrollUntilVisible(openAiTile, 300, scrollable: connectionsScroll);
@@ -273,8 +304,7 @@ void main() {
 
   testWidgets('requires current authorization and rejects invalid connection URLs', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Koneksi'));
-    await tester.pumpAndSettle();
+    await _openConnectionsFromSettings(tester);
 
     final connectionButton = find.widgetWithText(FilledButton, 'Uji koneksi');
     final authorization = find.byType(CheckboxListTile).first;

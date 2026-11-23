@@ -7,6 +7,7 @@ from configure_android import (
     configure_gradle,
     configure_manifest,
     configure_project,
+    configure_splash_resources,
 )
 
 
@@ -50,6 +51,33 @@ class ConfigureAndroidTests(unittest.TestCase):
 
             self.assertIn("minSdkVersion 23", gradle.read_text(encoding="utf-8"))
 
+    def test_android_splash_resources_match_brand_on_legacy_and_api_31(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            configure_splash_resources(android)
+            configure_splash_resources(android)
+
+            resource_root = android / "app/src/main/res"
+            styles = ET.parse(resource_root / "values-v31/styles.xml").getroot()
+            launch_style = next(style for style in styles.findall("style") if style.get("name") == "LaunchTheme")
+            items = {
+                item.get("{http://schemas.android.com/apk/res/android}name"): item.text
+                for item in launch_style.findall("item")
+            }
+            self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
+            self.assertEqual(items["android:windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
+
+            base_styles = ET.parse(resource_root / "values/styles.xml").getroot()
+            base_launch = next(style for style in base_styles.findall("style") if style.get("name") == "LaunchTheme")
+            base_items = {
+                item.get("{http://schemas.android.com/apk/res/android}name"): item.text
+                for item in base_launch.findall("item")
+            }
+            self.assertEqual(base_items["android:windowBackground"], "@drawable/launch_background")
+            self.assertTrue((resource_root / "drawable/splash_brand_mark.xml").is_file())
+            self.assertTrue((resource_root / "drawable/launch_background.xml").is_file())
+            self.assertEqual(len([style for style in styles.findall("style") if style.get("name") == "LaunchTheme"]), 1)
+
     def test_unknown_gradle_template_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle.kts"
@@ -64,7 +92,10 @@ class ConfigureAndroidTests(unittest.TestCase):
             manifest = Path(temporary) / "AndroidManifest.xml"
             manifest.write_text(
                 '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-                '<application android:label="Audit test" /></manifest>',
+                '<application android:label="Audit test"><activity android:name=".MainActivity">'
+                '<intent-filter><action android:name="android.intent.action.MAIN" />'
+                '<category android:name="android.intent.category.LAUNCHER" /></intent-filter>'
+                '</activity></application></manifest>',
                 encoding="utf-8",
             )
 
@@ -79,6 +110,13 @@ class ConfigureAndroidTests(unittest.TestCase):
                     for node in root.findall("uses-permission")
                 )
             )
+            self.assertEqual(application.get(f"{android_ns}label"), "Cybersecurity Assistant")
+            launcher = application.find("activity")
+            self.assertIsNotNone(launcher)
+            self.assertEqual(launcher.get(f"{android_ns}screenOrientation"), "portrait")
+            self.assertEqual(launcher.get(f"{android_ns}theme"), "@style/LaunchTheme")
+            normal_theme = launcher.find("meta-data")
+            self.assertEqual(normal_theme.get(f"{android_ns}resource"), "@style/NormalTheme")
             self.assertEqual(application.get(f"{android_ns}allowBackup"), "false")
             self.assertEqual(application.get(f"{android_ns}usesCleartextTraffic"), "false")
             self.assertEqual(application.get(f"{android_ns}fullBackupContent"), "@xml/backup_rules")
@@ -96,7 +134,10 @@ class ConfigureAndroidTests(unittest.TestCase):
             )
             manifest.write_text(
                 '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
-                '<application /></manifest>',
+                '<application><activity android:name=".MainActivity"><intent-filter>'
+                '<action android:name="android.intent.action.MAIN" />'
+                '<category android:name="android.intent.category.LAUNCHER" />'
+                '</intent-filter></activity></application></manifest>',
                 encoding="utf-8",
             )
 

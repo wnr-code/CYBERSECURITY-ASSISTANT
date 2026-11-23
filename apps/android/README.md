@@ -2,8 +2,8 @@
 
 This directory contains the first Flutter app foundation for Cybersecurity Assistant:
 
-- Animated local-history startup splash; dashboard and standalone-mode indicator.
-- Five stable primary destinations with borderless transparent bottom navigation on compact layouts, a centered secondary AI shortcut, and a NavigationRail on wide layouts. Reports remains a primary destination; the AI screen is still an unconnected placeholder.
+- Native Android 12+ SplashScreen API plus a matching legacy launch window, shield/lock branding, and animated Flutter startup while SQLite history is actually initialized; dashboard and standalone-mode indicator.
+- Four primary destinations (Home, Tools, Reports, Settings) in a rounded floating bottom bar on compact layouts, plus a centered secondary AI chat shortcut; Connections opens from Settings. Wide layouts use a NavigationRail. The AI screen remains an unconnected placeholder.
 - Searchable, category-filtered Tool Registry with version, compatibility, license-status, dependency, and permission metadata.
 - Allowlisted GitHub latest-release metadata viewer with constrained URL validation and publisher digest display; it does not download or execute assets.
 - Executable P0 DNS, TLS certificate, and HTTP response-header adapters; common cookie, authentication, token, secret, and API-key-like response headers are redacted before results are shown or exported.

@@ -15,9 +15,8 @@ import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
   runApp(const CybersecurityAssistantApp());
 }
 
@@ -47,7 +46,9 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   void initState() {
     super.initState();
     _resultStore = widget.resultStore ?? LocalResultStore();
-    unawaited(_initializeLocalWorkspace());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_initializeLocalWorkspace());
+    });
   }
 
   Future<void> _initializeLocalWorkspace() async {
@@ -116,7 +117,13 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
         duration: const Duration(milliseconds: 260),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
-        transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+        transitionBuilder: (child, animation) {
+          final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+          return FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(scale: Tween<double>(begin: .985, end: 1).animate(curved), child: child),
+          );
+        },
         child: _startupReady
             ? MainShell(
                 key: const ValueKey('main-shell'),
@@ -179,13 +186,28 @@ class _MainShellState extends State<MainShell> {
 
   void _selectDestination(int index) => setState(() => _selectedIndex = index);
 
-  // AI and future capability screens are secondary routes, keeping the five primary destinations stable.
+  void _openConnections() {
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: const Duration(milliseconds: 220),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('Connections and providers'))),
+        body: const ConnectionsScreen(),
+      ),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
+    ));
+  }
+
+  // AI remains a secondary screen; the centered bottom shortcut does not add a navigation destination.
   void _openAssistantModule() {
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
       transitionDuration: const Duration(milliseconds: 240),
       reverseTransitionDuration: const Duration(milliseconds: 180),
       pageBuilder: (_, __, ___) => AssistantScreen(
-        onOpenConnections: () => _selectDestination(3),
+        onOpenConnections: _openConnections,
         onOpenTools: () => _selectDestination(1),
       ),
       transitionsBuilder: (_, animation, __, child) {
@@ -281,7 +303,6 @@ class _MainShellState extends State<MainShell> {
       (label: context.tr('Home'), icon: Icons.home_rounded),
       (label: context.tr('Tools'), icon: Icons.grid_view_rounded),
       (label: context.tr('Reports'), icon: Icons.article_outlined),
-      (label: context.tr('Connections'), icon: Icons.hub_outlined),
       (label: context.tr('Settings'), icon: Icons.settings_outlined),
     ];
     final pages = <Widget>[
@@ -306,12 +327,11 @@ class _MainShellState extends State<MainShell> {
         onClearSavedResults: _clearSavedResults,
         onSaveResult: _saveResultLocally,
       ),
-      const ConnectionsScreen(),
       SettingsScreen(
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
         onOpenAssistant: _openAssistantModule,
-        onOpenConnections: () => _selectDestination(3),
+        onOpenConnections: _openConnections,
       ),
     ];
     final page = AnimatedSwitcher(
@@ -385,8 +405,15 @@ class _FloatingBottomNavigation extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
         top: false,
         minimum: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-        child: SizedBox(
-          height: 70,
+        child: Container(
+          height: 72,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xEB10192B),
+            borderRadius: BorderRadius.circular(40),
+            border: Border.all(color: Colors.white.withValues(alpha: .08)),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: .38), blurRadius: 20, offset: const Offset(0, 7))],
+          ),
           child: Row(children: [
             Expanded(
               child: Row(children: [
@@ -534,7 +561,7 @@ class _AIChatNavButton extends StatelessWidget {
                   ],
                   border: Border.all(color: _electricBlue.withValues(alpha: .76), width: 1),
                 ),
-                child: const Icon(Icons.auto_awesome_rounded, size: 21, color: Color(0xFF8AD8FF)),
+                child: const Icon(Icons.forum_rounded, size: 21, color: Color(0xFF8AD8FF)),
               ),
               const SizedBox(height: 3),
               FittedBox(
@@ -1514,7 +1541,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
           for (final provider in _visibleProviders(context)) ...[
             Card(
               child: ListTile(
-                leading: const Icon(Icons.link_outlined, color: _mint),
+                leading: _ProviderBrandMark(provider: provider),
                 title: Text(provider.name),
                 subtitle: Text('${_providerCategoryName(provider.category, context)} · ${context.tr('Belum terhubung')}\n${_providerDescription(provider, context)}'),
                 trailing: const Icon(Icons.info_outline),
@@ -1615,6 +1642,57 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
       client.close(force: true);
       if (mounted) setState(() => _checking = false);
     }
+  }
+}
+
+class _ProviderBrandMark extends StatelessWidget {
+  const _ProviderBrandMark({required this.provider});
+
+  final ProviderDefinition provider;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color, mark) = switch (provider.id) {
+      'cloudflare_workers' || 'cloudflare_d1' || 'cloudflare_r2' => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
+      'firebase_auth' || 'firebase_functions' || 'firebase_firestore' || 'firebase_storage' =>
+        (Icons.local_fire_department_rounded, const Color(0xFFFFB300), 'F'),
+      'supabase' => (Icons.storage_rounded, const Color(0xFF3ECF8E), 'S'),
+      'openai' => (Icons.auto_awesome_rounded, const Color(0xFF10A37F), 'OAI'),
+      'gemini' => (Icons.auto_awesome_rounded, const Color(0xFF4285F4), 'G'),
+      'anthropic' => (Icons.text_fields_rounded, const Color(0xFFD97757), 'A'),
+      'openrouter' => (Icons.alt_route_rounded, const Color(0xFF8B78E6), 'OR'),
+      'virustotal' => (Icons.shield_rounded, const Color(0xFF536DFF), 'VT'),
+      'shodan' => (Icons.radar, const Color(0xFFE44B5F), 'S'),
+      'urlscan' => (Icons.travel_explore, const Color(0xFF28B8CC), 'U'),
+      's3_compatible' => (Icons.cloud_queue_rounded, const Color(0xFFF59D28), 'S3'),
+      'webdav' => (Icons.folder_open_rounded, const Color(0xFF28B8CC), 'W'),
+      _ => switch (provider.category) {
+          ProviderCategory.backend => (Icons.cloud_outlined, const Color(0xFF7BA8E8), 'API'),
+          ProviderCategory.database => (Icons.storage_rounded, const Color(0xFF5BC0BE), 'DB'),
+          ProviderCategory.storage => (Icons.folder_open_rounded, const Color(0xFF6EB6D8), 'IO'),
+          ProviderCategory.ai => (Icons.auto_awesome_rounded, const Color(0xFF9A8BFF), 'AI'),
+          ProviderCategory.securityIntelligence => (Icons.security_rounded, const Color(0xFF65A9FF), 'SEC'),
+          ProviderCategory.custom => (Icons.api, const Color(0xFFAAB4C5), 'API'),
+        },
+    };
+
+    return Semantics(
+      label: '${provider.name} icon',
+      image: true,
+      child: Container(
+        width: 42,
+        height: 42,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .13),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(color: color.withValues(alpha: .28)),
+        ),
+        child: mark.length > 1
+            ? Text(mark, style: TextStyle(color: color, fontSize: mark.length > 2 ? 9 : 12, fontWeight: FontWeight.w800, letterSpacing: -.3))
+            : Icon(icon, color: color, size: 22),
+      ),
+    );
   }
 }
 
