@@ -88,14 +88,19 @@ void main() {
     final providerSearch = find.byWidgetPredicate(
       (widget) => widget is TextField && widget.decoration?.hintText == 'Search providers',
     );
-    await tester.scrollUntilVisible(providerSearch, 300);
+    final connectionsScroll = find.descendant(
+      of: find.byType(ConnectionsScreen),
+      matching: find.byType(Scrollable),
+    ).first;
+    await tester.scrollUntilVisible(providerSearch, 300, scrollable: connectionsScroll);
     await tester.enterText(providerSearch, 'OpenAI');
     await tester.pump();
-    expect(find.text('OpenAI'), findsOneWidget);
-    expect(find.text('Supabase'), findsNothing);
+    final openAiTile = find.widgetWithText(ListTile, 'OpenAI');
+    expect(openAiTile, findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Supabase'), findsNothing);
 
-    await tester.scrollUntilVisible(find.text('OpenAI'), 300);
-    await tester.tap(find.text('OpenAI'));
+    await tester.scrollUntilVisible(openAiTile, 300, scrollable: connectionsScroll);
+    await tester.tap(openAiTile);
     await tester.pumpAndSettle();
     expect(find.text('Status: Guide only · not connected'), findsOneWidget);
     expect(find.text('Authentication: User-owned API key required'), findsOneWidget);
@@ -133,11 +138,14 @@ void main() {
     expect(find.text('Credential stored locally. No provider request was made.'), findsOneWidget);
     expect(find.text('test-key-never-send'), findsNothing);
 
-    await tester.tap(find.text('Check stored status'));
+    final checkStatusButton = find.text('Check stored status');
+    await tester.ensureVisible(checkStatusButton);
+    await tester.tap(checkStatusButton);
     await tester.pumpAndSettle();
     expect(find.text('Credential storage: present'), findsOneWidget);
     expect(find.text('A credential is stored; its value was not displayed.'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('Delete').first);
     await tester.tap(find.text('Delete').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Delete').last);
@@ -166,6 +174,7 @@ void main() {
     expect(find.text('Enter a valid HTTPS URL without credentials, query, or fragment'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'https://example.com/?token=secret');
+    await tester.pump();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNull);
     await tester.ensureVisible(authorizationLabel);
     await tester.tap(authorizationLabel);
