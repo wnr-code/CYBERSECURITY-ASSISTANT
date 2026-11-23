@@ -115,7 +115,7 @@ def verify_apk(apk: Path) -> None:
     launch_theme_id = theme_reference.group(1).lower()
     _require(launch_theme_id.startswith("7f"), "Compiled APK launcher theme does not point to an app resource")
     for marker in ("style/LaunchTheme", "style/NormalTheme", "drawable/splash_brand_mark", "drawable/launch_background",
-                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon"):
+                   "drawable/startup_window_background", "color/startup_navy"):
         _require(marker in resources_dump, f"Compiled APK is missing native splash resource: {marker}")
     print(f"Built APK native splash verified: {apk} (compiled manifest and resource table inspected with aapt).")
 
