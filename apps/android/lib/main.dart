@@ -351,15 +351,22 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: _ink,
-        titleSpacing: 20,
+        titleSpacing: 12,
         title: const Row(
           children: [
             Icon(Icons.shield_moon_outlined, color: _mint),
-            SizedBox(width: 10),
-            Text('CYBERSECURITY', style: TextStyle(fontSize: 14, letterSpacing: 1.2)),
+            SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'CYBERSECURITY',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 14, letterSpacing: 1.2),
+              ),
+            ),
           ],
         ),
-        actions: const [Center(child: _ModeBadge()), SizedBox(width: 16)],
+        actions: const [Center(child: _ModeBadge()), SizedBox(width: 12)],
       ),
       body: SafeArea(
         child: Row(children: [

@@ -125,7 +125,8 @@ void main() {
     for (var index = 0; index < 4; index++) {
       expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
     }
-    expect(tester.takeException(), isNull);
+    final layoutError = tester.takeException();
+    expect(layoutError, isNull, reason: layoutError?.toString());
   });
 
   testWidgets('center AI chat shortcut opens the existing secondary assistant route', (tester) async {
