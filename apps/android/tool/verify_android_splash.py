@@ -104,7 +104,7 @@ def verify_apk(apk: Path) -> None:
 
     aapt = _find_aapt()
     manifest_result = subprocess.run([aapt, "dump", "xmltree", str(apk), "AndroidManifest.xml"], check=True, capture_output=True, text=True)
-    resources_result = subprocess.run([aapt, "dump", "resources", str(apk)], check=True, capture_output=True, text=True)
+    resources_result = subprocess.run([aapt, "dump", "--values", "resources", str(apk)], check=True, capture_output=True, text=True)
     manifest_dump = manifest_result.stdout
     resources_dump = resources_result.stdout
     _require("android.intent.action.MAIN" in manifest_dump and "android.intent.category.LAUNCHER" in manifest_dump,
