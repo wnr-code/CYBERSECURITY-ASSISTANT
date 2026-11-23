@@ -160,13 +160,21 @@ void main() {
     await tester.pumpAndSettle();
 
     final connectionButton = find.widgetWithText(FilledButton, 'Test Connection');
+    final authorization = find.byType(CheckboxListTile).first;
+    final connectionScroll = find.descendant(
+      of: find.byType(ConnectionsScreen),
+      matching: find.byType(Scrollable),
+    ).first;
+    Future<void> confirmCurrentEndpoint() async {
+      await tester.scrollUntilVisible(authorization, 100, scrollable: connectionScroll);
+      await tester.tap(authorization);
+      await tester.pump();
+    }
+
     await tester.enterText(find.byType(TextField).first, 'http://example.com');
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNull);
 
-    final authorizationLabel = find.text('I own this endpoint or have explicit permission to test it.');
-    await tester.ensureVisible(authorizationLabel);
-    await tester.tap(authorizationLabel);
-    await tester.pump();
+    await confirmCurrentEndpoint();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNotNull);
     await tester.ensureVisible(connectionButton);
     await tester.tap(find.text('Test Connection'));
@@ -176,18 +184,14 @@ void main() {
     await tester.enterText(find.byType(TextField).first, 'https://example.com/?token=secret');
     await tester.pump();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNull);
-    await tester.ensureVisible(authorizationLabel);
-    await tester.tap(authorizationLabel);
-    await tester.pump();
+    await confirmCurrentEndpoint();
     await tester.ensureVisible(connectionButton);
     await tester.tap(find.text('Test Connection'));
     await tester.pump();
     expect(find.text('Enter a valid HTTPS URL without credentials, query, or fragment'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'https://example.com:not-a-port');
-    await tester.ensureVisible(authorizationLabel);
-    await tester.tap(authorizationLabel);
-    await tester.pump();
+    await confirmCurrentEndpoint();
     await tester.ensureVisible(connectionButton);
     await tester.tap(find.text('Test Connection'));
     await tester.pump();
