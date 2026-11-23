@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Flutter tests and attach failure output to the GitHub check."""
+"""Run Flutter tests and expose bounded failure logs in GitHub annotations."""
 
 from __future__ import annotations
 
@@ -9,21 +9,31 @@ import subprocess
 import sys
 
 ANSI_ESCAPE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
-MAX_ANNOTATION_CHARS = 50_000
+MAX_FAILURE_OUTPUT_CHARS = 50_000
+ANNOTATION_CHUNK_CHARS = 2_000
 
 
 def _escape_command_value(value: str) -> str:
     return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def _failure_message(exit_code: int, output: str) -> str:
+def _failure_messages(exit_code: int, output: str) -> list[str]:
     clean_output = ANSI_ESCAPE.sub("", output)
     prefix = f"flutter test failed (exit {exit_code}).\n\n"
-    available = MAX_ANNOTATION_CHARS - len(prefix)
+    suffix = "\n… failure output truncated …"
+    available = MAX_FAILURE_OUTPUT_CHARS - len(prefix)
     if len(clean_output) > available:
-        suffix = "\n… output truncated …"
         clean_output = clean_output[: available - len(suffix)] + suffix
-    return prefix + clean_output
+
+    chunks = [
+        clean_output[start : start + ANNOTATION_CHUNK_CHARS]
+        for start in range(0, len(clean_output), ANNOTATION_CHUNK_CHARS)
+    ] or ["No test output was produced."]
+    total = len(chunks)
+    return [
+        f"Flutter test failure output {index}/{total}.\n{prefix if index == 1 else ''}{chunk}"
+        for index, chunk in enumerate(chunks, start=1)
+    ]
 
 
 def main() -> int:
@@ -36,11 +46,13 @@ def main() -> int:
     output = result.stdout + result.stderr
     print(output, end="" if output.endswith("\n") else "\n")
     if result.returncode != 0:
-        message = _failure_message(result.returncode, output)
+        messages = _failure_messages(result.returncode, output)
         if os.environ.get("GITHUB_ACTIONS"):
-            print(f"::error title=Flutter test failures::{_escape_command_value(message)}")
+            for message in messages:
+                escaped = _escape_command_value(message)
+                print(f"::error title=Flutter test failures::{escaped}")
         else:
-            print(message, file=sys.stderr)
+            print("\n".join(messages), file=sys.stderr)
     return result.returncode
 
 
