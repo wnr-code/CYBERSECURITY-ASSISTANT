@@ -66,3 +66,52 @@ jobs:
             apps/android/pubspec.lock
           if-no-files-found: error
           retention-days: 7
+
+      - name: Cold start on Android 12+ emulator (API 35)
+        id: cold_api35
+        continue-on-error: true
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: false
+          working-directory: apps/android
+          script: python3 tool/capture_android_cold_start.py --apk build/app/outputs/flutter-apk/app-debug.apk --output-dir build/cold-start/api-35 --api-level 35
+
+      - name: Cold start on legacy Android emulator (API 30)
+        id: cold_api30
+        continue-on-error: true
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: false
+          working-directory: apps/android
+          script: python3 tool/capture_android_cold_start.py --apk build/app/outputs/flutter-apk/app-debug.apk --output-dir build/cold-start/api-30 --api-level 30
+
+      - name: Upload cold-start screenshots, timing, and logcat
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-cold-start-captures
+          path: apps/android/build/cold-start
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Require both emulator cold-start checks to pass
+        if: always()
+        env:
+          API35_RESULT: ${{ steps.cold_api35.outcome }}
+          API30_RESULT: ${{ steps.cold_api30.outcome }}
+        run: |
+          echo "API 35 cold-start: ${API35_RESULT}"
+          echo "API 30 cold-start: ${API30_RESULT}"
+          test "${API35_RESULT}" = success && test "${API30_RESULT}" = success

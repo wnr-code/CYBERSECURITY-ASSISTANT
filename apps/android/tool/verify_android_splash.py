@@ -55,6 +55,8 @@ def verify_sources(android_root: Path) -> None:
     install_index = activity_source.find(install_call) if install_call else -1
     super_index = activity_source.find("super.onCreate")
     _require(install_index >= 0 and super_index > install_index, "AndroidX SplashScreen must be installed before FlutterActivity.onCreate")
+    _require("native:activity-onCreate" in activity_source and "native:splash-installed" in activity_source,
+             "Debug cold-start timestamps are missing from MainActivity")
     _require("removeSplashScreen" not in activity_source and "FlutterNativeSplash.remove" not in activity_source,
              "Launcher explicitly removes the splash before Flutter's first frame")
     gradle_files = list((app).glob("build.gradle")) + list((app).glob("build.gradle.kts"))

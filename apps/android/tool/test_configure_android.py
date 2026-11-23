@@ -220,6 +220,8 @@ class ConfigureAndroidTests(unittest.TestCase):
             activity_text = main_activity.read_text(encoding="utf-8")
             self.assertIn("installSplashScreen()", activity_text)
             self.assertLess(activity_text.index("installSplashScreen()"), activity_text.index("super.onCreate"))
+            self.assertIn("native:activity-onCreate", activity_text)
+            self.assertIn("native:splash-installed", activity_text)
 
 
 if __name__ == "__main__":

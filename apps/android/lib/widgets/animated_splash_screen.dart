@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../core/startup_trace.dart';
 import '../l10n/app_localizations.dart';
 
 const _splashNavy = Color(0xFF030817);
@@ -26,6 +27,10 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen> with Ticker
   @override
   void initState() {
     super.initState();
+    StartupTrace.mark('animated-splash-init');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) StartupTrace.mark('animated-splash-first-frame');
+    });
     _motion = AnimationController(vsync: this, duration: const Duration(milliseconds: 3600));
     _entrance = AnimationController(vsync: this, duration: const Duration(milliseconds: 760));
   }
@@ -48,6 +53,7 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen> with Ticker
 
   @override
   void dispose() {
+    StartupTrace.mark('animated-splash-disposed');
     _motion.dispose();
     _entrance.dispose();
     super.dispose();

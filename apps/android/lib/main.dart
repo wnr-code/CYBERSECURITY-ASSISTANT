@@ -8,6 +8,7 @@ import 'core/local_result_store.dart';
 import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
 import 'core/security_tools.dart';
+import 'core/startup_trace.dart';
 import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
@@ -17,6 +18,8 @@ import 'widgets/tool_runner_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  StartupTrace.begin();
+  StartupTrace.mark('runApp-call');
   runApp(const CybersecurityAssistantApp());
 }
 
@@ -43,11 +46,13 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   @override
   void initState() {
     super.initState();
+    StartupTrace.mark('flutter-root-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
     // Render the branded Flutter handoff first; SQLite history is loaded by MainShell
     // after its first frame and must never gate the dashboard or native splash handoff.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      StartupTrace.mark('flutter-first-frame');
       _storeHandedToShell = true;
       setState(() => _startupReady = true);
     });
@@ -159,17 +164,19 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
+    StartupTrace.mark('dashboard-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
     final startupResults = widget.initialSavedResults;
     if (startupResults != null) {
       _savedResults = List.unmodifiable(startupResults);
       _savedHistoryLoaded = true;
       _storageError = widget.initialStorageError;
-    } else {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_loadSavedResults());
-      });
     }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      StartupTrace.mark('dashboard-first-frame');
+      if (startupResults == null) unawaited(_loadSavedResults());
+    });
   }
 
   void _selectDestination(int index) => setState(() => _selectedIndex = index);
@@ -221,6 +228,7 @@ class _MainShellState extends State<MainShell> {
   void _clearResults() => setState(_recentResults.clear);
 
   Future<void> _loadSavedResults() async {
+    StartupTrace.mark('sqlite-history-start');
     setState(() {
       _storageBusy = true;
       _storageError = null;
@@ -232,9 +240,12 @@ class _MainShellState extends State<MainShell> {
         _savedResults = saved;
         _savedHistoryLoaded = true;
       });
+      StartupTrace.mark('sqlite-history-loaded');
     } catch (_) {
+      StartupTrace.mark('sqlite-history-error');
       if (mounted) setState(() => _storageError = 'Could not load local history on this device.');
     } finally {
+      StartupTrace.mark('sqlite-history-finished');
       if (mounted) setState(() => _storageBusy = false);
     }
   }
