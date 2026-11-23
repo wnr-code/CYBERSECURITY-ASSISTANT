@@ -29,9 +29,39 @@ void main() {
 
     expect(find.text('Beranda'), findsOneWidget);
     expect(find.text('Alat'), findsOneWidget);
-    expect(find.text('Asisten'), findsOneWidget);
+    expect(find.text('Laporan'), findsOneWidget);
     expect(find.text('Koneksi'), findsOneWidget);
-    expect(find.text('Keamanan digital, kendali tetap di tangan Anda.'), findsOneWidget);
+    expect(find.text('Pengaturan'), findsOneWidget);
+    expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
+  });
+
+  testWidgets('AI assistant is a secondary module, not a primary navigation destination', (tester) async {
+    await tester.pumpWidget(const CybersecurityAssistantApp());
+    final moduleCard = find.text('Modul asisten AI');
+    await tester.scrollUntilVisible(moduleCard, 180);
+    await tester.tap(moduleCard);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
+    expect(find.text('Lihat pusat koneksi'), findsOneWidget);
+    expect(find.text('Asisten'), findsNothing);
+  });
+
+  testWidgets('settings changes language without changing primary navigation', (tester) async {
+    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await tester.tap(find.text('Pengaturan'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Bahasa Indonesia'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('English').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Home'), findsOneWidget);
+    expect(find.text('Tools'), findsOneWidget);
+    expect(find.text('Reports'), findsOneWidget);
+    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Assistant'), findsNothing);
   });
 
   testWidgets('filters the tool registry by search text', (tester) async {

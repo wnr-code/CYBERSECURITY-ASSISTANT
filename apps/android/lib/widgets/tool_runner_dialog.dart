@@ -25,7 +25,9 @@ String _resultSummary(String summary, BuildContext context) {
   final dns = RegExp(r'^Resolved (\d+) address(?:es)?\.$').firstMatch(summary);
   if (dns != null) {
     final count = dns.group(1)!;
-    return context.tr('Menemukan $count alamat IP.');
+    return AppLocalizations.of(context).locale.languageCode == 'id'
+        ? 'Menemukan $count alamat IP.'
+        : 'Resolved $count address${count == '1' ? '' : 'es'}.';
   }
   final tls = RegExp(r'^TLS handshake succeeded; certificate expires (.+)\.$').firstMatch(summary);
   if (tls != null) return '${context.tr('Handshake TLS berhasil; sertifikat berlaku hingga')}: ${tls.group(1)}';

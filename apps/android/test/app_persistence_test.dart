@@ -48,6 +48,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(history.loaded, isTrue);
+    await tester.tap(find.text('Laporan'));
+    await tester.pumpAndSettle();
     final savedTarget = find.textContaining('persisted.example');
     await tester.scrollUntilVisible(savedTarget, 250);
     expect(savedTarget, findsOneWidget);

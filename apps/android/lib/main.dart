@@ -74,15 +74,16 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
           ),
         ),
       ),
-      home: MainShell(onLocaleChanged: _setLocale),
+      home: MainShell(locale: _locale, onLocaleChanged: _setLocale),
     );
   }
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, this.resultStore, this.onLocaleChanged});
+  const MainShell({super.key, this.resultStore, this.locale = const Locale('id'), this.onLocaleChanged});
 
   final ResultHistoryStore? resultStore;
+  final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
 
   @override
@@ -105,6 +106,30 @@ class _MainShellState extends State<MainShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_loadSavedResults());
     });
+  }
+
+  void _selectDestination(int index) => setState(() => _selectedIndex = index);
+
+  // AI and future capability screens are secondary routes, keeping the five primary destinations stable.
+  void _openAssistantModule() {
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: const Duration(milliseconds: 240),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => AssistantScreen(
+        onOpenConnections: () => _selectDestination(3),
+        onOpenTools: () => _selectDestination(1),
+      ),
+      transitionsBuilder: (_, animation, __, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(.025, 0), end: Offset.zero).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    ));
   }
 
   void _rememberResult(ToolRunResult result) {
@@ -180,29 +205,60 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
-    final wideLayout = MediaQuery.sizeOf(context).width >= 720;
+    final wideLayout = MediaQuery.sizeOf(context).width >= 760;
+    final recentResults = List<ToolRunResult>.unmodifiable(_recentResults);
+    final savedResults = List<ToolRunResult>.unmodifiable(_savedResults);
+    final destinations = <({String label, IconData icon})>[
+      (label: context.tr('Home'), icon: Icons.home_rounded),
+      (label: context.tr('Tools'), icon: Icons.grid_view_rounded),
+      (label: context.tr('Reports'), icon: Icons.article_outlined),
+      (label: context.tr('Connections'), icon: Icons.hub_outlined),
+      (label: context.tr('Settings'), icon: Icons.settings_outlined),
+    ];
     final pages = <Widget>[
       DashboardScreen(
-        recentResults: List.unmodifiable(_recentResults),
-        savedResults: List.unmodifiable(_savedResults),
+        recentResults: recentResults,
+        savedResultCount: _savedResults.length,
+        savedHistoryLoaded: _savedHistoryLoaded,
+        onNavigateToTools: () => _selectDestination(1),
+        onNavigateToReports: () => _selectDestination(2),
+        onOpenAssistant: _openAssistantModule,
+        onSaveResult: _saveResultLocally,
+      ),
+      ToolsScreen(recentResults: recentResults, onResult: _rememberResult),
+      ReportsScreen(
+        recentResults: recentResults,
+        savedResults: savedResults,
         savedHistoryLoaded: _savedHistoryLoaded,
         storageBusy: _storageBusy,
         storageError: _storageError,
-        onClearResults: _clearResults,
         onLoadSavedResults: _loadSavedResults,
-        onSaveResult: _saveResultLocally,
+        onClearResults: _clearResults,
         onClearSavedResults: _clearSavedResults,
-        onNavigateToTools: () => setState(() => _selectedIndex = 1),
-      ),
-      ToolsScreen(recentResults: List.unmodifiable(_recentResults), onResult: _rememberResult),
-      AssistantScreen(
-        onOpenConnections: () => setState(() => _selectedIndex = 3),
-        onOpenTools: () => setState(() => _selectedIndex = 1),
+        onSaveResult: _saveResultLocally,
       ),
       const ConnectionsScreen(),
+      SettingsScreen(
+        locale: widget.locale,
+        onLocaleChanged: widget.onLocaleChanged,
+        onOpenAssistant: _openAssistantModule,
+        onOpenConnections: () => _selectDestination(3),
+      ),
     ];
-    final labels = [context.tr('Home'), context.tr('Tools'), context.tr('Assistant'), context.tr('Connections')];
-    final icons = [Icons.grid_view_rounded, Icons.extension_rounded, Icons.auto_awesome, Icons.link_rounded];
+    final page = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 230),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(begin: const Offset(0, .012), end: Offset.zero).animate(animation),
+          child: child,
+        ),
+      ),
+      child: KeyedSubtree(key: ValueKey(_selectedIndex), child: pages[_selectedIndex]),
+    );
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: _ink,
@@ -214,20 +270,7 @@ class _MainShellState extends State<MainShell> {
             Text('CYBERSECURITY', style: TextStyle(fontSize: 14, letterSpacing: 1.2)),
           ],
         ),
-        actions: [
-          const Center(child: _ModeBadge()),
-          if (widget.onLocaleChanged != null)
-            PopupMenuButton<String>(
-              tooltip: context.tr('Language'),
-              icon: const Icon(Icons.language),
-              onSelected: (code) => widget.onLocaleChanged!(Locale(code)),
-              itemBuilder: (_) => [
-                PopupMenuItem(value: 'id', child: Text(context.tr('Bahasa Indonesia'))),
-                PopupMenuItem(value: 'en', child: Text(context.tr('English'))),
-              ],
-            ),
-          const SizedBox(width: 8),
-        ],
+        actions: const [Center(child: _ModeBadge()), SizedBox(width: 16)],
       ),
       body: SafeArea(
         child: Row(children: [
@@ -235,23 +278,23 @@ class _MainShellState extends State<MainShell> {
             NavigationRail(
               selectedIndex: _selectedIndex,
               labelType: NavigationRailLabelType.all,
-              onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+              onDestinationSelected: _selectDestination,
               destinations: [
-                for (var index = 0; index < labels.length; index++)
-                  NavigationRailDestination(icon: Icon(icons[index]), label: Text(labels[index])),
+                for (final destination in destinations)
+                  NavigationRailDestination(icon: Icon(destination.icon), label: Text(destination.label)),
               ],
             ),
-          Expanded(child: pages[_selectedIndex]),
+          Expanded(child: page),
         ]),
       ),
       bottomNavigationBar: wideLayout
           ? null
           : NavigationBar(
               selectedIndex: _selectedIndex,
-              onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+              onDestinationSelected: _selectDestination,
               destinations: [
-                for (var index = 0; index < labels.length; index++)
-                  NavigationDestination(icon: Icon(icons[index]), label: labels[index]),
+                for (final destination in destinations)
+                  NavigationDestination(icon: Icon(destination.icon), label: destination.label),
               ],
             ),
     );
@@ -280,27 +323,21 @@ class DashboardScreen extends StatelessWidget {
   const DashboardScreen({
     super.key,
     required this.recentResults,
-    required this.savedResults,
+    required this.savedResultCount,
     required this.savedHistoryLoaded,
-    required this.storageBusy,
-    required this.storageError,
-    required this.onClearResults,
-    required this.onLoadSavedResults,
-    required this.onSaveResult,
-    required this.onClearSavedResults,
     required this.onNavigateToTools,
+    required this.onNavigateToReports,
+    required this.onOpenAssistant,
+    required this.onSaveResult,
   });
 
   final List<ToolRunResult> recentResults;
-  final List<ToolRunResult> savedResults;
+  final int savedResultCount;
   final bool savedHistoryLoaded;
-  final bool storageBusy;
-  final String? storageError;
-  final VoidCallback onClearResults;
-  final Future<void> Function() onLoadSavedResults;
-  final Future<bool> Function(ToolRunResult) onSaveResult;
-  final Future<void> Function() onClearSavedResults;
   final VoidCallback onNavigateToTools;
+  final VoidCallback onNavigateToReports;
+  final VoidCallback onOpenAssistant;
+  final Future<bool> Function(ToolRunResult) onSaveResult;
 
   @override
   Widget build(BuildContext context) {
@@ -308,163 +345,476 @@ class DashboardScreen extends StatelessWidget {
     final content = ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
       children: [
-        Text(context.tr('RUANG KERJA KEAMANAN'), style: _eyebrow(context)),
+        Text(context.tr('Your security workspace'), style: _eyebrow(context)),
         const SizedBox(height: 8),
-        Text(context.tr('Keamanan digital, kendali tetap di tangan Anda.'),
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.12)),
-        const SizedBox(height: 10),
-        Text(context.tr('Pemeriksaan berjalan di perangkat Anda. Koneksi AI dan layanan cloud bersifat opsional.'),
-            style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
-        const SizedBox(height: 20),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                const Icon(Icons.shield_outlined, color: _mint),
-                const SizedBox(width: 8),
-                Text(context.tr('MODE LOKAL'), style: const TextStyle(color: _mint, fontWeight: FontWeight.w700)),
-              ]),
-              const SizedBox(height: 10),
-              Text(context.tr('Mulai pemeriksaan yang Anda izinkan'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              Text(context.tr('DNS, sertifikat TLS, dan header HTTP. Data sesi tidak keluar dari perangkat kecuali Anda memilih membagikannya.'),
-                  style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: onNavigateToTools,
-                icon: const Icon(Icons.arrow_forward),
-                label: Text(context.tr('Buka katalog alat')),
-              ),
-            ]),
-          ),
+        Text(
+          context.tr('Security, with control in your hands.'),
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.12),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          context.tr('Checks run on your device. AI and cloud connections are optional.'),
+          style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5),
         ),
         const SizedBox(height: 20),
+        _LocalFirstHero(onNavigateToTools: onNavigateToTools),
+        const SizedBox(height: 18),
         Wrap(spacing: 12, runSpacing: 12, children: [
-          _DashboardMetric(icon: Icons.extension_outlined, value: '$availableTools', label: context.tr('Alat aktif')),
-          _DashboardMetric(icon: Icons.history, value: '${recentResults.length}', label: context.tr('Hasil sesi')),
-          _DashboardMetric(icon: Icons.storage_outlined, value: savedHistoryLoaded ? '${savedResults.length}' : '…', label: context.tr('Hasil tersimpan')),
+          _DashboardMetric(
+            icon: Icons.grid_view_rounded,
+            value: '$availableTools',
+            label: context.tr('Local tools'),
+            onTap: onNavigateToTools,
+          ),
+          _DashboardMetric(
+            icon: Icons.bolt_rounded,
+            value: '${recentResults.length}',
+            label: context.tr('Session checks'),
+            onTap: onNavigateToReports,
+          ),
+          _DashboardMetric(
+            icon: Icons.inventory_2_outlined,
+            value: savedHistoryLoaded ? '$savedResultCount' : '…',
+            label: context.tr('Saved locally'),
+            onTap: onNavigateToReports,
+          ),
         ]),
-        const SizedBox(height: 26),
+        const SizedBox(height: 24),
         _DashboardSectionHeader(
-          title: context.tr('Pemeriksaan sesi'),
-          icon: Icons.bolt_outlined,
+          title: context.tr('Recent activity'),
+          icon: Icons.history_rounded,
           action: recentResults.isEmpty
               ? null
-              : TextButton.icon(
-                  onPressed: () => _confirmCopyReport(context, recentResults),
-                  icon: const Icon(Icons.copy_outlined),
-                  label: Text(context.tr('Salin laporan JSON')),
-                ),
+              : TextButton(onPressed: onNavigateToReports, child: Text(context.tr('View reports'))),
         ),
         const SizedBox(height: 10),
         if (recentResults.isEmpty)
           _EmptyState(
-            icon: Icons.manage_search,
-            title: context.tr('Belum ada pemeriksaan'),
-            detail: context.tr('Jalankan alat dari katalog. Hasil sesi sementara akan muncul di sini.'),
-            action: TextButton(onPressed: onNavigateToTools, child: Text(context.tr('Pilih alat'))),
+            icon: Icons.manage_search_rounded,
+            title: context.tr('No checks yet'),
+            detail: context.tr('Start an authorized check from the tool catalog. Results will appear here.'),
+            action: TextButton.icon(
+              onPressed: onNavigateToTools,
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: Text(context.tr('Browse local tools')),
+            ),
           )
         else ...[
           for (final result in recentResults.take(3)) ...[
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.check_circle_outline, color: _mint),
-                title: Text(_toolDisplayName(result.toolId, context)),
-                subtitle: Text('${result.target} · ${_displayResultSummary(result.summary, context)}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _showResultDetails(context, result, onSaveResult: onSaveResult),
-              ),
+            _ResultCard(
+              result: result,
+              saved: false,
+              onTap: () => _showResultDetails(context, result, onSaveResult: onSaveResult),
             ),
             const SizedBox(height: 8),
           ],
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () => _confirmClearResults(context, onClearResults),
-              icon: const Icon(Icons.delete_outline),
-              label: Text(context.tr('Hapus sesi')),
-            ),
+        ],
+        const SizedBox(height: 18),
+        _AssistantModuleCard(onOpen: onOpenAssistant),
+        const SizedBox(height: 18),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.privacy_tip_outlined, color: _mint),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
+                  style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12, height: 1.45),
+                ),
+              ),
+            ]),
           ),
-        ],
-        const SizedBox(height: 20),
-        _DashboardSectionHeader(
-          title: context.tr('Riwayat di perangkat'),
-          icon: Icons.storage_outlined,
-          action: Row(mainAxisSize: MainAxisSize.min, children: [
-            if (savedHistoryLoaded && savedResults.isNotEmpty)
-              TextButton.icon(
-                onPressed: storageBusy ? null : () => _confirmClearSavedResults(context, onClearSavedResults),
-                icon: const Icon(Icons.delete_outline),
-                label: Text(context.tr('Hapus riwayat')),
-              ),
-            TextButton.icon(
-              onPressed: storageBusy ? null : () => onLoadSavedResults(),
-              icon: storageBusy
-                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.refresh),
-              label: Text(context.tr('Muat ulang')),
-            ),
-          ]),
         ),
-        Text(context.tr('Disimpan lokal di SQLite privat aplikasi; tidak dienkripsi atau disinkronkan.'),
-            style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4)),
-        if (storageError != null) ...[
-          const SizedBox(height: 8),
-          Text(_translateStorageError(context, storageError!), style: const TextStyle(color: Colors.orangeAccent)),
-        ],
-        const SizedBox(height: 10),
-        if (storageBusy && savedResults.isEmpty)
-          const Center(child: Padding(padding: EdgeInsets.all(18), child: CircularProgressIndicator()))
-        else if (savedHistoryLoaded && savedResults.isEmpty)
-          _EmptyState(
-            icon: Icons.inventory_2_outlined,
-            title: context.tr('Belum ada riwayat tersimpan'),
-            detail: context.tr('Simpan hasil pemeriksaan dari detail hasil agar dapat dibuka lagi setelah aplikasi ditutup.'),
-          )
-        else
-          for (final result in savedResults.take(10)) ...[
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.save_outlined, color: _mint),
-                title: Text(_toolDisplayName(result.toolId, context)),
-                subtitle: Text('${result.target} · ${_displayResultSummary(result.summary, context)}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => _showResultDetails(context, result),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        const SizedBox(height: 20),
-        Text(context.tr('Periksa hanya sistem yang Anda miliki atau yang memberi Anda izin. Konfirmasi di aplikasi bukan bukti izin hukum.'),
-            style: TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 12, height: 1.45)),
       ],
     );
-
     return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 960), child: content));
   }
 }
 
-class _DashboardMetric extends StatelessWidget {
-  const _DashboardMetric({required this.icon, required this.value, required this.label});
-  final IconData icon;
-  final String value;
-  final String label;
+class _LocalFirstHero extends StatelessWidget {
+  const _LocalFirstHero({required this.onNavigateToTools});
+  final VoidCallback onNavigateToTools;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 180,
-        child: Card(
+  Widget build(BuildContext context) => Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1D3157), Color(0xFF17233A), Color(0xFF142238)],
+          ),
+          border: Border.all(color: _mint.withValues(alpha: .18)),
+        ),
+        child: Stack(children: [
+          Positioned(
+            right: -12,
+            top: -18,
+            child: Icon(Icons.shield_outlined, size: 170, color: Colors.white.withValues(alpha: .035)),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: _mint.withValues(alpha: .12), borderRadius: BorderRadius.circular(30)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.check_circle_outline, size: 16, color: _mint),
+                    const SizedBox(width: 6),
+                    Text(context.tr('Local mode · Works offline'), style: const TextStyle(color: _mint, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+              ]),
+              const SizedBox(height: 14),
+              Text(context.tr('Your data. Your infrastructure.'),
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text(context.tr('DNS lookup, TLS inspection, and HTTP security headers run locally on this device.'),
+                  style: TextStyle(color: Colors.white.withValues(alpha: .76), height: 1.45)),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: onNavigateToTools,
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: Text(context.tr('Start a security check')),
+              ),
+            ]),
+          ),
+        ]),
+      );
+}
+
+class _AssistantModuleCard extends StatelessWidget {
+  const _AssistantModuleCard({required this.onOpen});
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onOpen,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(children: [
-              Icon(icon, color: _mint),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: const Color(0xFF8066FF).withValues(alpha: .16), borderRadius: BorderRadius.circular(14)),
+                child: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFAA9AFF)),
+              ),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(value, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                Text(label, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
+                Text(context.tr('AI assistant module'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 3),
+                Text(context.tr('Not connected · local security tools remain available'),
+                    style: TextStyle(color: Colors.white.withValues(alpha: .65), fontSize: 12)),
               ])),
+              const Icon(Icons.arrow_forward_rounded),
             ]),
+          ),
+        ),
+      );
+}
+
+class _ReportEntry {
+  const _ReportEntry({required this.result, required this.saved});
+  final ToolRunResult result;
+  final bool saved;
+}
+
+enum _ReportFilter { all, session, saved }
+
+class ReportsScreen extends StatefulWidget {
+  const ReportsScreen({
+    super.key,
+    required this.recentResults,
+    required this.savedResults,
+    required this.savedHistoryLoaded,
+    required this.storageBusy,
+    required this.storageError,
+    required this.onLoadSavedResults,
+    required this.onClearResults,
+    required this.onClearSavedResults,
+    required this.onSaveResult,
+  });
+
+  final List<ToolRunResult> recentResults;
+  final List<ToolRunResult> savedResults;
+  final bool savedHistoryLoaded;
+  final bool storageBusy;
+  final String? storageError;
+  final Future<void> Function() onLoadSavedResults;
+  final VoidCallback onClearResults;
+  final Future<void> Function() onClearSavedResults;
+  final Future<bool> Function(ToolRunResult) onSaveResult;
+
+  @override
+  State<ReportsScreen> createState() => _ReportsScreenState();
+}
+
+class _ReportsScreenState extends State<ReportsScreen> {
+  _ReportFilter _filter = _ReportFilter.all;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <_ReportEntry>[
+      if (_filter != _ReportFilter.saved) for (final result in widget.recentResults) _ReportEntry(result: result, saved: false),
+      if (_filter != _ReportFilter.session) for (final result in widget.savedResults) _ReportEntry(result: result, saved: true),
+    ];
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960),
+        child: ListView(padding: const EdgeInsets.fromLTRB(20, 20, 20, 28), children: [
+          Text(context.tr('REPORTS'), style: _eyebrow(context)),
+          const SizedBox(height: 8),
+          Text(context.tr('Reports and history'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(context.tr('Review current session checks and results saved in private on-device SQLite.'),
+              style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
+          const SizedBox(height: 16),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final filter in _ReportFilter.values)
+              ChoiceChip(
+                label: Text(context.tr(switch (filter) {
+                  _ReportFilter.all => 'All reports',
+                  _ReportFilter.session => 'This session',
+                  _ReportFilter.saved => 'Saved on device',
+                })),
+                selected: filter == _filter,
+                onSelected: (_) => setState(() => _filter = filter),
+              ),
+          ]),
+          const SizedBox(height: 12),
+          if (_filter != _ReportFilter.saved && widget.recentResults.isNotEmpty)
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              OutlinedButton.icon(
+                onPressed: () => _confirmCopyReport(context, widget.recentResults),
+                icon: const Icon(Icons.ios_share_rounded),
+                label: Text(context.tr('Export session JSON')),
+              ),
+              TextButton.icon(
+                onPressed: () => _confirmClearResults(context, widget.onClearResults),
+                icon: const Icon(Icons.delete_outline),
+                label: Text(context.tr('Clear session')),
+              ),
+            ]),
+          if (_filter != _ReportFilter.session)
+            Row(children: [
+              Expanded(
+                child: Text(context.tr('Stored locally in app-private SQLite. Not encrypted or synced.'),
+                    style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 12, height: 1.4)),
+              ),
+              if (widget.savedHistoryLoaded && widget.savedResults.isNotEmpty)
+                IconButton(
+                  tooltip: context.tr('Delete saved history'),
+                  onPressed: widget.storageBusy ? null : () => _confirmClearSavedResults(context, widget.onClearSavedResults),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              IconButton(
+                tooltip: context.tr('Refresh history'),
+                onPressed: widget.storageBusy ? null : () => widget.onLoadSavedResults(),
+                icon: widget.storageBusy
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh_rounded),
+              ),
+            ]),
+          if (widget.storageError != null) ...[
+            const SizedBox(height: 8),
+            Text(_translateStorageError(context, widget.storageError!), style: const TextStyle(color: Colors.orangeAccent)),
+          ],
+          const SizedBox(height: 8),
+          if (widget.storageBusy && rows.isEmpty)
+            const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+          else if (rows.isEmpty)
+            _EmptyState(
+              icon: Icons.article_outlined,
+              title: context.tr('No reports in this view'),
+              detail: context.tr('Run a local check, or save a result from its details to keep it after closing the app.'),
+            )
+          else
+            for (final entry in rows) ...[
+              _ResultCard(
+                result: entry.result,
+                saved: entry.saved,
+                onTap: () => _showResultDetails(
+                  context,
+                  entry.result,
+                  onSaveResult: entry.saved ? null : widget.onSaveResult,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+          const SizedBox(height: 16),
+          Text(context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
+              style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 12, height: 1.45)),
+        ]),
+      ),
+    );
+  }
+}
+
+class _ResultCard extends StatelessWidget {
+  const _ResultCard({required this.result, required this.saved, required this.onTap});
+  final ToolRunResult result;
+  final bool saved;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(color: _mint.withValues(alpha: .1), borderRadius: BorderRadius.circular(13)),
+                child: Icon(saved ? Icons.bookmark_outline_rounded : _toolIcon(result.toolId), color: _mint),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(_toolDisplayName(result.toolId, context), style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 3),
+                Text('${result.target} · ${_displayResultSummary(result.summary, context)}',
+                    maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
+                const SizedBox(height: 3),
+                Text(saved ? context.tr('Saved report') : context.tr('Session result'),
+                    style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 11, fontWeight: FontWeight.w600)),
+              ])),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded),
+            ]),
+          ),
+        ),
+      );
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({
+    super.key,
+    required this.locale,
+    required this.onLocaleChanged,
+    required this.onOpenAssistant,
+    required this.onOpenConnections,
+  });
+
+  final Locale locale;
+  final ValueChanged<Locale>? onLocaleChanged;
+  final VoidCallback onOpenAssistant;
+  final VoidCallback onOpenConnections;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(padding: const EdgeInsets.fromLTRB(20, 20, 20, 28), children: [
+            Text(context.tr('SETTINGS'), style: _eyebrow(context)),
+            const SizedBox(height: 8),
+            Text(context.tr('Preferences and privacy'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(children: [
+                  const Icon(Icons.language_rounded, color: _mint),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(context.tr('Interface language'), style: const TextStyle(fontWeight: FontWeight.w600))),
+                  DropdownButton<Locale>(
+                    value: locale,
+                    underline: const SizedBox.shrink(),
+                    onChanged: onLocaleChanged == null
+                        ? null
+                        : (selected) {
+                            if (selected != null) onLocaleChanged!(selected);
+                          },
+                    items: [
+                      DropdownMenuItem(value: const Locale('id'), child: Text(context.tr('Bahasa Indonesia'))),
+                      DropdownMenuItem(value: const Locale('en'), child: Text(context.tr('English'))),
+                    ],
+                  ),
+                ]),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFAA9AFF)),
+                title: Text(context.tr('AI & models')),
+                subtitle: Text(context.tr('Assistant is not connected. The module opens as a secondary screen, outside primary navigation.')),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onOpenAssistant,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.hub_outlined, color: _mint),
+                title: Text(context.tr('Connections and providers')),
+                subtitle: Text(context.tr('Manage your optional endpoints and review provider guides.')),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onOpenConnections,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.lock_outline_rounded, color: _mint),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(context.tr('Privacy and local storage'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 5),
+                    Text(context.tr('Built-in checks run on this device. Saved reports use app-private SQLite and are not encrypted or synced.'),
+                        style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.45)),
+                  ])),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      );
+}
+
+class _DashboardMetric extends StatelessWidget {
+  const _DashboardMetric({required this.icon, required this.value, required this.label, required this.onTap});
+  final IconData icon;
+  final String value;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 150,
+        child: Card(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                Icon(icon, color: _mint),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(begin: const Offset(0, .12), end: Offset.zero).animate(animation),
+                        child: child,
+                      ),
+                    ),
+                    child: Text(value, key: ValueKey(value), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                  ),
+                  Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
+                ])),
+              ]),
+            ),
           ),
         ),
       );
@@ -623,8 +973,11 @@ class _ToolsScreenState extends State<ToolsScreen> {
       return matchesCategory && matchesQuery;
     }).toList();
 
-    return Column(
-      children: [
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960),
+        child: Column(
+          children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -701,7 +1054,9 @@ class _ToolsScreenState extends State<ToolsScreen> {
                   },
                 ),
         ),
-      ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -713,33 +1068,50 @@ class AssistantScreen extends StatelessWidget {
   final VoidCallback onOpenTools;
 
   @override
-  Widget build(BuildContext context) => Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
-          child: ListView(padding: const EdgeInsets.all(20), children: [
-            Text(context.tr('ASISTEN AI'), style: _eyebrow(context)),
-            const SizedBox(height: 8),
-            Text(context.tr('Bantuan berbasis AI'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.info_outline, color: _mint, size: 28),
-                  const SizedBox(height: 12),
-                  Text(context.tr('Asisten AI belum terhubung'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 8),
-                  Text(context.tr('Belum ada pesan yang dikirim ke penyedia AI. Koneksi provider dan analisis AI belum diimplementasikan. Jangan masukkan API key atau data sensitif di layar ini.'),
-                      style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
-                  const SizedBox(height: 14),
-                  Wrap(spacing: 10, runSpacing: 8, children: [
-                    OutlinedButton.icon(onPressed: onOpenConnections, icon: const Icon(Icons.link), label: Text(context.tr('Lihat pusat koneksi'))),
-                    FilledButton.icon(onPressed: onOpenTools, icon: const Icon(Icons.extension_outlined), label: Text(context.tr('Gunakan alat lokal'))),
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('AI assistant module'))),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: ListView(padding: const EdgeInsets.all(20), children: [
+              Text(context.tr('AI ASSISTANT'), style: _eyebrow(context)),
+              const SizedBox(height: 8),
+              Text(context.tr('AI assistance'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.info_outline, color: _mint, size: 28),
+                    const SizedBox(height: 12),
+                    Text(context.tr('AI assistant is not connected'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    Text(context.tr('No messages are sent to an AI provider. Provider connections and AI analysis are not implemented. Do not enter API keys or sensitive data on this screen.'),
+                        style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
+                    const SizedBox(height: 14),
+                    Wrap(spacing: 10, runSpacing: 8, children: [
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          onOpenConnections();
+                        },
+                        icon: const Icon(Icons.hub_outlined),
+                        label: Text(context.tr('View connection center')),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          onOpenTools();
+                        },
+                        icon: const Icon(Icons.grid_view_rounded),
+                        label: Text(context.tr('Use local tools')),
+                      ),
+                    ]),
                   ]),
-                ]),
+                ),
               ),
-            ),
-          ]),
+            ]),
+          ),
         ),
       );
 }
@@ -780,9 +1152,12 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
+  Widget build(BuildContext context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
           Text(context.tr('PUSAT KONEKSI'), style: _eyebrow(context)),
           const SizedBox(height: 8),
           Text(context.tr('Infrastruktur pilihan Anda'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
@@ -894,8 +1269,9 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
               ),
             ),
             const SizedBox(height: 8),
-          ],
-        ],
+            ],
+          ),
+        ),
       );
 
   Uri? _parseConnectionEndpoint(String input) {
