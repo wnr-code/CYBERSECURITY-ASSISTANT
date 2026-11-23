@@ -98,6 +98,10 @@ void main() {
   });
 
   testWidgets('center AI chat shortcut opens the existing secondary assistant route', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await _pumpApp(tester);
     expect(find.text('Chat AI'), findsOneWidget);
 
