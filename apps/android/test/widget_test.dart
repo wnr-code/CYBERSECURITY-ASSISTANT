@@ -167,7 +167,8 @@ void main() {
     ).first;
     Future<void> confirmCurrentEndpoint() async {
       await tester.scrollUntilVisible(authorization, 100, scrollable: connectionScroll);
-      await tester.ensureVisible(authorization, alignment: 0.5);
+      await tester.drag(connectionScroll, const Offset(0, 160));
+      await tester.pumpAndSettle();
       await tester.tap(authorization);
       await tester.pump();
     }
