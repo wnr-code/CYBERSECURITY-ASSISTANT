@@ -4,7 +4,6 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_localizations/flutter_localizations.dart' hide GlobalMaterialLocalizations;
 import 'package:material_ui/material_ui.dart';
 
 class _MemorySecretBackend implements SecureStorageBackend {
@@ -118,10 +117,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [
+      localizationsDelegates: [
         AppLocalizationsDelegate(),
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
+        ...GlobalMaterialLocalizations.delegates,
       ],
       home: Scaffold(
         body: Builder(builder: (context) => TextButton(
@@ -136,10 +134,13 @@ void main() {
 
     await tester.tap(find.text('Open details'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Store API key'));
+    final storeCredentialButton = find.widgetWithText(OutlinedButton, 'Store API key');
+    await tester.ensureVisible(storeCredentialButton);
+    await tester.tap(storeCredentialButton);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'test-key-never-send');
     expect(tester.widget<TextField>(find.byType(TextField).last).obscureText, isTrue);
+    await tester.ensureVisible(find.text('Save securely'));
     await tester.tap(find.text('Save securely'));
     await tester.pumpAndSettle();
 

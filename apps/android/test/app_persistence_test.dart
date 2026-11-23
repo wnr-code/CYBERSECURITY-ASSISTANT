@@ -3,7 +3,6 @@ import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_localizations/flutter_localizations.dart' hide GlobalMaterialLocalizations;
 import 'package:material_ui/material_ui.dart';
 
 class _SavedHistory implements ResultHistoryStore {
@@ -40,10 +39,9 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [
+      localizationsDelegates: [
         AppLocalizationsDelegate(),
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
+        ...GlobalMaterialLocalizations.delegates,
       ],
       home: MainShell(resultStore: history),
     ));

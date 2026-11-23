@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
-import 'package:flutter_localizations/flutter_localizations.dart' hide GlobalMaterialLocalizations;
 import 'package:material_ui/material_ui.dart';
 
 import 'core/local_result_store.dart';
@@ -44,10 +43,9 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
       title: 'Cybersecurity Assistant',
       locale: _locale,
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [
+      localizationsDelegates: [
         AppLocalizationsDelegate(),
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
+        ...GlobalMaterialLocalizations.delegates,
       ],
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
