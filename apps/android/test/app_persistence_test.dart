@@ -11,7 +11,7 @@ class _SavedHistory implements ResultHistoryStore {
     summary: 'Resolved one address.',
     details: const ['192.0.2.10'],
     findings: const [],
-    completedAt: const DateTime.utc(2026, 11, 23),
+    completedAt: DateTime.utc(2026, 11, 23),
     authorizationConfirmed: true,
   );
   bool loaded = false;
