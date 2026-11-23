@@ -2,8 +2,8 @@
 
 - **Review date:** 2026-11-23
 - **Review type:** Source-level static review of the current prototype
-- **Status:** Findings below were addressed in source; Flutter/Android verification remains incomplete
-- **Not a certification:** No Dart/Flutter tests, Android build, device testing, dynamic analysis, or penetration test was available in this environment. Five Python unit tests for the hardening configurator passed locally.
+- **Status:** Source findings have fixes; Flutter/Android verification is still in progress
+- **Not a certification:** No successful Dart/Flutter test run, Android build, device test, dynamic analysis, or penetration test has completed. Eight Python unit tests for the hardening/analyzer helpers passed locally.
 
 ## Scope
 
@@ -34,6 +34,10 @@ Reviewed the Android Flutter foundation, including target policy and network ada
 **Risk:** Mutable action tags and default workflow permissions increase supply-chain exposure; generated local build/signing files may be accidentally committed.
 
 **Change:** CI actions are pinned to commit SHAs with `contents: read` permission. A repository `.gitignore` excludes Flutter/Gradle output, Python caches, machine-local Android configuration, and signing key files, while intentionally not ignoring `pubspec.lock`. The CI workflow generates a temporary Android scaffold, applies the hardening script, runs tests/analyzer, builds a debug APK, and uploads the APK plus generated lockfile for review. That workflow has not run yet.
+
+## CI verification attempts
+
+The first GitHub Actions run on commit `f32fa91` generated the Android scaffold, applied the native configuration, and resolved dependencies successfully. `flutter analyze` failed, so Flutter tests and APK build were skipped. GitHub check annotations identified deprecated `package:flutter/material.dart` imports in Flutter 3.47+, deprecated `DropdownButtonFormField.value`, and a missing `const`; these were corrected by migrating to `material_ui`, using `initialValue`, and adding `const`. A second CI run is required to verify those fixes; do not treat the first run as a successful build.
 
 ## Residual risks and release blockers
 

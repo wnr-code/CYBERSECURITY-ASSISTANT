@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../core/github_releases.dart';
 
@@ -29,7 +29,7 @@ class _ReleaseCatalogDialogState extends State<ReleaseCatalogDialog> {
               ),
               const SizedBox(height: 14),
               DropdownButtonFormField<GitHubRepository>(
-                value: _repository,
+                initialValue: _repository,
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Reference repository'),
                 items: [

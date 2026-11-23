@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../core/provider_registry.dart';
 import '../core/secure_credential_store.dart';

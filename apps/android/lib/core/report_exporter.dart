@@ -34,5 +34,5 @@ String buildSessionReportJson(List<ToolRunResult> results, {DateTime? generatedA
         },
     ],
   };
-  return JsonEncoder.withIndent('  ').convert(report);
+  return const JsonEncoder.withIndent('  ').convert(report);
 }

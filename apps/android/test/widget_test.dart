@@ -2,8 +2,8 @@ import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 class _MemorySecretBackend implements SecureStorageBackend {
   final values = <String, String>{};
