@@ -84,6 +84,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'example.com');
+    expect(find.text('Domain yang dicari'), findsOneWidget);
     await tester.tap(find.text('Jalankan pemeriksaan'));
     await tester.pumpAndSettle();
 

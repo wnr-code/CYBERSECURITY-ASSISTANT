@@ -21,6 +21,13 @@ String _toolDescription(String id, BuildContext context) => switch (id) {
       _ => '',
     };
 
+String _targetLabel(String id, BuildContext context) => switch (id) {
+      'dns_lookup' => context.tr('Domain to resolve'),
+      'tls_inspector' => context.tr('HTTPS hostname'),
+      'http_headers' => context.tr('Website origin'),
+      _ => context.tr('Target domain'),
+    };
+
 String _resultSummary(String summary, BuildContext context) {
   final dns = RegExp(r'^Resolved (\d+) address(?:es)?\.$').firstMatch(summary);
   if (dns != null) {
@@ -156,7 +163,7 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
                     _error = null;
                     _result = null;
                   }),
-                  decoration: InputDecoration(labelText: context.tr('Domain target'), hintText: context.tr('contoh.id')),
+                  decoration: InputDecoration(labelText: _targetLabel(widget.tool.id, context), hintText: context.tr('example.com')),
                 ),
                 const SizedBox(height: 6),
                 CheckboxListTile(

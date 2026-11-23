@@ -457,6 +457,9 @@ class AppLocalizations {
     "Privacy and local storage": "Privasi dan penyimpanan lokal",
     "Built-in checks run on this device. Saved reports use app-private SQLite and are not encrypted or synced.": "Pemeriksaan bawaan berjalan di perangkat ini. Laporan tersimpan menggunakan SQLite privat aplikasi, tidak dienkripsi atau disinkronkan.",
     "Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.": "Periksa hanya sistem yang Anda miliki atau yang memberi Anda izin. Konfirmasi aplikasi bukan bukti hukum atas izin.",
+    "Domain to resolve": "Domain yang dicari",
+    "HTTPS hostname": "Hostname HTTPS",
+    "Website origin": "Alamat asal situs",
   };
 
   static const _en = <String, String>{
