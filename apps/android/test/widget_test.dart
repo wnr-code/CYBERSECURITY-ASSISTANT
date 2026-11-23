@@ -167,6 +167,7 @@ void main() {
     ).first;
     Future<void> confirmCurrentEndpoint() async {
       await tester.scrollUntilVisible(authorization, 100, scrollable: connectionScroll);
+      await tester.ensureVisible(authorization, alignment: 0.5);
       await tester.tap(authorization);
       await tester.pump();
     }
@@ -185,6 +186,7 @@ void main() {
     await tester.pump();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNull);
     await confirmCurrentEndpoint();
+    expect(tester.widget<FilledButton>(connectionButton).onPressed, isNotNull);
     await tester.ensureVisible(connectionButton);
     await tester.tap(find.text('Test Connection'));
     await tester.pump();
