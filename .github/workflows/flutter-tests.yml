@@ -47,7 +47,7 @@ jobs:
 
       - name: Run unit and widget tests
         working-directory: apps/android
-        run: flutter test
+        run: python3 tool/run_flutter_test.py
 
       - name: Build Android debug APK
         working-directory: apps/android

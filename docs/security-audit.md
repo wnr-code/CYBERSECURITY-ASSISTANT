@@ -37,7 +37,7 @@ Reviewed the Android Flutter foundation, including target policy and network ada
 
 ## CI verification attempts
 
-The first GitHub Actions run on commit `f32fa91` generated the Android scaffold, applied the native configuration, and resolved dependencies successfully. `flutter analyze` failed, so Flutter tests and APK build were skipped. GitHub check annotations identified deprecated `package:flutter/material.dart` imports in Flutter 3.47+, deprecated `DropdownButtonFormField.value`, and a missing `const`; these were corrected by migrating to `material_ui`, using `initialValue`, and adding `const`. A second CI run is required to verify those fixes; do not treat the first run as a successful build.
+The first GitHub Actions run on commit `f32fa91` generated the Android scaffold, applied the native configuration, and resolved dependencies successfully. `flutter analyze` failed, so Flutter tests and APK build were skipped. GitHub check annotations identified deprecated `package:flutter/material.dart` imports in Flutter 3.47+, deprecated `DropdownButtonFormField.value`, and a missing `const`; these were corrected by migrating to `material_ui`, using `initialValue`, and adding `const`. A second CI run on commit `cc3f255` passed scaffold generation, hardening configuration, dependency resolution, and `flutter analyze`, but reported 28 Flutter tests passed and 3 failed; APK build was skipped. Detailed test output could not be retrieved from the current sandbox because GitHub's log archive host is outside its network allowlist. The test wrapper now exposes the captured failure output as a check annotation for the next run. Do not treat either run as a successful test/build.
 
 ## Residual risks and release blockers
 
