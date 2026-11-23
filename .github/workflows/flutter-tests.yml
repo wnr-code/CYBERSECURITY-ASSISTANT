@@ -51,7 +51,7 @@ jobs:
 
       - name: Build Android debug APK
         working-directory: apps/android
-        run: flutter build apk --debug
+        run: python3 tool/run_flutter_build.py
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
