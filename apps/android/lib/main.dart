@@ -56,7 +56,9 @@ class CybersecurityAssistantApp extends StatelessWidget {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  const MainShell({super.key, this.resultStore});
+
+  final LocalResultStore? resultStore;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -65,11 +67,20 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
   final List<ToolRunResult> _recentResults = [];
-  final _resultStore = LocalResultStore();
+  late final LocalResultStore _resultStore;
   List<ToolRunResult> _savedResults = [];
   bool _savedHistoryLoaded = false;
   bool _storageBusy = false;
   String? _storageError;
+
+  @override
+  void initState() {
+    super.initState();
+    _resultStore = widget.resultStore ?? LocalResultStore();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadSavedResults());
+    });
+  }
 
   void _rememberResult(ToolRunResult result) {
     setState(() {

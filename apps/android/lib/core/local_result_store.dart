@@ -17,6 +17,7 @@ class LocalResultStore {
   }
 
   static const tableName = 'scan_results';
+  static const _databaseVersion = 1;
   final sqflite.DatabaseFactory? _databaseFactoryOverride;
   sqflite.DatabaseFactory get _databaseFactory => _databaseFactoryOverride ?? sqflite.databaseFactory;
   final Future<String> Function() _databasePathProvider;
@@ -49,23 +50,35 @@ class LocalResultStore {
     return _databaseFactory.openDatabase(
       path,
       options: sqflite.OpenDatabaseOptions(
-        version: 1,
-        onCreate: (db, version) async {
-          await db.execute('''
-            CREATE TABLE $tableName (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              result_key TEXT NOT NULL UNIQUE,
-              tool_id TEXT NOT NULL,
-              target TEXT NOT NULL,
-              completed_at TEXT NOT NULL,
-              authorization_confirmed INTEGER NOT NULL,
-              payload_json TEXT NOT NULL
-            )
-          ''');
-          await db.execute('CREATE INDEX scan_results_completed_at ON $tableName(completed_at)');
+        version: _databaseVersion,
+        onCreate: (db, version) => _migrate(db, 1),
+        onUpgrade: (db, oldVersion, newVersion) async {
+          for (var version = oldVersion + 1; version <= newVersion; version++) {
+            await _migrate(db, version);
+          }
         },
       ),
     );
+  }
+
+  Future<void> _migrate(sqflite.Database db, int version) async {
+    switch (version) {
+      case 1:
+        await db.execute('''
+          CREATE TABLE $tableName (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            result_key TEXT NOT NULL UNIQUE,
+            tool_id TEXT NOT NULL,
+            target TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            authorization_confirmed INTEGER NOT NULL,
+            payload_json TEXT NOT NULL
+          )
+        ''');
+        await db.execute('CREATE INDEX scan_results_completed_at ON $tableName(completed_at)');
+      default:
+        throw StateError('No safe SQLite migration is registered for schema version $version.');
+    }
   }
 
   Future<int> save(ToolRunResult result) async {
@@ -74,19 +87,21 @@ class LocalResultStore {
     }
     if (maxRecords < 1) throw StateError('maxRecords must be at least 1.');
     final db = await _open();
-    final id = await db.insert(tableName, {
-      'result_key': '${result.toolId}|${result.target}|${result.completedAt.toUtc().microsecondsSinceEpoch}',
-      'tool_id': result.toolId,
-      'target': result.target,
-      'completed_at': result.completedAt.toUtc().toIso8601String(),
-      'authorization_confirmed': result.authorizationConfirmed ? 1 : 0,
-      'payload_json': encodeToolRunResult(result),
-    }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
-    await db.rawDelete(
-      'DELETE FROM $tableName WHERE id NOT IN (SELECT id FROM $tableName ORDER BY id DESC LIMIT ?)',
-      [maxRecords],
-    );
-    return id;
+    return db.transaction((transaction) async {
+      final id = await transaction.insert(tableName, {
+        'result_key': '${result.toolId}|${result.target}|${result.completedAt.toUtc().microsecondsSinceEpoch}',
+        'tool_id': result.toolId,
+        'target': result.target,
+        'completed_at': result.completedAt.toUtc().toIso8601String(),
+        'authorization_confirmed': result.authorizationConfirmed ? 1 : 0,
+        'payload_json': encodeToolRunResult(result),
+      }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
+      await transaction.rawDelete(
+        'DELETE FROM $tableName WHERE id NOT IN (SELECT id FROM $tableName ORDER BY id DESC LIMIT ?)',
+        [maxRecords],
+      );
+      return id;
+    });
   }
 
   Future<List<ToolRunResult>> loadRecent({int limit = 30}) async {

@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -33,6 +36,31 @@ void main() {
     expect(loaded.single.target, 'example.com');
     expect(loaded.single.details, ['192.0.2.1']);
     expect(loaded.single.authorizationConfirmed, isTrue);
+  });
+
+  test('file-backed SQLite history survives closing and reopening the store', () async {
+    final directory = await Directory.systemTemp.createTemp('cybersecurity-assistant-history-');
+    final databasePath = p.join(directory.path, 'history.sqlite');
+    final firstStore = LocalResultStore(
+      databaseFactory: databaseFactoryFfi,
+      databasePathProvider: () async => databasePath,
+    );
+
+    await firstStore.save(result('restart-persist.example'));
+    await firstStore.close();
+
+    final reopenedStore = LocalResultStore(
+      databaseFactory: databaseFactoryFfi,
+      databasePathProvider: () async => databasePath,
+    );
+    addTearDown(() async {
+      await reopenedStore.close();
+      await directory.delete(recursive: true);
+    });
+
+    final loaded = await reopenedStore.loadRecent();
+    expect(loaded, hasLength(1));
+    expect(loaded.single.target, 'restart-persist.example');
   });
 
   test('re-saving the same check does not create a duplicate record', () async {
