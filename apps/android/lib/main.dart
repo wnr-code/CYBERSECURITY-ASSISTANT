@@ -10,18 +10,26 @@ import 'core/report_exporter.dart';
 import 'core/security_tools.dart';
 import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
+import 'widgets/animated_splash_screen.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
 
-void main() => runApp(const CybersecurityAssistantApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+  runApp(const CybersecurityAssistantApp());
+}
 
 const _ink = Color(0xFF0B1020);
 const _panel = Color(0xFF151D31);
 const _mint = Color(0xFF73F0C2);
+const _electricBlue = Color(0xFF168DFF);
 
 class CybersecurityAssistantApp extends StatefulWidget {
-  const CybersecurityAssistantApp({super.key});
+  const CybersecurityAssistantApp({super.key, this.resultStore});
+
+  final ResultHistoryStore? resultStore;
 
   @override
   State<CybersecurityAssistantApp> createState() => _CybersecurityAssistantAppState();
@@ -29,8 +37,38 @@ class CybersecurityAssistantApp extends StatefulWidget {
 
 class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   Locale _locale = const Locale('id');
+  late final ResultHistoryStore _resultStore;
+  List<ToolRunResult> _startupResults = const [];
+  String? _startupStorageError;
+  bool _startupReady = false;
+  bool _storeHandedToShell = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _resultStore = widget.resultStore ?? LocalResultStore();
+    unawaited(_initializeLocalWorkspace());
+  }
+
+  Future<void> _initializeLocalWorkspace() async {
+    try {
+      _startupResults = await _resultStore.loadRecent().timeout(const Duration(seconds: 6));
+    } catch (_) {
+      // Do not trap users on startup if local storage is unavailable; Reports can retry it.
+      _startupStorageError = 'Could not load local history on this device.';
+    }
+    if (!mounted) return;
+    _storeHandedToShell = true;
+    setState(() => _startupReady = true);
+  }
 
   void _setLocale(Locale locale) => setState(() => _locale = locale);
+
+  @override
+  void dispose() {
+    if (!_storeHandedToShell) unawaited(_resultStore.close());
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,15 +112,39 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
           ),
         ),
       ),
-      home: MainShell(locale: _locale, onLocaleChanged: _setLocale),
+      home: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 260),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+        child: _startupReady
+            ? MainShell(
+                key: const ValueKey('main-shell'),
+                resultStore: _resultStore,
+                initialSavedResults: _startupResults,
+                initialStorageError: _startupStorageError,
+                locale: _locale,
+                onLocaleChanged: _setLocale,
+              )
+            : const AnimatedSplashScreen(key: ValueKey('animated-splash')),
+      ),
     );
   }
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, this.resultStore, this.locale = const Locale('id'), this.onLocaleChanged});
+  const MainShell({
+    super.key,
+    this.resultStore,
+    this.initialSavedResults,
+    this.initialStorageError,
+    this.locale = const Locale('id'),
+    this.onLocaleChanged,
+  });
 
   final ResultHistoryStore? resultStore;
+  final List<ToolRunResult>? initialSavedResults;
+  final String? initialStorageError;
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
 
@@ -103,9 +165,16 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     _resultStore = widget.resultStore ?? LocalResultStore();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_loadSavedResults());
-    });
+    final startupResults = widget.initialSavedResults;
+    if (startupResults != null) {
+      _savedResults = List.unmodifiable(startupResults);
+      _savedHistoryLoaded = true;
+      _storageError = widget.initialStorageError;
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_loadSavedResults());
+      });
+    }
   }
 
   void _selectDestination(int index) => setState(() => _selectedIndex = index);
@@ -289,16 +358,193 @@ class _MainShellState extends State<MainShell> {
       ),
       bottomNavigationBar: wideLayout
           ? null
-          : NavigationBar(
+          : _FloatingBottomNavigation(
+              destinations: destinations,
               selectedIndex: _selectedIndex,
               onDestinationSelected: _selectDestination,
-              destinations: [
-                for (final destination in destinations)
-                  NavigationDestination(icon: Icon(destination.icon), label: destination.label),
-              ],
+              onOpenAssistant: _openAssistantModule,
             ),
     );
   }
+}
+
+class _FloatingBottomNavigation extends StatelessWidget {
+  const _FloatingBottomNavigation({
+    required this.destinations,
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+    required this.onOpenAssistant,
+  });
+
+  final List<({String label, IconData icon})> destinations;
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+  final VoidCallback onOpenAssistant;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+        child: SizedBox(
+          height: 70,
+          child: Row(children: [
+            Expanded(
+              child: Row(children: [
+                for (var index = 0; index < 2; index++)
+                  Expanded(
+                    child: _BottomNavItem(
+                      key: ValueKey('bottom-navigation-$index'),
+                      destination: destinations[index],
+                      selected: selectedIndex == index,
+                      onTap: () => onDestinationSelected(index),
+                    ),
+                  ),
+              ]),
+            ),
+            const SizedBox(width: 4),
+            _AIChatNavButton(onTap: onOpenAssistant),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Row(children: [
+                for (var index = 2; index < destinations.length; index++)
+                  Expanded(
+                    child: _BottomNavItem(
+                      key: ValueKey('bottom-navigation-$index'),
+                      destination: destinations[index],
+                      selected: selectedIndex == index,
+                      onTap: () => onDestinationSelected(index),
+                    ),
+                  ),
+              ]),
+            ),
+          ]),
+        ),
+      );
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    super.key,
+    required this.destination,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ({String label, IconData icon}) destination;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        selected: selected,
+        label: destination.label,
+        child: InkResponse(
+          onTap: onTap,
+          radius: 34,
+          child: SizedBox(
+            height: 68,
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              SizedBox(
+                height: 27,
+                child: Center(
+                  child: AnimatedScale(
+                    scale: selected ? 1.12 : 1,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    child: AnimatedOpacity(
+                      opacity: selected ? 1 : .72,
+                      duration: const Duration(milliseconds: 180),
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          boxShadow: selected
+                              ? [BoxShadow(color: _electricBlue.withValues(alpha: .44), blurRadius: 14, spreadRadius: 1)]
+                              : const [],
+                        ),
+                        child: Icon(destination.icon, size: 23, color: selected ? _electricBlue : const Color(0xFF8992A5)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 1),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    style: TextStyle(
+                      color: selected ? const Color(0xFFEAF5FF) : const Color(0xFF8992A5),
+                      fontSize: 9,
+                      height: 1.1,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                    child: Text(destination.label, maxLines: 1),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                width: selected ? 4 : 0,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _electricBlue,
+                  shape: BoxShape.circle,
+                  boxShadow: selected ? [BoxShadow(color: _electricBlue.withValues(alpha: .8), blurRadius: 7)] : const [],
+                ),
+              ),
+            ]),
+          ),
+        ),
+      );
+}
+
+class _AIChatNavButton extends StatelessWidget {
+  const _AIChatNavButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        button: true,
+        label: context.tr('AI chat'),
+        child: InkResponse(
+          key: const ValueKey('bottom-navigation-ai-chat'),
+          onTap: onTap,
+          radius: 34,
+          child: SizedBox(
+            width: 54,
+            height: 68,
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF164A88), Color(0xFF07162D)]),
+                  boxShadow: [
+                    BoxShadow(color: _electricBlue.withValues(alpha: .36), blurRadius: 16, spreadRadius: 1),
+                    const BoxShadow(color: Color(0x66168DFF), blurRadius: 3),
+                  ],
+                  border: Border.all(color: _electricBlue.withValues(alpha: .76), width: 1),
+                ),
+                child: const Icon(Icons.auto_awesome_rounded, size: 21, color: Color(0xFF8AD8FF)),
+              ),
+              const SizedBox(height: 3),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(context.tr('AI chat'), style: const TextStyle(color: Color(0xFFBBDFFF), fontSize: 9, fontWeight: FontWeight.w600, height: 1)),
+              ),
+            ]),
+          ),
+        ),
+      );
 }
 
 class _ModeBadge extends StatelessWidget {

@@ -1,4 +1,8 @@
+import 'dart:async';
+
+import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
+import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
@@ -23,9 +27,67 @@ class _MemorySecretBackend implements SecureStorageBackend {
   }
 }
 
+class _MemoryResultHistory implements ResultHistoryStore {
+  _MemoryResultHistory({this.loadResults});
+
+  final Future<List<ToolRunResult>> Function()? loadResults;
+  int loadCalls = 0;
+
+  @override
+  Future<int> save(ToolRunResult result) async => 1;
+
+  @override
+  Future<List<ToolRunResult>> loadRecent({int limit = 30}) {
+    loadCalls++;
+    return loadResults?.call() ?? Future.value(const []);
+  }
+
+  @override
+  Future<void> clear() async {}
+
+  @override
+  Future<void> close() async {}
+}
+
+Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
+
+Future<void> _pumpApp(WidgetTester tester) async {
+  await tester.pumpWidget(_testApp());
+  await tester.pumpAndSettle();
+}
+
 void main() {
+  testWidgets('splash shows real local initialization then opens the dashboard', (tester) async {
+    final initialization = Completer<List<ToolRunResult>>();
+    final history = _MemoryResultHistory(loadResults: () => initialization.future);
+    await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
+    await tester.pump();
+
+    expect(history.loadCalls, 1);
+    expect(find.text('Menyiapkan data lokal…'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    initialization.complete(const []);
+    await tester.pumpAndSettle();
+    expect(find.text('Beranda'), findsOneWidget);
+    expect(history.loadCalls, 1);
+  });
+
+  testWidgets('startup timeout opens the dashboard without retrying history initialization', (tester) async {
+    final initialization = Completer<List<ToolRunResult>>();
+    final history = _MemoryResultHistory(loadResults: () => initialization.future);
+    await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
+    await tester.pump();
+
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Beranda'), findsOneWidget);
+    expect(history.loadCalls, 1);
+  });
+
   testWidgets('shows the primary navigation destinations', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
 
     expect(find.text('Beranda'), findsOneWidget);
     expect(find.text('Alat'), findsOneWidget);
@@ -35,8 +97,18 @@ void main() {
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
   });
 
+  testWidgets('center AI chat shortcut opens the existing secondary assistant route', (tester) async {
+    await _pumpApp(tester);
+    expect(find.text('Chat AI'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-ai-chat')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
+  });
+
   testWidgets('AI assistant is a secondary module, not a primary navigation destination', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     final moduleCard = find.text('Modul asisten AI');
     await tester.scrollUntilVisible(moduleCard, 180);
     await tester.tap(moduleCard);
@@ -48,7 +120,7 @@ void main() {
   });
 
   testWidgets('settings changes language without changing primary navigation', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Pengaturan'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bahasa Indonesia'));
@@ -65,7 +137,7 @@ void main() {
   });
 
   testWidgets('filters the tool registry by search text', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
 
@@ -77,7 +149,7 @@ void main() {
   });
 
   testWidgets('does not run a network check until authorization is confirmed', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Pencarian DNS'));
@@ -101,7 +173,7 @@ void main() {
   });
 
   testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Lihat rilis GitHub'));
@@ -113,7 +185,7 @@ void main() {
   });
 
   testWidgets('provider catalog search opens an explicitly unconnected guide', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Koneksi'));
     await tester.pumpAndSettle();
 
@@ -196,7 +268,7 @@ void main() {
   });
 
   testWidgets('requires current authorization and rejects invalid connection URLs', (tester) async {
-    await tester.pumpWidget(const CybersecurityAssistantApp());
+    await _pumpApp(tester);
     await tester.tap(find.text('Koneksi'));
     await tester.pumpAndSettle();
 

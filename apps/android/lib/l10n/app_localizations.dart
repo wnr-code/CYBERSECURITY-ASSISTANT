@@ -460,6 +460,23 @@ class AppLocalizations {
     "Domain to resolve": "Domain yang dicari",
     "HTTPS hostname": "Hostname HTTPS",
     "Website origin": "Alamat asal situs",
+    "ANALYZE · PROTECT · STAY IN CONTROL": "ANALISIS · LINDUNGI · TETAP TERKENDALI",
+    "A local-first cybersecurity assistant for your digital world.": "Asisten keamanan siber yang mengutamakan lokal untuk dunia digital Anda.",
+    "Local security": "Keamanan lokal",
+    "On this device": "Di perangkat ini",
+    "Security tools": "Alat keamanan",
+    "Built-in checks": "Pemeriksaan bawaan",
+    "SQLite history": "Riwayat SQLite",
+    "On device": "Di perangkat",
+    "Optional AI": "AI opsional",
+    "Initializing local history…": "Menyiapkan data lokal…",
+    "LOCAL FIRST · YOUR DATA STAYS ON DEVICE": "LOKAL UTAMA · DATA TETAP DI PERANGKAT",
+    "Security": "Keamanan",
+    "Built-in": "Bawaan",
+    "History": "Riwayat",
+    "AI optional": "AI opsional",
+    "Not connected": "Belum terhubung",
+    "AI chat": "Chat AI",
   };
 
   static const _en = <String, String>{
