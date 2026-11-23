@@ -475,7 +475,6 @@ class AppLocalizations {
     "Built-in": "Bawaan",
     "History": "Riwayat",
     "AI optional": "AI opsional",
-    "Not connected": "Belum terhubung",
     "AI chat": "Chat AI",
   };
 

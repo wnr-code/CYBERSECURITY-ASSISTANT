@@ -49,8 +49,8 @@ class _AnimatedSplashScreenState extends State<AnimatedSplashScreen> with Single
         body: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) => Stack(fit: StackFit.expand, children: [
-              DecoratedBox(
-                decoration: const BoxDecoration(
+              const DecoratedBox(
+                decoration: BoxDecoration(
                   gradient: RadialGradient(
                     center: Alignment(.0, -.06),
                     radius: 1.02,
