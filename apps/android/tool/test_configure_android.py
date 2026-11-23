@@ -60,23 +60,37 @@ class ConfigureAndroidTests(unittest.TestCase):
             resource_root = android / "app/src/main/res"
             styles = ET.parse(resource_root / "values-v31/styles.xml").getroot()
             launch_style = next(style for style in styles.findall("style") if style.get("name") == "LaunchTheme")
-            items = {
-                item.get("{http://schemas.android.com/apk/res/android}name"): item.text
-                for item in launch_style.findall("item")
-            }
+            items = {item.get("name"): item.text for item in launch_style.findall("item")}
+            self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for item in launch_style.findall("item")))
             self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
             self.assertEqual(items["android:windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
 
             base_styles = ET.parse(resource_root / "values/styles.xml").getroot()
             base_launch = next(style for style in base_styles.findall("style") if style.get("name") == "LaunchTheme")
-            base_items = {
-                item.get("{http://schemas.android.com/apk/res/android}name"): item.text
-                for item in base_launch.findall("item")
-            }
+            base_items = {item.get("name"): item.text for item in base_launch.findall("item")}
             self.assertEqual(base_items["android:windowBackground"], "@drawable/launch_background")
             self.assertTrue((resource_root / "drawable/splash_brand_mark.xml").is_file())
             self.assertTrue((resource_root / "drawable/launch_background.xml").is_file())
             self.assertEqual(len([style for style in styles.findall("style") if style.get("name") == "LaunchTheme"]), 1)
+
+    def test_splash_config_updates_flutter_scaffold_style_items(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            values = android / "app/src/main/res/values"
+            values.mkdir(parents=True)
+            (values / "styles.xml").write_text(
+                '<resources><style name="LaunchTheme"><item name="android:windowBackground">old</item></style>'
+                '<style name="NormalTheme"><item name="android:windowBackground">old</item></style></resources>',
+                encoding="utf-8",
+            )
+
+            configure_splash_resources(android)
+
+            styles = ET.parse(values / "styles.xml").getroot()
+            launch = next(style for style in styles.findall("style") if style.get("name") == "LaunchTheme")
+            background = next(item for item in launch.findall("item") if item.get("name") == "android:windowBackground")
+            self.assertEqual(background.text, "@drawable/launch_background")
+            self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for style in styles.findall("style") for item in style.findall("item")))
 
     def test_unknown_gradle_template_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

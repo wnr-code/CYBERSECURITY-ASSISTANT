@@ -86,10 +86,11 @@ def _write_backup_rules(android_root: Path) -> None:
 
 
 def _set_style_item(style: ET.Element, name: str, value: str) -> None:
-    item_name = _android_attribute("name")
-    item = next((node for node in style.findall("item") if node.get(item_name) == name), None)
+    # Android style item names are plain XML attributes (e.g. name="android:windowBackground"),
+    # not android-namespaced attributes. Using android:name makes AAPT reject the resource.
+    item = next((node for node in style.findall("item") if node.get("name") == name), None)
     if item is None:
-        item = ET.SubElement(style, "item", {item_name: name})
+        item = ET.SubElement(style, "item", {"name": name})
     item.text = value
 
 
