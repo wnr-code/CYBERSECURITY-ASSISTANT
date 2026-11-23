@@ -64,7 +64,7 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('splash shows real local initialization then opens the dashboard', (tester) async {
+  testWidgets('branded splash hands off to dashboard while SQLite history is pending', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
@@ -72,8 +72,9 @@ void main() {
     await tester.pump();
 
     expect(history.loadCalls, 1);
-    expect(find.text('Menyiapkan data lokal…'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('main-shell')), findsOneWidget);
+    expect(find.text('Beranda'), findsOneWidget);
+    expect(find.text('Initializing local history…'), findsNothing);
 
     initialization.complete(const []);
     await tester.pumpAndSettle();
@@ -81,17 +82,15 @@ void main() {
     expect(history.loadCalls, 1);
   });
 
-  testWidgets('startup timeout opens the dashboard without retrying history initialization', (tester) async {
+  testWidgets('database latency does not hold the dashboard behind a startup timeout', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
     await tester.pump();
 
-    await tester.pump(const Duration(seconds: 6));
-    await tester.pumpAndSettle();
-
     expect(find.text('Beranda'), findsOneWidget);
     expect(history.loadCalls, 1);
+    expect(initialization.isCompleted, isFalse);
   });
 
   testWidgets('floating mobile navigation has four destinations and a centered AI shortcut', (tester) async {

@@ -3,6 +3,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from verify_android_splash import verify_sources
+
 from configure_android import (
     configure_gradle,
     configure_manifest,
@@ -64,6 +66,9 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for item in launch_style.findall("item")))
             self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
             self.assertEqual(items["android:windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
+            self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
+            self.assertEqual(items["android:postSplashScreenTheme"], "@style/NormalTheme")
+            self.assertEqual(launch_style.get("parent"), "@android:style/Theme.SplashScreen")
 
             base_styles = ET.parse(resource_root / "values/styles.xml").getroot()
             base_launch = next(style for style in base_styles.findall("style") if style.get("name") == "LaunchTheme")
@@ -91,6 +96,29 @@ class ConfigureAndroidTests(unittest.TestCase):
             background = next(item for item in launch.findall("item") if item.get("name") == "android:windowBackground")
             self.assertEqual(background.text, "@drawable/launch_background")
             self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for style in styles.findall("style") for item in style.findall("item")))
+
+    def test_native_splash_verifier_requires_a_real_launcher_theme_handoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            app = android / "app"
+            main = app / "src/main"
+            (main / "res").mkdir(parents=True)
+            (main / "AndroidManifest.xml").write_text(
+                '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+                '<application><activity android:name=".MainActivity" android:theme="@style/LaunchTheme">'
+                '<meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />'
+                '<intent-filter><action android:name="android.intent.action.MAIN" />'
+                '<category android:name="android.intent.category.LAUNCHER" /></intent-filter>'
+                '</activity></application></manifest>',
+                encoding="utf-8",
+            )
+            (main / "kotlin/org/example/MainActivity.kt").parent.mkdir(parents=True)
+            (main / "kotlin/org/example/MainActivity.kt").write_text(
+                "package org.example\nimport io.flutter.embedding.android.FlutterActivity\nclass MainActivity : FlutterActivity()\n",
+                encoding="utf-8",
+            )
+            configure_splash_resources(android)
+            verify_sources(android)
 
     def test_unknown_gradle_template_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

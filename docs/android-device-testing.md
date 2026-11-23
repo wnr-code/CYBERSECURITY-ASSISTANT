@@ -46,8 +46,9 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 - [ ] Install APK without package/signature/parse error. On cold launch, confirm the Android native splash appears immediately with the navy background and shield/lock mark; verify the app label is **Cybersecurity Assistant**.
 - [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 6–11 (API 23–30), verify the legacy launch-window fallback uses the same navy and shield mark.
 - [ ] Confirm there is no white/black blank frame or visible mismatched icon between native splash, Flutter splash, and Dashboard. Check cold launch after force-stop as well as warm relaunch.
-- [ ] Confirm the Flutter splash is shown while actual local history initialization is pending and fades/scales smoothly to Dashboard when it completes. If initialization is quick, it may be brief; the app must not add a minimum-duration delay.
-- [ ] Simulate an unavailable/slow local history database if safely possible. Confirm startup still reaches Dashboard after the bounded fallback and never stays on an infinite spinner. Verify Reports can retry history.
+- [ ] Confirm the Flutter splash is the first Flutter frame and fades/scales to Dashboard without waiting for SQLite. If the first frame is ready quickly, the splash may be brief; the app must not add a minimum-duration delay.
+- [ ] Simulate an unavailable/slow local history database if safely possible. Confirm the Dashboard appears while the query is pending, saved-history indicators update when available, and Reports can retry history after an error.
+- [ ] Review the CI `Verify native splash in built APK` step: it checks the compiled APK manifest and resource table, not just the generator output. This check does not replace a cold-start device/emulator test.
 - [ ] Confirm the app remains in standalone/local-first mode and no login, developer-owned server, or API key is required for built-in checks.
 - [ ] Confirm Android displays no unexpected runtime permission prompt. `INTERNET` is expected in the manifest, not as a runtime dialog.
 - [ ] Force-stop and relaunch; app returns without crash or a setup loop.

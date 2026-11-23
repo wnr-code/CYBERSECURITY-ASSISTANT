@@ -182,10 +182,10 @@ def configure_splash_resources(android_root: Path) -> None:
     v31_styles = ET.parse(v31_styles_file).getroot() if v31_styles_file.exists() else ET.Element("resources")
     if v31_styles.tag != "resources":
         raise RuntimeError(f"Unexpected Android API 31 styles resource root in {v31_styles_file}.")
-    launch_v31 = _ensure_style(v31_styles, "LaunchTheme", "@android:style/Theme.Light.NoTitleBar")
-    _set_style_item(launch_v31, "android:windowBackground", "@drawable/launch_background")
+    launch_v31 = _ensure_style(v31_styles, "LaunchTheme", "@android:style/Theme.SplashScreen")
     _set_style_item(launch_v31, "android:windowSplashScreenBackground", "@color/startup_navy")
     _set_style_item(launch_v31, "android:windowSplashScreenAnimatedIcon", "@drawable/splash_brand_mark")
+    _set_style_item(launch_v31, "android:postSplashScreenTheme", "@style/NormalTheme")
     _set_style_item(launch_v31, "android:statusBarColor", "@color/startup_navy")
     _set_style_item(launch_v31, "android:navigationBarColor", "@color/startup_navy")
     _set_style_item(launch_v31, "android:windowLightStatusBar", "false")

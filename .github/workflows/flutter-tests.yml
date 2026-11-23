@@ -53,6 +53,10 @@ jobs:
         working-directory: apps/android
         run: python3 tool/run_flutter_build.py
 
+      - name: Verify native splash in built APK
+        working-directory: apps/android
+        run: python3 tool/verify_android_splash.py --apk build/app/outputs/flutter-apk/app-debug.apk
+
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

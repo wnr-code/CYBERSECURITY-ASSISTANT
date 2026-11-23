@@ -37,8 +37,6 @@ class CybersecurityAssistantApp extends StatefulWidget {
 class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   Locale _locale = const Locale('id');
   late final ResultHistoryStore _resultStore;
-  List<ToolRunResult> _startupResults = const [];
-  String? _startupStorageError;
   bool _startupReady = false;
   bool _storeHandedToShell = false;
 
@@ -46,21 +44,13 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   void initState() {
     super.initState();
     _resultStore = widget.resultStore ?? LocalResultStore();
+    // Render the branded Flutter handoff first; SQLite history is loaded by MainShell
+    // after its first frame and must never gate the dashboard or native splash handoff.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_initializeLocalWorkspace());
+      if (!mounted) return;
+      _storeHandedToShell = true;
+      setState(() => _startupReady = true);
     });
-  }
-
-  Future<void> _initializeLocalWorkspace() async {
-    try {
-      _startupResults = await _resultStore.loadRecent().timeout(const Duration(seconds: 6));
-    } catch (_) {
-      // Do not trap users on startup if local storage is unavailable; Reports can retry it.
-      _startupStorageError = 'Could not load local history on this device.';
-    }
-    if (!mounted) return;
-    _storeHandedToShell = true;
-    setState(() => _startupReady = true);
   }
 
   void _setLocale(Locale locale) => setState(() => _locale = locale);
@@ -128,8 +118,6 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
             ? MainShell(
                 key: const ValueKey('main-shell'),
                 resultStore: _resultStore,
-                initialSavedResults: _startupResults,
-                initialStorageError: _startupStorageError,
                 locale: _locale,
                 onLocaleChanged: _setLocale,
               )
