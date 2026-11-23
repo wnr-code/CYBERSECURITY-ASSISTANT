@@ -73,11 +73,11 @@ void main() {
     await tester.pumpWidget(const MaterialApp(
       locale: Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [
+      localizationsDelegates: [
         AppLocalizationsDelegate(),
         ...GlobalMaterialLocalizations.delegates,
       ],
-      home: const MediaQuery(
+      home: MediaQuery(
         data: MediaQueryData(disableAnimations: true),
         child: AnimatedSplashScreen(),
       ),
