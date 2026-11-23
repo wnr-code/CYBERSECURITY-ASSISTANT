@@ -1,6 +1,8 @@
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/main.dart';
+import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -35,13 +37,23 @@ class _SavedHistory implements ResultHistoryStore {
 void main() {
   testWidgets('dashboard loads saved history automatically at startup', (tester) async {
     final history = _SavedHistory();
-    await tester.pumpWidget(MaterialApp(home: MainShell(resultStore: history)));
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: MainShell(resultStore: history),
+    ));
     await tester.pumpAndSettle();
 
     expect(history.loaded, isTrue);
     final savedTarget = find.textContaining('persisted.example');
     await tester.scrollUntilVisible(savedTarget, 250);
     expect(savedTarget, findsOneWidget);
-    expect(find.text('DNS Lookup'), findsOneWidget);
+    expect(find.text('Pencarian DNS'), findsOneWidget);
   });
 }

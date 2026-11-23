@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'core/local_result_store.dart';
@@ -9,6 +10,7 @@ import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
 import 'core/security_tools.dart';
 import 'core/tool_registry.dart';
+import 'l10n/app_localizations.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
@@ -19,8 +21,17 @@ const _ink = Color(0xFF0B1020);
 const _panel = Color(0xFF151D31);
 const _mint = Color(0xFF73F0C2);
 
-class CybersecurityAssistantApp extends StatelessWidget {
+class CybersecurityAssistantApp extends StatefulWidget {
   const CybersecurityAssistantApp({super.key});
+
+  @override
+  State<CybersecurityAssistantApp> createState() => _CybersecurityAssistantAppState();
+}
+
+class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
+  Locale _locale = const Locale('id');
+
+  void _setLocale(Locale locale) => setState(() => _locale = locale);
 
   @override
   Widget build(BuildContext context) {
@@ -31,15 +42,31 @@ class CybersecurityAssistantApp extends StatelessWidget {
     );
     return MaterialApp(
       title: 'Cybersecurity Assistant',
+      locale: _locale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: 'sans-serif',
         colorScheme: scheme,
         scaffoldBackgroundColor: _ink,
         cardTheme: CardThemeData(
           color: _panel,
           margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        ),
+        appBarTheme: const AppBarTheme(centerTitle: false, elevation: 0, scrolledUnderElevation: 0),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(minimumSize: const Size(48, 48), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+        ),
+        outlinedButtonTheme: OutlinedButtonThemeData(
+          style: OutlinedButton.styleFrom(minimumSize: const Size(44, 44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
@@ -50,15 +77,16 @@ class CybersecurityAssistantApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const MainShell(),
+      home: MainShell(onLocaleChanged: _setLocale),
     );
   }
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, this.resultStore});
+  const MainShell({super.key, this.resultStore, this.onLocaleChanged});
 
   final ResultHistoryStore? resultStore;
+  final ValueChanged<Locale>? onLocaleChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -155,6 +183,7 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final wideLayout = MediaQuery.sizeOf(context).width >= 720;
     final pages = <Widget>[
       DashboardScreen(
         recentResults: List.unmodifiable(_recentResults),
@@ -166,11 +195,17 @@ class _MainShellState extends State<MainShell> {
         onLoadSavedResults: _loadSavedResults,
         onSaveResult: _saveResultLocally,
         onClearSavedResults: _clearSavedResults,
+        onNavigateToTools: () => setState(() => _selectedIndex = 1),
       ),
       ToolsScreen(recentResults: List.unmodifiable(_recentResults), onResult: _rememberResult),
-      const AssistantScreen(),
+      AssistantScreen(
+        onOpenConnections: () => setState(() => _selectedIndex = 3),
+        onOpenTools: () => setState(() => _selectedIndex = 1),
+      ),
       const ConnectionsScreen(),
     ];
+    final labels = [context.tr('Home'), context.tr('Tools'), context.tr('Assistant'), context.tr('Connections')];
+    final icons = [Icons.grid_view_rounded, Icons.extension_rounded, Icons.auto_awesome, Icons.link_rounded];
     return Scaffold(
       appBar: AppBar(
         backgroundColor: _ink,
@@ -182,24 +217,46 @@ class _MainShellState extends State<MainShell> {
             Text('CYBERSECURITY', style: TextStyle(fontSize: 14, letterSpacing: 1.2)),
           ],
         ),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 20),
-            child: Center(child: _ModeBadge()),
-          ),
+        actions: [
+          const Center(child: _ModeBadge()),
+          if (widget.onLocaleChanged != null)
+            PopupMenuButton<String>(
+              tooltip: context.tr('Language'),
+              icon: const Icon(Icons.language),
+              onSelected: (code) => widget.onLocaleChanged!(Locale(code)),
+              itemBuilder: (_) => [
+                PopupMenuItem(value: 'id', child: Text(context.tr('Bahasa Indonesia'))),
+                PopupMenuItem(value: 'en', child: Text(context.tr('English'))),
+              ],
+            ),
+          const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(child: pages[_selectedIndex]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) => setState(() => _selectedIndex = index),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.extension_rounded), label: 'Tools'),
-          NavigationDestination(icon: Icon(Icons.auto_awesome), label: 'Assistant'),
-          NavigationDestination(icon: Icon(Icons.link_rounded), label: 'Connections'),
-        ],
+      body: SafeArea(
+        child: Row(children: [
+          if (wideLayout)
+            NavigationRail(
+              selectedIndex: _selectedIndex,
+              labelType: NavigationRailLabelType.all,
+              onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+              destinations: [
+                for (var index = 0; index < labels.length; index++)
+                  NavigationRailDestination(icon: Icon(icons[index]), label: Text(labels[index])),
+              ],
+            ),
+          Expanded(child: pages[_selectedIndex]),
+        ]),
       ),
+      bottomNavigationBar: wideLayout
+          ? null
+          : NavigationBar(
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+              destinations: [
+                for (var index = 0; index < labels.length; index++)
+                  NavigationDestination(icon: Icon(icons[index]), label: labels[index]),
+              ],
+            ),
     );
   }
 }
@@ -215,9 +272,9 @@ class _ModeBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(30),
           border: Border.all(color: _mint.withValues(alpha: .3)),
         ),
-        child: const Text(
-          'STANDALONE',
-          style: TextStyle(color: _mint, fontSize: 10, fontWeight: FontWeight.w700),
+        child: Text(
+          context.tr('STANDALONE'),
+          style: const TextStyle(color: _mint, fontSize: 10, fontWeight: FontWeight.w700),
         ),
       );
 }
@@ -234,6 +291,7 @@ class DashboardScreen extends StatelessWidget {
     required this.onLoadSavedResults,
     required this.onSaveResult,
     required this.onClearSavedResults,
+    required this.onNavigateToTools,
   });
 
   final List<ToolRunResult> recentResults;
@@ -245,172 +303,296 @@ class DashboardScreen extends StatelessWidget {
   final Future<void> Function() onLoadSavedResults;
   final Future<bool> Function(ToolRunResult) onSaveResult;
   final Future<void> Function() onClearSavedResults;
+  final VoidCallback onNavigateToTools;
 
   @override
-  Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-        children: [
-          Text('SECURITY WORKSPACE', style: _eyebrow(context)),
-          const SizedBox(height: 10),
-          Text('Your security,\nyour infrastructure.',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    height: 1.12,
-                  )),
-          const SizedBox(height: 12),
-          Text(
-            'A local-first toolkit for authorized security work. Your data stays on this device unless you choose otherwise.',
-            style: TextStyle(color: Colors.white.withValues(alpha: .66), height: 1.5),
-          ),
-          const SizedBox(height: 24),
-          const _QuickStartCard(),
-          const SizedBox(height: 22),
-          Text('WORKSPACE', style: _eyebrow(context)),
-          const SizedBox(height: 12),
-          const Row(
-            children: [
-              Expanded(child: _StatCard(icon: Icons.extension, value: '4', label: 'P0 tools')),
-              SizedBox(width: 12),
-              Expanded(child: _StatCard(icon: Icons.cloud_off, value: 'Local', label: 'Data mode')),
-            ],
-          ),
-          const SizedBox(height: 22),
-          const _SectionTitle(title: 'Recent session checks', icon: Icons.history),
-          const SizedBox(height: 6),
-          if (recentResults.isNotEmpty)
-            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              TextButton.icon(
-                onPressed: () => _confirmClearResults(context, onClearResults),
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Clear'),
-              ),
-              TextButton.icon(
-                onPressed: () => _confirmCopyReport(context, recentResults),
-                icon: const Icon(Icons.copy_all_outlined),
-                label: const Text('Copy JSON report'),
+  Widget build(BuildContext context) {
+    final availableTools = toolRegistry.where((tool) => tool.status == ToolStatus.available).length;
+    final content = ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+      children: [
+        Text(context.tr('RUANG KERJA KEAMANAN'), style: _eyebrow(context)),
+        const SizedBox(height: 8),
+        Text(context.tr('Keamanan digital, kendali tetap di tangan Anda.'),
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.12)),
+        const SizedBox(height: 10),
+        Text(context.tr('Pemeriksaan berjalan di perangkat Anda. Koneksi AI dan layanan cloud bersifat opsional.'),
+            style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
+        const SizedBox(height: 20),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                const Icon(Icons.shield_outlined, color: _mint),
+                const SizedBox(width: 8),
+                Text(context.tr('MODE LOKAL'), style: const TextStyle(color: _mint, fontWeight: FontWeight.w700)),
+              ]),
+              const SizedBox(height: 10),
+              Text(context.tr('Mulai pemeriksaan yang Anda izinkan'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              Text(context.tr('DNS, sertifikat TLS, dan header HTTP. Data sesi tidak keluar dari perangkat kecuali Anda memilih membagikannya.'),
+                  style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: onNavigateToTools,
+                icon: const Icon(Icons.arrow_forward),
+                label: Text(context.tr('Buka katalog alat')),
               ),
             ]),
-          const SizedBox(height: 4),
-          if (recentResults.isEmpty)
-            Text('Checks you save to this session will appear here. They are not persisted yet.',
-                style: TextStyle(color: Colors.white.withValues(alpha: .62), height: 1.4))
-          else
-            for (final result in recentResults.take(3)) ...[
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.check_circle_outline, color: _mint),
-                  title: Text(toolById(result.toolId)?.name ?? result.toolId),
-                  subtitle: Text('${result.target} · ${result.summary}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _showResultDetails(context, result, onSaveResult: onSaveResult),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          const SizedBox(height: 20),
-          const _SectionTitle(title: 'Saved on this device', icon: Icons.storage_outlined),
-          const SizedBox(height: 6),
-          const Text('Saved reports stay in the app-private SQLite database on this device. They are not encrypted or synced.',
-              style: TextStyle(height: 1.4)),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              if (savedHistoryLoaded && savedResults.isNotEmpty)
-                TextButton.icon(
-                  onPressed: storageBusy ? null : () => _confirmClearSavedResults(context, onClearSavedResults),
-                  icon: const Icon(Icons.delete_outline),
-                  label: const Text('Clear local history'),
-                ),
-              TextButton.icon(
-                onPressed: storageBusy ? null : () => onLoadSavedResults(),
-                icon: storageBusy
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.refresh),
-                label: Text(savedHistoryLoaded ? 'Refresh' : 'Load history'),
-              ),
-            ]),
-          ),
-          if (storageError != null)
-            Text(storageError!, style: const TextStyle(color: Colors.orangeAccent)),
-          if (savedHistoryLoaded && savedResults.isEmpty)
-            Text('No locally saved checks.', style: TextStyle(color: Colors.white.withValues(alpha: .62)))
-          else if (!savedHistoryLoaded)
-            Text('Load history to view checks saved in SQLite.', style: TextStyle(color: Colors.white.withValues(alpha: .62)))
-          else
-            for (final result in savedResults.take(10)) ...[
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.save_outlined, color: _mint),
-                  title: Text(toolById(result.toolId)?.name ?? result.toolId),
-                  subtitle: Text('${result.target} · ${result.summary}', maxLines: 2, overflow: TextOverflow.ellipsis),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _showResultDetails(context, result),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-          const SizedBox(height: 20),
-          const _SectionTitle(title: 'Built for responsible testing', icon: Icons.verified_user_outlined),
-          const SizedBox(height: 10),
-          Text(
-            'Only assess systems you own or are explicitly authorized to test. Active checks will require confirmation and validated scope.',
-            style: TextStyle(color: Colors.white.withValues(alpha: .66), height: 1.5),
-          ),
-        ],
-      );
-}
-
-class _QuickStartCard extends StatelessWidget {
-  const _QuickStartCard();
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.bolt, color: _mint),
-                  SizedBox(width: 8),
-                  Text('QUICK START', style: TextStyle(letterSpacing: 1, fontSize: 12)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text('Start with a safe, local check',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Text('DNS, TLS, and HTTP header checks are available. Network checks require a target and your authorization confirmation.',
-                  style: TextStyle(color: Colors.white.withValues(alpha: .64), height: 1.45)),
-              const SizedBox(height: 16),
-              const _StatusPill(label: 'P0 LOCAL CHECKS READY', color: _mint),
-            ],
           ),
         ),
-      );
+        const SizedBox(height: 20),
+        Wrap(spacing: 12, runSpacing: 12, children: [
+          _DashboardMetric(icon: Icons.extension_outlined, value: '$availableTools', label: context.tr('Alat aktif')),
+          _DashboardMetric(icon: Icons.history, value: '${recentResults.length}', label: context.tr('Hasil sesi')),
+          _DashboardMetric(icon: Icons.storage_outlined, value: savedHistoryLoaded ? '${savedResults.length}' : '…', label: context.tr('Hasil tersimpan')),
+        ]),
+        const SizedBox(height: 26),
+        _DashboardSectionHeader(
+          title: context.tr('Pemeriksaan sesi'),
+          icon: Icons.bolt_outlined,
+          action: recentResults.isEmpty
+              ? null
+              : TextButton.icon(
+                  onPressed: () => _confirmCopyReport(context, recentResults),
+                  icon: const Icon(Icons.copy_outlined),
+                  label: Text(context.tr('Salin laporan JSON')),
+                ),
+        ),
+        const SizedBox(height: 10),
+        if (recentResults.isEmpty)
+          _EmptyState(
+            icon: Icons.manage_search,
+            title: context.tr('Belum ada pemeriksaan'),
+            detail: context.tr('Jalankan alat dari katalog. Hasil sesi sementara akan muncul di sini.'),
+            action: TextButton(onPressed: onNavigateToTools, child: Text(context.tr('Pilih alat'))),
+          )
+        else ...[
+          for (final result in recentResults.take(3)) ...[
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.check_circle_outline, color: _mint),
+                title: Text(_toolDisplayName(result.toolId, context)),
+                subtitle: Text('${result.target} · ${_displayResultSummary(result.summary, context)}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showResultDetails(context, result, onSaveResult: onSaveResult),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => _confirmClearResults(context, onClearResults),
+              icon: const Icon(Icons.delete_outline),
+              label: Text(context.tr('Hapus sesi')),
+            ),
+          ),
+        ],
+        const SizedBox(height: 20),
+        _DashboardSectionHeader(
+          title: context.tr('Riwayat di perangkat'),
+          icon: Icons.storage_outlined,
+          action: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (savedHistoryLoaded && savedResults.isNotEmpty)
+              TextButton.icon(
+                onPressed: storageBusy ? null : () => _confirmClearSavedResults(context, onClearSavedResults),
+                icon: const Icon(Icons.delete_outline),
+                label: Text(context.tr('Hapus riwayat')),
+              ),
+            TextButton.icon(
+              onPressed: storageBusy ? null : () => onLoadSavedResults(),
+              icon: storageBusy
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh),
+              label: Text(context.tr('Muat ulang')),
+            ),
+          ]),
+        ),
+        Text(context.tr('Disimpan lokal di SQLite privat aplikasi; tidak dienkripsi atau disinkronkan.'),
+            style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4)),
+        if (storageError != null) ...[
+          const SizedBox(height: 8),
+          Text(_translateStorageError(context, storageError!), style: const TextStyle(color: Colors.orangeAccent)),
+        ],
+        const SizedBox(height: 10),
+        if (storageBusy && savedResults.isEmpty)
+          const Center(child: Padding(padding: EdgeInsets.all(18), child: CircularProgressIndicator()))
+        else if (savedHistoryLoaded && savedResults.isEmpty)
+          _EmptyState(
+            icon: Icons.inventory_2_outlined,
+            title: context.tr('Belum ada riwayat tersimpan'),
+            detail: context.tr('Simpan hasil pemeriksaan dari detail hasil agar dapat dibuka lagi setelah aplikasi ditutup.'),
+          )
+        else
+          for (final result in savedResults.take(10)) ...[
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.save_outlined, color: _mint),
+                title: Text(_toolDisplayName(result.toolId, context)),
+                subtitle: Text('${result.target} · ${_displayResultSummary(result.summary, context)}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _showResultDetails(context, result),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        const SizedBox(height: 20),
+        Text(context.tr('Periksa hanya sistem yang Anda miliki atau yang memberi Anda izin. Konfirmasi di aplikasi bukan bukti izin hukum.'),
+            style: TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 12, height: 1.45)),
+      ],
+    );
+
+    return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 960), child: content));
+  }
 }
 
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.icon, required this.value, required this.label});
+class _DashboardMetric extends StatelessWidget {
+  const _DashboardMetric({required this.icon, required this.value, required this.label});
   final IconData icon;
   final String value;
   final String label;
 
   @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 180,
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(children: [
+              Icon(icon, color: _mint),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(value, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                Text(label, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
+              ])),
+            ]),
+          ),
+        ),
+      );
+}
+
+class _DashboardSectionHeader extends StatelessWidget {
+  const _DashboardSectionHeader({required this.title, required this.icon, this.action});
+  final String title;
+  final IconData icon;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Icon(icon, size: 19, color: _mint),
+        const SizedBox(width: 8),
+        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
+        if (action != null) action!,
+      ]);
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.icon, required this.title, required this.detail, this.action});
+  final IconData icon;
+  final String title;
+  final String detail;
+  final Widget? action;
+
+  @override
   Widget build(BuildContext context) => Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, color: _mint, size: 20),
-            const SizedBox(height: 16),
-            Text(value, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 2),
-            Text(label, style: TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 12)),
+          padding: const EdgeInsets.all(18),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, color: _mint),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(detail, style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4)),
+              if (action != null) Align(alignment: Alignment.centerLeft, child: action!),
+            ])),
           ]),
         ),
       );
 }
+
+String _toolDisplayName(String toolId, BuildContext context) => switch (toolId) {
+      'dns_lookup' => context.tr('Pencarian DNS'),
+      'tls_inspector' => context.tr('Inspeksi Sertifikat TLS'),
+      'http_headers' => context.tr('Pemeriksa Header HTTP'),
+      'response_analyzer' => context.tr('Analisis Temuan'),
+      _ => toolId,
+    };
+
+String _translateStorageError(BuildContext context, String error) => switch (error) {
+      'Could not load local history on this device.' => context.tr('Riwayat lokal tidak dapat dimuat.'),
+      'Could not save the result to local history.' => context.tr('Hasil tidak dapat disimpan ke riwayat lokal.'),
+      'Could not clear local history.' => context.tr('Riwayat lokal tidak dapat dihapus.'),
+      _ => error,
+    };
+
+String _displayResultSummary(String summary, BuildContext context) {
+  final locale = AppLocalizations.of(context).locale.languageCode;
+  final dns = RegExp(r'^Resolved (\d+) address(?:es)?\.$').firstMatch(summary);
+  if (dns != null) {
+    final count = dns.group(1)!;
+    return locale == 'id' ? 'Menemukan $count alamat IP.' : 'Resolved $count address${count == '1' ? '' : 'es'}.';
+  }
+  final tls = RegExp(r'^TLS handshake succeeded; certificate expires (.+)\.$').firstMatch(summary);
+  if (tls != null) return locale == 'id' ? 'Handshake TLS berhasil; sertifikat berlaku hingga ${tls.group(1)}.' : summary;
+  final http = RegExp(r'^Received HTTP (\d+) and inspected (\d+) response headers\.$').firstMatch(summary);
+  if (http != null && locale == 'id') return 'Respons HTTP ${http.group(1)} · ${http.group(2)} header diperiksa.';
+  final analyzer = RegExp(r'^(\d+) finding(s?) across (\d+) check(s?)\.$').firstMatch(summary);
+  if (analyzer != null && locale == 'id') return '${analyzer.group(1)} temuan dari ${analyzer.group(3)} pemeriksaan.';
+  if (summary == 'No findings were produced by the completed checks.' && locale == 'id') return 'Tidak ada temuan dari pemeriksaan yang selesai.';
+  return summary;
+}
+
+String _displayResultDetail(String detail, BuildContext context) {
+  final locale = AppLocalizations.of(context).locale.languageCode;
+  if (locale != 'id') return detail;
+  const labels = {
+    'Subject: ': 'Subjek: ',
+    'Issuer: ': 'Penerbit: ',
+    'Valid from: ': 'Berlaku sejak: ',
+    'Valid until: ': 'Berlaku hingga: ',
+    'Days remaining: ': 'Sisa hari: ',
+    'Trust validation: passed by the device TLS stack': 'Validasi kepercayaan: lolos pada sistem TLS perangkat',
+    'The response contained no headers.': 'Respons tidak berisi header.',
+    'Redirect returned; it was not followed.': 'Server mengirim pengalihan; pengalihan tidak diikuti.',
+  };
+  for (final entry in labels.entries) {
+    if (detail.startsWith(entry.key)) return '${entry.value}${detail.substring(entry.key.length)}';
+  }
+  return detail;
+}
+
+String _displayFindingTitle(String title, BuildContext context) {
+  final locale = AppLocalizations.of(context).locale.languageCode;
+  if (locale != 'id') return title;
+  final expiry = RegExp(r'^Certificate expires in (-?\d+) day\(s\)$').firstMatch(title);
+  if (expiry != null) return 'Sertifikat kedaluwarsa dalam ${expiry.group(1)} hari';
+  final missing = RegExp(r'^(.*) header not observed$').firstMatch(title);
+  if (missing != null) {
+    final header = switch (missing.group(1)) {
+      'HTTP Strict Transport Security (HSTS)' => 'HTTP Strict Transport Security (HSTS)',
+      'Content Security Policy (CSP)' => 'Content Security Policy (CSP)',
+      'X-Content-Type-Options' => 'X-Content-Type-Options',
+      'Referrer-Policy' => 'Referrer-Policy',
+      'Permissions-Policy' => 'Permissions-Policy',
+      _ => missing.group(1)!,
+    };
+    return 'Header $header tidak ditemukan';
+  }
+  if (title == 'Server technology header is exposed') return 'Header teknologi server terlihat';
+  return title;
+}
+
+String _severityName(FindingSeverity severity, BuildContext context) => switch (severity) {
+      FindingSeverity.high => context.tr('TINGGI'),
+      FindingSeverity.medium => context.tr('SEDANG'),
+      FindingSeverity.low => context.tr('RENDAH'),
+      FindingSeverity.info => context.tr('INFO'),
+    };
+
+String _displayRecommendation(String recommendation, BuildContext context) => context.tr(recommendation);
 
 class ToolsScreen extends StatefulWidget {
   const ToolsScreen({super.key, required this.recentResults, required this.onResult});
@@ -438,9 +620,9 @@ class _ToolsScreenState extends State<ToolsScreen> {
     final filteredTools = toolRegistry.where((tool) {
       final matchesCategory = _selectedCategory == null || tool.category == _selectedCategory;
       final matchesQuery = query.isEmpty ||
-          tool.name.toLowerCase().contains(query) ||
-          tool.description.toLowerCase().contains(query) ||
-          _categoryLabel(tool.category).toLowerCase().contains(query);
+          _toolDisplayName(tool.id, context).toLowerCase().contains(query) ||
+          _toolDisplayDescription(tool.id, context).toLowerCase().contains(query) ||
+          _categoryLabel(tool.category, context).toLowerCase().contains(query);
       return matchesCategory && matchesQuery;
     }).toList();
 
@@ -449,41 +631,41 @@ class _ToolsScreenState extends State<ToolsScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('TOOL REGISTRY', style: _eyebrow(context)),
+            Text(context.tr('KATALOG ALAT'), style: _eyebrow(context)),
             const SizedBox(height: 8),
-            Text('Starter catalog', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            Text(context.tr('Pemeriksaan keamanan'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text('Built-in P0 adapters run locally. Network checks require a target and explicit authorization confirmation.',
-                style: TextStyle(color: Colors.white.withValues(alpha: .64), height: 1.4)),
+            Text(context.tr('Alat bawaan berjalan di perangkat. Pemeriksaan jaringan memerlukan target dan konfirmasi izin.'),
+                style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
             const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
                 onPressed: () => _showReleaseCatalog(context),
                 icon: const Icon(Icons.code_rounded),
-                label: const Text('Check GitHub releases'),
+                label: Text(context.tr('Lihat rilis GitHub')),
               ),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _searchController,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Search tools or categories',
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: context.tr('Cari alat atau kategori'),
                 isDense: true,
               ),
             ),
             const SizedBox(height: 10),
             Wrap(spacing: 8, runSpacing: 4, children: [
               FilterChip(
-                label: const Text('All'),
+                label: Text(context.tr('Semua')),
                 selected: _selectedCategory == null,
                 onSelected: (_) => setState(() => _selectedCategory = null),
               ),
               for (final category in ToolCategory.values)
                 FilterChip(
-                  label: Text(_categoryLabel(category)),
+                  label: Text(_categoryLabel(category, context)),
                   selected: _selectedCategory == category,
                   onSelected: (selected) => setState(() => _selectedCategory = selected ? category : null),
                 ),
@@ -492,7 +674,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
         ),
         Expanded(
           child: filteredTools.isEmpty
-              ? const Center(child: Text('No tools match your search.'))
+              ? Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.')))
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                   itemCount: filteredTools.length,
@@ -506,11 +688,11 @@ class _ToolsScreenState extends State<ToolsScreen> {
                           backgroundColor: _mint.withValues(alpha: .12),
                           child: Icon(_toolIcon(tool.id), color: _mint),
                         ),
-                        title: Text(tool.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
                         subtitle: Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            '${_categoryLabel(tool.category)} · ${tool.status.name.toUpperCase()}\n${tool.description}',
+                            '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(tool.status, context)}\n${_toolDisplayDescription(tool.id, context)}',
                             style: const TextStyle(height: 1.4),
                           ),
                         ),
@@ -527,93 +709,41 @@ class _ToolsScreenState extends State<ToolsScreen> {
   }
 }
 
-class AssistantScreen extends StatefulWidget {
-  const AssistantScreen({super.key});
+class AssistantScreen extends StatelessWidget {
+  const AssistantScreen({super.key, required this.onOpenConnections, required this.onOpenTools});
+
+  final VoidCallback onOpenConnections;
+  final VoidCallback onOpenTools;
 
   @override
-  State<AssistantScreen> createState() => _AssistantScreenState();
-}
-
-class _AssistantScreenState extends State<AssistantScreen> {
-  final _controller = TextEditingController();
-  final List<String> _questions = [];
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                Text('AI ASSISTANT', style: _eyebrow(context)),
-                const SizedBox(height: 8),
-                Text('Security, with context.', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 20),
-                const _AssistantBubble(
-                  text: 'Hi! I can help explain the tool catalog and safe testing workflows. AI analysis is not connected yet; avoid sharing secrets or sensitive evidence here.',
-                ),
-                for (final question in _questions) ...[
+  Widget build(BuildContext context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(padding: const EdgeInsets.all(20), children: [
+            Text(context.tr('ASISTEN AI'), style: _eyebrow(context)),
+            const SizedBox(height: 8),
+            Text(context.tr('Bantuan berbasis AI'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.info_outline, color: _mint, size: 28),
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
-                      constraints: const BoxConstraints(maxWidth: 300),
-                      decoration: BoxDecoration(color: _mint.withValues(alpha: .16), borderRadius: BorderRadius.circular(16)),
-                      child: Text(question),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const _AssistantBubble(text: 'The AI provider and tool orchestration are not configured in this foundation build.'),
-                ],
-              ],
+                  Text(context.tr('Asisten AI belum terhubung'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Text(context.tr('Belum ada pesan yang dikirim ke penyedia AI. Koneksi provider dan analisis AI belum diimplementasikan. Jangan masukkan API key atau data sensitif di layar ini.'),
+                      style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
+                  const SizedBox(height: 14),
+                  Wrap(spacing: 10, runSpacing: 8, children: [
+                    OutlinedButton.icon(onPressed: onOpenConnections, icon: const Icon(Icons.link), label: Text(context.tr('Lihat pusat koneksi'))),
+                    FilledButton.icon(onPressed: onOpenTools, icon: const Icon(Icons.extension_outlined), label: Text(context.tr('Gunakan alat lokal'))),
+                  ]),
+                ]),
+              ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _controller,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _send(),
-                  decoration: const InputDecoration(hintText: 'Ask about a tool or workflow…', contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 14)),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filled(
-                onPressed: _send,
-                icon: const Icon(Icons.arrow_upward_rounded),
-                style: IconButton.styleFrom(backgroundColor: _mint, foregroundColor: _ink),
-              ),
-            ]),
-          ),
-        ],
-      );
-
-  void _send() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-    setState(() => _questions.add(text));
-    _controller.clear();
-  }
-}
-
-class _AssistantBubble extends StatelessWidget {
-  const _AssistantBubble({required this.text});
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: _panel, borderRadius: BorderRadius.circular(16)),
-        child: Text(text, style: const TextStyle(height: 1.5)),
+          ]),
+        ),
       );
 }
 
@@ -633,14 +763,14 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   bool _checking = false;
   bool? _reachable;
 
-  List<ProviderDefinition> get _visibleProviders {
+  List<ProviderDefinition> _visibleProviders(BuildContext context) {
     final query = _providerSearchController.text.trim().toLowerCase();
     return providerRegistry.where((provider) {
       final matchesCategory = _selectedProviderCategory == null || provider.category == _selectedProviderCategory;
       final matchesText = query.isEmpty ||
           provider.name.toLowerCase().contains(query) ||
-          provider.description.toLowerCase().contains(query) ||
-          providerCategoryLabel(provider.category).toLowerCase().contains(query);
+          _providerDescription(provider, context).toLowerCase().contains(query) ||
+          _providerCategoryName(provider.category, context).toLowerCase().contains(query);
       return matchesCategory && matchesText;
     }).toList();
   }
@@ -656,14 +786,14 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   Widget build(BuildContext context) => ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          Text('CONNECTION MANAGER', style: _eyebrow(context)),
+          Text(context.tr('PUSAT KONEKSI'), style: _eyebrow(context)),
           const SizedBox(height: 8),
-          Text('Your services, your choice.', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          Text(context.tr('Infrastruktur pilihan Anda'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text('Connections are optional. The endpoint stays in memory. Provider credentials can be stored locally for supported auth types, but no provider requests use them.',
-              style: TextStyle(color: Colors.white.withValues(alpha: .64), height: 1.45)),
+          Text(context.tr('Koneksi bersifat opsional. Pemeriksaan lokal tetap berjalan tanpa akun cloud atau API key. Informasi provider di bawah adalah panduan; konektor terautentikasi belum tersedia.'),
+              style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
           const SizedBox(height: 18),
-          const _SectionTitle(title: 'Test an HTTPS endpoint', icon: Icons.link),
+          _SectionTitle(title: context.tr('Uji endpoint HTTPS'), icon: Icons.link),
           const SizedBox(height: 12),
           Card(
             child: Padding(
@@ -679,15 +809,15 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                     _status = null;
                     _reachable = null;
                   }),
-                  decoration: const InputDecoration(labelText: 'Service endpoint', hintText: 'https://api.example.com/health'),
+                  decoration: InputDecoration(labelText: context.tr('Alamat endpoint'), hintText: 'https://api.example.com'),
                 ),
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
                   value: _endpointAuthorized,
                   onChanged: _checking ? null : (value) => setState(() => _endpointAuthorized = value ?? false),
-                  title: const Text(
-                    'I own this endpoint or have explicit permission to test it.',
-                    style: TextStyle(fontSize: 13),
+                  title: Text(
+                    context.tr('Saya memiliki endpoint ini atau mendapat izin untuk mengujinya.'),
+                    style: const TextStyle(fontSize: 13),
                   ),
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
@@ -697,7 +827,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                   icon: _checking
                       ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.network_check),
-                  label: Text(_checking ? 'Testing…' : 'Test Connection'),
+                  label: Text(_checking ? context.tr('Menguji…') : context.tr('Uji koneksi')),
                 ),
                 if (_status != null) ...[
                   const SizedBox(height: 12),
@@ -707,58 +837,60 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
             ),
           ),
           const SizedBox(height: 18),
-          const Card(
+          Card(
             child: Padding(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _SectionTitle(title: 'Prototype scope', icon: Icons.info_outline),
-                SizedBox(height: 10),
-                Text('After you confirm you own or are authorized to test the endpoint, the app sends one unauthenticated HTTPS GET to the entered URL. Redirects are not followed and the response body is discarded. Any HTTP response confirms reachability, not provider authentication or service configuration. The checkbox is a self-attestation, not independent proof. Do not enter URLs containing secrets.', style: TextStyle(height: 1.5)),
+                _SectionTitle(title: context.tr('Batasan uji koneksi'), icon: Icons.info_outline),
+                const SizedBox(height: 10),
+                Text(context.tr('Setelah Anda mengonfirmasi izin, aplikasi mengirim satu HTTPS GET tanpa autentikasi ke alamat yang dimasukkan. Pengalihan tidak diikuti dan isi respons dibuang. Respons HTTP apa pun hanya menandakan endpoint terjangkau, bukan autentikasi provider. Jangan masukkan URL yang berisi rahasia.'), style: const TextStyle(height: 1.5)),
               ]),
             ),
           ),
           const SizedBox(height: 12),
-          const _ConnectionRow(name: 'Cloud backend', detail: 'Not configured', icon: Icons.cloud_outlined),
+          _ConnectionRow(name: context.tr('Backend cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.cloud_outlined),
           const SizedBox(height: 10),
-          const _ConnectionRow(name: 'AI provider', detail: 'Local / not configured', icon: Icons.auto_awesome_outlined),
+          _ConnectionRow(name: context.tr('Penyedia AI'), detail: context.tr('Belum diuji'), icon: Icons.auto_awesome_outlined),
           const SizedBox(height: 10),
-          const _ConnectionRow(name: 'Cloud storage', detail: 'Not configured', icon: Icons.folder_open_outlined),
+          _ConnectionRow(name: context.tr('Penyimpanan cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.folder_open_outlined),
           const SizedBox(height: 22),
-          const _SectionTitle(title: 'Provider catalog', icon: Icons.apps_outlined),
+          _SectionTitle(title: context.tr('Katalog penyedia layanan'), icon: Icons.apps_outlined),
           const SizedBox(height: 10),
-          const Text('Catalog entries are guides only. Local secure credential controls are available for API-key and scoped-token entries; authenticated connectors are not implemented.',
-              style: TextStyle(height: 1.4)),
+          Text(context.tr('Katalog ini berisi panduan, bukan konektor aktif. Kredensial hanya dapat disimpan lokal untuk beberapa jenis; belum ada permintaan provider yang menggunakan kredensial tersebut.'),
+              style: const TextStyle(height: 1.4)),
           const SizedBox(height: 12),
           TextField(
             controller: _providerSearchController,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Search providers',
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: context.tr('Cari penyedia layanan'),
               isDense: true,
             ),
           ),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 4, children: [
             FilterChip(
-              label: const Text('All'),
+              label: Text(context.tr('Semua')),
               selected: _selectedProviderCategory == null,
               onSelected: (_) => setState(() => _selectedProviderCategory = null),
             ),
             for (final category in ProviderCategory.values)
               FilterChip(
-                label: Text(providerCategoryLabel(category)),
+                label: Text(_providerCategoryName(category, context)),
                 selected: _selectedProviderCategory == category,
                 onSelected: (selected) => setState(() => _selectedProviderCategory = selected ? category : null),
               ),
           ]),
           const SizedBox(height: 8),
-          for (final provider in _visibleProviders) ...[
+          if (_visibleProviders(context).isEmpty)
+            _EmptyState(icon: Icons.search_off, title: context.tr('Tidak ada penyedia yang cocok'), detail: context.tr('Ubah kata kunci atau pilih kategori lain.')),
+          for (final provider in _visibleProviders(context)) ...[
             Card(
               child: ListTile(
                 leading: const Icon(Icons.link_outlined, color: _mint),
                 title: Text(provider.name),
-                subtitle: Text('${providerCategoryLabel(provider.category)} · NOT CONNECTED\n${provider.description}'),
+                subtitle: Text('${_providerCategoryName(provider.category, context)} · ${context.tr('Belum terhubung')}\n${_providerDescription(provider, context)}'),
                 trailing: const Icon(Icons.info_outline),
                 isThreeLine: true,
                 onTap: () => _showProviderDetails(context, provider),
@@ -794,7 +926,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     if (!_endpointAuthorized) {
       setState(() {
         _reachable = false;
-        _status = 'Confirm that you own or are authorized to test this endpoint';
+        _status = context.tr('Konfirmasikan izin untuk menguji endpoint ini.');
       });
       return;
     }
@@ -802,7 +934,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     if (uri == null) {
       setState(() {
         _reachable = false;
-        _status = 'Enter a valid HTTPS URL without credentials, query, or fragment';
+        _status = context.tr('Masukkan URL HTTPS valid tanpa kredensial, kueri, atau fragmen.');
       });
       return;
     }
@@ -824,32 +956,32 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
       setState(() {
         _reachable = true;
         _status = code >= 300 && code < 400
-            ? 'Endpoint reached (HTTP $code; redirect not followed)'
-            : 'Endpoint reached (HTTP $code)';
+            ? '${context.tr('Endpoint terjangkau')} (HTTP $code; ${context.tr('pengalihan tidak diikuti')})'
+            : '${context.tr('Endpoint terjangkau')} (HTTP $code)';
       });
     } on TimeoutException {
       if (!mounted) return;
       setState(() {
         _reachable = false;
-        _status = 'Timed out while contacting the endpoint';
+        _status = context.tr('Waktu habis saat menghubungi endpoint.');
       });
     } on SocketException {
       if (!mounted) return;
       setState(() {
         _reachable = false;
-        _status = 'Could not reach endpoint; check URL and network';
+        _status = context.tr('Endpoint tidak dapat dijangkau; periksa URL dan jaringan.');
       });
     } on HandshakeException {
       if (!mounted) return;
       setState(() {
         _reachable = false;
-        _status = 'TLS certificate validation failed';
+        _status = context.tr('Validasi sertifikat TLS gagal.');
       });
     } on HttpException {
       if (!mounted) return;
       setState(() {
         _reachable = false;
-        _status = 'HTTP request failed';
+        _status = context.tr('Permintaan HTTP gagal.');
       });
     } finally {
       client.close(force: true);
@@ -908,10 +1040,46 @@ TextStyle _eyebrow(BuildContext context) => TextStyle(
       letterSpacing: 1.5,
     );
 
-String _categoryLabel(ToolCategory category) => switch (category) {
-      ToolCategory.webSecurity => 'WEB SECURITY',
-      ToolCategory.networkSecurity => 'NETWORK SECURITY',
-      ToolCategory.analysis => 'ANALYSIS',
+String _categoryLabel(ToolCategory category, BuildContext context) => switch (category) {
+      ToolCategory.webSecurity => context.tr('Keamanan web'),
+      ToolCategory.networkSecurity => context.tr('Keamanan jaringan'),
+      ToolCategory.analysis => context.tr('Analisis'),
+    };
+
+String _toolStatusLabel(ToolStatus status, BuildContext context) => switch (status) {
+      ToolStatus.available => context.tr('Tersedia'),
+      ToolStatus.notInstalled => context.tr('Belum terpasang'),
+      ToolStatus.environmentRequired => context.tr('Memerlukan konfigurasi'),
+      ToolStatus.limitedCompatibility => context.tr('Kompatibilitas terbatas'),
+      ToolStatus.unsupported => context.tr('Tidak didukung'),
+    };
+
+String _providerCategoryName(ProviderCategory category, BuildContext context) => context.tr(providerCategoryLabel(category));
+
+String _providerDescription(ProviderDefinition provider, BuildContext context) => switch (provider.id) {
+      'openai' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
+      'gemini' => context.tr('Penyedia AI Google opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
+      'anthropic' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
+      'openrouter' => context.tr('Perute model AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
+      'cloudflare_workers' => context.tr('Backend edge milik pengguna. Uji ini hanya memeriksa keterjangkauan HTTPS.'),
+      'firebase_auth' => context.tr('Autentikasi Firebase opsional. SDK Firebase belum dihubungkan.'),
+      'firebase_functions' => context.tr('Cloud Functions milik pengguna. Pemanggilan fungsi belum diimplementasikan.'),
+      'supabase' => context.tr('Database dan layanan Supabase milik pengguna. Akses terautentikasi belum tersedia.'),
+      'cloudflare_d1' => context.tr('Database D1 sebaiknya diakses melalui Worker milik Anda; adapter belum tersedia.'),
+      'cloudflare_r2' => context.tr('Penyimpanan objek R2 milik pengguna. Adapter unggah belum tersedia.'),
+      'firebase_storage' => context.tr('Penyimpanan Firebase opsional. Unggah dan unduh belum tersedia.'),
+      's3_compatible' => context.tr('Penyimpanan S3-compatible. Akses dan kredensial belum didukung.'),
+      'webdav' => context.tr('Endpoint WebDAV HTTPS. Operasi terautentikasi belum didukung.'),
+      'custom_rest' => context.tr('Endpoint HTTPS pilihan pengguna; hanya pemeriksaan koneksi tanpa autentikasi tersedia.'),
+      _ => context.tr('Integrasi belum tersedia. Lihat panduan dan status sebelum memasukkan kredensial.'),
+    };
+
+String _toolDisplayDescription(String id, BuildContext context) => switch (id) {
+      'dns_lookup' => context.tr('Mencari alamat IPv4 dan IPv6 domain melalui DNS perangkat.'),
+      'tls_inspector' => context.tr('Memeriksa sertifikat TLS pada koneksi HTTPS port standar.'),
+      'http_headers' => context.tr('Membaca header keamanan dari satu permintaan HTTPS ke halaman utama.'),
+      'response_analyzer' => context.tr('Merangkum temuan dari pemeriksaan yang sudah dijalankan.'),
+      _ => '',
     };
 
 IconData _toolIcon(String id) => switch (id) {
@@ -936,13 +1104,11 @@ Future<void> _showReleaseCatalog(BuildContext context) => showDialog<void>(
 Future<bool?> _confirmSaveResult(BuildContext context) => showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Save this result locally?'),
-        content: const Text(
-          'This stores the target, response details, findings, and authorization self-attestation in the app-private SQLite database. The database is not encrypted and is not synced to the cloud. Continue only if this is appropriate for your device.',
-        ),
+        title: Text(dialogContext.tr('Simpan hasil ini ke perangkat?')),
+        content: Text(dialogContext.tr('Target, detail respons, temuan, dan catatan konfirmasi izin akan disimpan dalam database SQLite privat aplikasi. Database tidak dienkripsi atau disinkronkan. Lanjutkan hanya jika penyimpanan ini sesuai untuk perangkat Anda.')),
         actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Save locally')),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Simpan lokal'))),
         ],
       ),
     );
@@ -951,11 +1117,11 @@ Future<void> _confirmClearSavedResults(BuildContext context, Future<void> Functi
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Clear local history?'),
-      content: const Text('This permanently deletes saved results from the app-private database on this device.'),
+      title: Text(dialogContext.tr('Hapus riwayat lokal?')),
+      content: Text(dialogContext.tr('Tindakan ini menghapus permanen hasil tersimpan dari database privat aplikasi di perangkat ini.')),
       actions: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete local history')),
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Hapus riwayat lokal'))),
       ],
     ),
   );
@@ -966,11 +1132,11 @@ Future<void> _confirmClearResults(BuildContext context, VoidCallback onClear) as
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Clear session results?'),
-      content: const Text('This removes the in-memory results from this session. It does not clear reports already copied to the clipboard.'),
+      title: Text(dialogContext.tr('Hapus hasil sesi?')),
+      content: Text(dialogContext.tr('Tindakan ini menghapus hasil sementara dari sesi ini. Laporan yang sudah disalin ke clipboard tidak ikut dihapus.')),
       actions: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Clear results')),
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Hapus hasil'))),
       ],
     ),
   );
@@ -981,13 +1147,11 @@ Future<void> _confirmCopyReport(BuildContext context, List<ToolRunResult> result
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Copy session report?'),
-      content: const Text(
-        'The report includes assessed hostnames, resolved addresses, certificate details, response headers, and findings. It will be copied to the system clipboard, which other apps may be able to read. Continue only if you are comfortable sharing this data.',
-      ),
+      title: Text(dialogContext.tr('Salin laporan sesi?')),
+      content: Text(dialogContext.tr('Laporan memuat hostname, alamat IP, detail sertifikat, header respons, dan temuan. Data akan disalin ke clipboard sistem yang mungkin dapat dibaca aplikasi lain. Lanjutkan hanya jika Anda nyaman membagikan data ini.')),
       actions: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Copy report')),
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Salin laporan'))),
       ],
     ),
   );
@@ -995,11 +1159,11 @@ Future<void> _confirmCopyReport(BuildContext context, List<ToolRunResult> result
   try {
     await Clipboard.setData(ClipboardData(text: buildSessionReportJson(results)));
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Session report copied to clipboard.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Laporan sesi disalin ke clipboard.'))));
     }
   } on PlatformException {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not access the system clipboard.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Clipboard sistem tidak dapat diakses.'))));
     }
   }
 }
@@ -1025,25 +1189,25 @@ void _showResultDetails(
   showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: Text(toolById(result.toolId)?.name ?? result.toolId),
+      title: Text(_toolDisplayName(result.toolId, context)),
       content: SizedBox(
         width: 440,
         child: SingleChildScrollView(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text('${result.target} · ${result.completedAt.toLocal()}'),
             if (result.toolId != 'response_analyzer')
-              Text('Authorization confirmation accepted: ${result.authorizationConfirmed} (self-attestation only)'),
+              Text('${context.tr('Konfirmasi izin diterima')}: ${result.authorizationConfirmed} (${context.tr('pernyataan mandiri saja')})'),
             const SizedBox(height: 8),
-            Text(result.summary, style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(_displayResultSummary(result.summary, context), style: const TextStyle(fontWeight: FontWeight.w700)),
             for (final finding in result.findings) ...[
               const SizedBox(height: 10),
-              Text('${finding.severity.name.toUpperCase()} · ${finding.title}', style: const TextStyle(fontWeight: FontWeight.w600)),
-              Text(finding.recommendation),
+              Text('${_severityName(finding.severity, context)} · ${_displayFindingTitle(finding.title, context)}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text(_displayRecommendation(finding.recommendation, context)),
             ],
             if (result.details.isNotEmpty) ...[
               const Divider(height: 24),
               for (final detail in result.details)
-                Padding(padding: const EdgeInsets.only(bottom: 6), child: SelectableText(detail)),
+                Padding(padding: const EdgeInsets.only(bottom: 6), child: SelectableText(_displayResultDetail(detail, context))),
             ],
           ]),
         ),
@@ -1059,12 +1223,12 @@ void _showResultDetails(
               if (saved) {
                 Navigator.of(context).pop();
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not save local result.')));
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Hasil lokal tidak dapat disimpan.'))));
               }
             },
-            child: const Text('Save on device'),
+            child: Text(context.tr('Simpan di perangkat')),
           ),
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(context.tr('Tutup'))),
       ],
     ),
   );

@@ -1,7 +1,9 @@
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
+import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -26,37 +28,37 @@ void main() {
   testWidgets('shows the primary navigation destinations', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
 
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Tools'), findsOneWidget);
-    expect(find.text('Assistant'), findsOneWidget);
-    expect(find.text('Connections'), findsOneWidget);
-    expect(find.text('Your security,\nyour infrastructure.'), findsOneWidget);
+    expect(find.text('Beranda'), findsOneWidget);
+    expect(find.text('Alat'), findsOneWidget);
+    expect(find.text('Asisten'), findsOneWidget);
+    expect(find.text('Koneksi'), findsOneWidget);
+    expect(find.text('Keamanan digital, kendali tetap di tangan Anda.'), findsOneWidget);
   });
 
   testWidgets('filters the tool registry by search text', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
-    await tester.tap(find.text('Tools'));
+    await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'TLS');
     await tester.pump();
 
-    expect(find.text('SSL/TLS Inspector'), findsOneWidget);
-    expect(find.text('DNS Lookup'), findsNothing);
+    expect(find.text('Inspeksi Sertifikat TLS'), findsOneWidget);
+    expect(find.text('Pencarian DNS'), findsNothing);
   });
 
   testWidgets('does not run a network check until authorization is confirmed', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
-    await tester.tap(find.text('Tools'));
+    await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('DNS Lookup'));
+    await tester.tap(find.text('Pencarian DNS'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'example.com');
-    await tester.tap(find.text('Run check'));
+    await tester.tap(find.text('Jalankan pemeriksaan'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Confirm that you own or are authorized to test this target.'), findsOneWidget);
+    expect(find.text('Konfirmasi bahwa Anda memiliki atau mendapat izin untuk menguji target ini.'), findsOneWidget);
 
     final authorization = find.byType(CheckboxListTile).first;
     await tester.tap(authorization);
@@ -70,23 +72,23 @@ void main() {
 
   testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
-    await tester.tap(find.text('Tools'));
+    await tester.tap(find.text('Alat'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Check GitHub releases'));
+    await tester.tap(find.text('Lihat rilis GitHub'));
     await tester.pumpAndSettle();
 
-    expect(find.text('GitHub release metadata'), findsOneWidget);
-    expect(find.text('Check latest release'), findsOneWidget);
-    expect(find.text('Choose an allowlisted reference repository. This reads release metadata only; it does not download or run files.'), findsOneWidget);
+    expect(find.text('Metadata rilis GitHub'), findsOneWidget);
+    expect(find.text('Periksa rilis terbaru'), findsOneWidget);
+    expect(find.text('Pilih repositori referensi yang diizinkan. Halaman ini hanya membaca metadata rilis; file tidak diunduh atau dijalankan.'), findsOneWidget);
   });
 
   testWidgets('provider catalog search opens an explicitly unconnected guide', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
-    await tester.tap(find.text('Connections'));
+    await tester.tap(find.text('Koneksi'));
     await tester.pumpAndSettle();
 
     final providerSearch = find.byWidgetPredicate(
-      (widget) => widget is TextField && widget.decoration?.hintText == 'Search providers',
+      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari penyedia layanan',
     );
     final connectionsScroll = find.descendant(
       of: find.byType(ConnectionsScreen),
@@ -102,10 +104,10 @@ void main() {
     await tester.scrollUntilVisible(openAiTile, 300, scrollable: connectionsScroll);
     await tester.tap(openAiTile);
     await tester.pumpAndSettle();
-    expect(find.text('Status: Guide only · not connected'), findsOneWidget);
-    expect(find.text('Authentication: User-owned API key required'), findsOneWidget);
-    expect(find.text('Credential storage: not checked'), findsOneWidget);
-    expect(find.text('Stored credentials are not sent to this provider: authenticated requests and provider-specific connection tests are not implemented.'), findsOneWidget);
+    expect(find.text('Status: Panduan saja · belum terhubung'), findsOneWidget);
+    expect(find.text('Autentikasi: Memerlukan API key milik pengguna'), findsOneWidget);
+    expect(find.text('Status penyimpanan kredensial: belum diperiksa'), findsOneWidget);
+    expect(find.text('Kredensial tersimpan belum dikirim ke provider. Permintaan terautentikasi dan uji koneksi khusus provider belum dibuat.'), findsOneWidget);
   });
 
   testWidgets('provider details stores a masked credential without making a provider request', (tester) async {
@@ -114,6 +116,14 @@ void main() {
     final provider = providerRegistry.firstWhere((item) => item.id == 'openai');
 
     await tester.pumpWidget(MaterialApp(
+      locale: const Locale('en'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: Scaffold(
         body: Builder(builder: (context) => TextButton(
               onPressed: () => showDialog<void>(
@@ -156,10 +166,10 @@ void main() {
 
   testWidgets('requires current authorization and rejects invalid connection URLs', (tester) async {
     await tester.pumpWidget(const CybersecurityAssistantApp());
-    await tester.tap(find.text('Connections'));
+    await tester.tap(find.text('Koneksi'));
     await tester.pumpAndSettle();
 
-    final connectionButton = find.widgetWithText(FilledButton, 'Test Connection');
+    final connectionButton = find.widgetWithText(FilledButton, 'Uji koneksi');
     final authorization = find.byType(CheckboxListTile).first;
     final connectionScroll = find.descendant(
       of: find.byType(ConnectionsScreen),
@@ -179,9 +189,9 @@ void main() {
     await confirmCurrentEndpoint();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNotNull);
     await tester.ensureVisible(connectionButton);
-    await tester.tap(find.text('Test Connection'));
+    await tester.tap(find.text('Uji koneksi'));
     await tester.pump();
-    expect(find.text('Enter a valid HTTPS URL without credentials, query, or fragment'), findsOneWidget);
+    expect(find.text('Masukkan URL HTTPS valid tanpa kredensial, kueri, atau fragmen.'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'https://example.com/?token=secret');
     await tester.pump();
@@ -189,15 +199,15 @@ void main() {
     await confirmCurrentEndpoint();
     expect(tester.widget<FilledButton>(connectionButton).onPressed, isNotNull);
     await tester.ensureVisible(connectionButton);
-    await tester.tap(find.text('Test Connection'));
+    await tester.tap(find.text('Uji koneksi'));
     await tester.pump();
-    expect(find.text('Enter a valid HTTPS URL without credentials, query, or fragment'), findsOneWidget);
+    expect(find.text('Masukkan URL HTTPS valid tanpa kredensial, kueri, atau fragmen.'), findsOneWidget);
 
     await tester.enterText(find.byType(TextField).first, 'https://example.com:not-a-port');
     await confirmCurrentEndpoint();
     await tester.ensureVisible(connectionButton);
-    await tester.tap(find.text('Test Connection'));
+    await tester.tap(find.text('Uji koneksi'));
     await tester.pump();
-    expect(find.text('Enter a valid HTTPS URL without credentials, query, or fragment'), findsOneWidget);
+    expect(find.text('Masukkan URL HTTPS valid tanpa kredensial, kueri, atau fragmen.'), findsOneWidget);
   });
 }
