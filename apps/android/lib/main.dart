@@ -1270,6 +1270,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
             ),
             const SizedBox(height: 8),
             ],
+            ],
           ),
         ),
       );
