@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 
 import 'core/local_result_store.dart';
 import 'core/provider_registry.dart';
