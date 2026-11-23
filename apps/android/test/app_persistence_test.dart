@@ -39,7 +39,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(history.loaded, isTrue);
-    expect(find.textContaining('persisted.example'), findsOneWidget);
+    final savedTarget = find.textContaining('persisted.example');
+    await tester.scrollUntilVisible(savedTarget, 250);
+    expect(savedTarget, findsOneWidget);
     expect(find.text('DNS Lookup'), findsOneWidget);
   });
 }
