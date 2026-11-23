@@ -39,7 +39,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: [
+      localizationsDelegates: const [
         AppLocalizationsDelegate(),
         ...GlobalMaterialLocalizations.delegates,
       ],

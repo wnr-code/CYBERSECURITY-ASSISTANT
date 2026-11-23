@@ -43,7 +43,7 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
       title: 'Cybersecurity Assistant',
       locale: _locale,
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: [
+      localizationsDelegates: const [
         AppLocalizationsDelegate(),
         ...GlobalMaterialLocalizations.delegates,
       ],
