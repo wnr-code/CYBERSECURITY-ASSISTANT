@@ -1,0 +1,27 @@
+# Python test/tool caches
+__pycache__/
+*.py[cod]
+
+# Dart / Flutter generated files
+.dart_tool/
+.packages
+.pub/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android build output and machine-specific configuration
+**/.gradle/
+**/local.properties
+**/key.properties
+**/app/debug/
+**/app/profile/
+**/app/release/
+*.jks
+*.keystore
+
+# Editors
+.idea/
+*.iml
+.vscode/
