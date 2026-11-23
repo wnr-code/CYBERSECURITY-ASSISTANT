@@ -51,8 +51,14 @@ def verify_sources(android_root: Path) -> None:
     _require(len(sources) == 1, f"Expected one {main_activity} source file, found {len(sources)}")
     activity_source = sources[0].read_text(encoding="utf-8")
     _require(bool(re.search(r"extends\s+FlutterActivity|:\s*FlutterActivity\b", activity_source)), "Launcher does not extend FlutterActivity")
+    install_index = activity_source.find("SplashScreen.installSplashScreen(this)")
+    super_index = activity_source.find("super.onCreate")
+    _require(install_index >= 0 and super_index > install_index, "AndroidX SplashScreen must be installed before FlutterActivity.onCreate")
     _require("removeSplashScreen" not in activity_source and "FlutterNativeSplash.remove" not in activity_source,
              "Launcher explicitly removes the splash before Flutter's first frame")
+    gradle_files = list((app).glob("build.gradle")) + list((app).glob("build.gradle.kts"))
+    _require(len(gradle_files) == 1 and "androidx.core:core-splashscreen:1.0.1" in gradle_files[0].read_text(encoding="utf-8"),
+             "AndroidX core-splashscreen dependency is missing")
 
     resource = app / "src/main/res"
     legacy_styles = ET.parse(resource / "values/styles.xml").getroot()
@@ -61,18 +67,22 @@ def verify_sources(android_root: Path) -> None:
     _require(launch_legacy is not None and normal is not None, "Legacy LaunchTheme/NormalTheme is missing")
     legacy_items = {node.get("name"): (node.text or "").strip() for node in launch_legacy.findall("item")}
     normal_items = {node.get("name"): (node.text or "").strip() for node in normal.findall("item")}
+    _require(launch_legacy.get("parent") == "Theme.SplashScreen", "Legacy LaunchTheme must inherit AndroidX Theme.SplashScreen")
+    _require(legacy_items.get("windowSplashScreenBackground") == "@color/startup_navy", "Legacy SplashScreen background is missing")
+    _require(legacy_items.get("windowSplashScreenAnimatedIcon") == "@drawable/splash_brand_mark", "Legacy SplashScreen logo is missing")
+    _require(legacy_items.get("postSplashScreenTheme") == "@style/NormalTheme", "SplashScreen does not hand off to NormalTheme")
     _require(legacy_items.get("android:windowBackground") == "@drawable/launch_background", "Pre-Android 12 launch background is not branded")
     _require(normal_items.get("android:windowBackground") == "@drawable/startup_window_background", "Post-launch window background is not the branded fallback color")
 
     v31_styles = ET.parse(resource / "values-v31/styles.xml").getroot()
     launch_v31 = next((node for node in v31_styles.findall("style") if node.get("name") == "LaunchTheme"), None)
     _require(launch_v31 is not None, "Android 12+ LaunchTheme is missing")
-    _require(launch_v31.get("parent") == "@android:style/Theme.Light.NoTitleBar", "Android 12+ LaunchTheme must use the platform theme without AndroidX-only dependencies")
+    _require(launch_v31.get("parent") == "Theme.SplashScreen", "Android 12+ LaunchTheme must inherit AndroidX Theme.SplashScreen")
     v31_items = {node.get("name"): (node.text or "").strip() for node in launch_v31.findall("item")}
     _require(v31_items.get("android:windowBackground") == "@drawable/launch_background", "Android 12+ launch fallback background is missing")
-    _require(v31_items.get("android:windowSplashScreenBackground") == "@color/startup_navy", "Android 12+ splash background is missing")
-    _require(v31_items.get("android:windowSplashScreenAnimatedIcon") == "@drawable/splash_brand_mark", "Android 12+ splash logo is missing")
-    _require("android:postSplashScreenTheme" not in v31_items, "Unexpected AndroidX-only postSplashScreenTheme attribute")
+    _require(v31_items.get("windowSplashScreenBackground") == "@color/startup_navy", "Android 12+ splash background is missing")
+    _require(v31_items.get("windowSplashScreenAnimatedIcon") == "@drawable/splash_brand_mark", "Android 12+ splash logo is missing")
+    _require(v31_items.get("postSplashScreenTheme") == "@style/NormalTheme", "Android 12+ post-splash theme is not configured")
 
     icon = resource / "drawable/splash_brand_mark.xml"
     _require(icon.is_file(), "Native splash vector logo is missing")
@@ -80,7 +90,7 @@ def verify_sources(android_root: Path) -> None:
     drawable_values = [value for node in launch_background.iter() for value in node.attrib.values()]
     _require("@drawable/splash_brand_mark" in drawable_values, "Legacy launch drawable does not include the brand logo")
     _require("@color/startup_navy" in drawable_values, "Legacy launch drawable does not include the brand background")
-    print("Native splash source wiring verified: launcher theme, Flutter first-frame handoff, API 23-30 fallback and API 31+ SplashScreen attributes/logo.")
+    print("Native splash source wiring verified: launcher theme, AndroidX installSplashScreen() before FlutterActivity, branded API 23+ resources, and Flutter NormalTheme handoff.")
 
 
 def _find_aapt() -> str:
@@ -114,8 +124,9 @@ def verify_apk(apk: Path) -> None:
     _require(theme_reference is not None, "Compiled APK launcher activity has no resolved theme resource")
     launch_theme_id = theme_reference.group(1).lower()
     _require(launch_theme_id.startswith("7f"), "Compiled APK launcher theme does not point to an app resource")
-    for marker in ("style/LaunchTheme", "style/NormalTheme", "drawable/splash_brand_mark", "drawable/launch_background",
-                   "drawable/startup_window_background", "color/startup_navy"):
+    for marker in ("style/LaunchTheme", "style/NormalTheme", "style/Theme.SplashScreen", "drawable/splash_brand_mark",
+                   "drawable/launch_background", "drawable/startup_window_background", "color/startup_navy",
+                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon", "postSplashScreenTheme"):
         _require(marker in resources_dump, f"Compiled APK is missing native splash resource: {marker}")
     print(f"Built APK native splash verified: {apk} (compiled manifest and resource table inspected with aapt).")
 

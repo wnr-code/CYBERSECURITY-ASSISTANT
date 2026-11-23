@@ -9,6 +9,7 @@ from configure_android import (
     configure_gradle,
     configure_manifest,
     configure_project,
+    configure_splash_activity,
     configure_splash_resources,
 )
 
@@ -63,12 +64,11 @@ class ConfigureAndroidTests(unittest.TestCase):
             styles = ET.parse(resource_root / "values-v31/styles.xml").getroot()
             launch_style = next(style for style in styles.findall("style") if style.get("name") == "LaunchTheme")
             items = {item.get("name"): item.text for item in launch_style.findall("item")}
-            self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for item in launch_style.findall("item")))
-            self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
-            self.assertEqual(items["android:windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
-            self.assertEqual(items["android:windowSplashScreenBackground"], "@color/startup_navy")
+            self.assertEqual(items["windowSplashScreenBackground"], "@color/startup_navy")
+            self.assertEqual(items["windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
+            self.assertEqual(items["postSplashScreenTheme"], "@style/NormalTheme")
             self.assertEqual(items["android:windowBackground"], "@drawable/launch_background")
-            self.assertEqual(launch_style.get("parent"), "@android:style/Theme.Light.NoTitleBar")
+            self.assertEqual(launch_style.get("parent"), "Theme.SplashScreen")
 
             base_styles = ET.parse(resource_root / "values/styles.xml").getroot()
             base_launch = next(style for style in base_styles.findall("style") if style.get("name") == "LaunchTheme")
@@ -95,7 +95,10 @@ class ConfigureAndroidTests(unittest.TestCase):
             launch = next(style for style in styles.findall("style") if style.get("name") == "LaunchTheme")
             background = next(item for item in launch.findall("item") if item.get("name") == "android:windowBackground")
             self.assertEqual(background.text, "@drawable/launch_background")
-            self.assertTrue(all("{http://schemas.android.com/apk/res/android}name" not in item.attrib for style in styles.findall("style") for item in style.findall("item")))
+            self.assertEqual(launch.get("parent"), "Theme.SplashScreen")
+            launch_items = {item.get("name"): item.text for item in launch.findall("item")}
+            self.assertEqual(launch_items["windowSplashScreenAnimatedIcon"], "@drawable/splash_brand_mark")
+            self.assertEqual(launch_items["postSplashScreenTheme"], "@style/NormalTheme")
 
     def test_native_splash_verifier_requires_a_real_launcher_theme_handoff(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -117,6 +120,10 @@ class ConfigureAndroidTests(unittest.TestCase):
                 "package org.example\nimport io.flutter.embedding.android.FlutterActivity\nclass MainActivity : FlutterActivity()\n",
                 encoding="utf-8",
             )
+            gradle = app / "build.gradle.kts"
+            gradle.write_text("android {\n    defaultConfig {\n        minSdk = 23\n    }\n}\n", encoding="utf-8")
+            configure_gradle(gradle)
+            configure_splash_activity(android)
             configure_splash_resources(android)
             verify_sources(android)
 
@@ -182,6 +189,12 @@ class ConfigureAndroidTests(unittest.TestCase):
                 '</intent-filter></activity></application></manifest>',
                 encoding="utf-8",
             )
+            main_activity = app / "src/main/kotlin/org/example/MainActivity.kt"
+            main_activity.parent.mkdir(parents=True)
+            main_activity.write_text(
+                "package org.example\nimport io.flutter.embedding.android.FlutterActivity\nclass MainActivity : FlutterActivity()\n",
+                encoding="utf-8",
+            )
 
             configure_project(android)
 
@@ -201,7 +214,12 @@ class ConfigureAndroidTests(unittest.TestCase):
                     "device_sharedpref",
                     {entry.get("domain") for entry in section.findall("exclude")},
                 )
-            self.assertIn("minSdk = 23", (app / "build.gradle.kts").read_text(encoding="utf-8"))
+            gradle_text = (app / "build.gradle.kts").read_text(encoding="utf-8")
+            self.assertIn("minSdk = 23", gradle_text)
+            self.assertIn("androidx.core:core-splashscreen:1.0.1", gradle_text)
+            activity_text = main_activity.read_text(encoding="utf-8")
+            self.assertIn("SplashScreen.installSplashScreen(this)", activity_text)
+            self.assertLess(activity_text.index("SplashScreen.installSplashScreen(this)"), activity_text.index("super.onCreate"))
 
 
 if __name__ == "__main__":

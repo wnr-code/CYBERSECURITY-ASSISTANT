@@ -48,6 +48,16 @@ def configure_gradle(gradle_file: Path) -> None:
             f"found {len(matches)}. Review this Flutter template manually."
         )
     configured = pattern.sub(_minimum_sdk, source, count=1)
+    splash_dependency = "androidx.core:core-splashscreen:1.0.1"
+    if splash_dependency not in configured:
+        dependency_block = re.search(r"(?m)^(\s*)dependencies\s*\{", configured)
+        declaration = 'implementation("androidx.core:core-splashscreen:1.0.1")'
+        if dependency_block:
+            insertion = dependency_block.end()
+            indent = dependency_block.group(1) + "    "
+            configured = configured[:insertion] + f"\n{indent}{declaration}" + configured[insertion:]
+        else:
+            configured = configured.rstrip() + f"\n\ndependencies {{\n    {declaration}\n}}\n"
     gradle_file.write_text(configured, encoding="utf-8")
 
 
@@ -165,7 +175,10 @@ def configure_splash_resources(android_root: Path) -> None:
     base_styles = ET.parse(base_styles_file).getroot() if base_styles_file.exists() else ET.Element("resources")
     if base_styles.tag != "resources":
         raise RuntimeError(f"Unexpected Android styles resource root in {base_styles_file}.")
-    launch_style = _ensure_style(base_styles, "LaunchTheme", "@android:style/Theme.Light.NoTitleBar")
+    launch_style = _ensure_style(base_styles, "LaunchTheme", "Theme.SplashScreen")
+    _set_style_item(launch_style, "windowSplashScreenBackground", "@color/startup_navy")
+    _set_style_item(launch_style, "windowSplashScreenAnimatedIcon", "@drawable/splash_brand_mark")
+    _set_style_item(launch_style, "postSplashScreenTheme", "@style/NormalTheme")
     _set_style_item(launch_style, "android:windowBackground", "@drawable/launch_background")
     _set_style_item(launch_style, "android:statusBarColor", "@color/startup_navy")
     _set_style_item(launch_style, "android:navigationBarColor", "@color/startup_navy")
@@ -182,12 +195,11 @@ def configure_splash_resources(android_root: Path) -> None:
     v31_styles = ET.parse(v31_styles_file).getroot() if v31_styles_file.exists() else ET.Element("resources")
     if v31_styles.tag != "resources":
         raise RuntimeError(f"Unexpected Android API 31 styles resource root in {v31_styles_file}.")
-    # Use platform styles/attributes only. Theme.SplashScreen and postSplashScreenTheme
-    # belong to AndroidX core-splashscreen, which this Flutter app does not depend on.
-    launch_v31 = _ensure_style(v31_styles, "LaunchTheme", "@android:style/Theme.Light.NoTitleBar")
+    launch_v31 = _ensure_style(v31_styles, "LaunchTheme", "Theme.SplashScreen")
+    _set_style_item(launch_v31, "windowSplashScreenBackground", "@color/startup_navy")
+    _set_style_item(launch_v31, "windowSplashScreenAnimatedIcon", "@drawable/splash_brand_mark")
+    _set_style_item(launch_v31, "postSplashScreenTheme", "@style/NormalTheme")
     _set_style_item(launch_v31, "android:windowBackground", "@drawable/launch_background")
-    _set_style_item(launch_v31, "android:windowSplashScreenBackground", "@color/startup_navy")
-    _set_style_item(launch_v31, "android:windowSplashScreenAnimatedIcon", "@drawable/splash_brand_mark")
     _set_style_item(launch_v31, "android:statusBarColor", "@color/startup_navy")
     _set_style_item(launch_v31, "android:navigationBarColor", "@color/startup_navy")
     _set_style_item(launch_v31, "android:windowLightStatusBar", "false")
@@ -261,6 +273,57 @@ def configure_manifest(manifest_file: Path) -> None:
     tree.write(manifest_file, encoding="utf-8", xml_declaration=True)
 
 
+def configure_splash_activity(android_root: Path) -> None:
+    """Install AndroidX SplashScreen before FlutterActivity initializes its view."""
+    app_root = android_root / "app" / "src" / "main"
+    candidates = list(app_root.rglob("MainActivity.kt")) + list(app_root.rglob("MainActivity.java"))
+    if len(candidates) != 1:
+        raise RuntimeError(f"Expected one generated MainActivity source; found {len(candidates)}.")
+    activity_file = candidates[0]
+    source = activity_file.read_text(encoding="utf-8")
+    install_call = "SplashScreen.installSplashScreen(this)"
+    if install_call in source:
+        if source.index(install_call) > source.find("super.onCreate"):
+            raise RuntimeError("SplashScreen.installSplashScreen(this) must run before super.onCreate().")
+        return
+
+    if activity_file.suffix == ".kt":
+        package_line = re.search(r"(?m)^package\s+[\w.]+\s*$", source)
+        if package_line is None:
+            raise RuntimeError(f"No Kotlin package declaration found in {activity_file}.")
+        imports = "\nimport android.os.Bundle\nimport androidx.core.splashscreen.SplashScreen\n"
+        source = source[:package_line.end()] + imports + source[package_line.end():]
+        declaration = re.compile(r"class\s+MainActivity\s*:\s*FlutterActivity\(\)\s*(?:\{\s*\})?")
+        replacement = (
+            "class MainActivity : FlutterActivity() {\n"
+            "    override fun onCreate(savedInstanceState: Bundle?) {\n"
+            "        SplashScreen.installSplashScreen(this)\n"
+            "        super.onCreate(savedInstanceState)\n"
+            "    }\n"
+            "}"
+        )
+    else:
+        package_line = re.search(r"(?m)^package\s+[\w.]+\s*;?\s*$", source)
+        if package_line is None:
+            raise RuntimeError(f"No Java package declaration found in {activity_file}.")
+        imports = "\nimport android.os.Bundle;\nimport androidx.core.splashscreen.SplashScreen;\n"
+        source = source[:package_line.end()] + imports + source[package_line.end():]
+        declaration = re.compile(r"public\s+class\s+MainActivity\s+extends\s+FlutterActivity\s*\{\s*\}")
+        replacement = (
+            "public class MainActivity extends FlutterActivity {\n"
+            "    @Override\n"
+            "    protected void onCreate(Bundle savedInstanceState) {\n"
+            "        SplashScreen.installSplashScreen(this);\n"
+            "        super.onCreate(savedInstanceState);\n"
+            "    }\n"
+            "}"
+        )
+    source, replacements = declaration.subn(replacement, source, count=1)
+    if replacements != 1:
+        raise RuntimeError(f"Unexpected generated MainActivity structure in {activity_file}; review it manually.")
+    activity_file.write_text(source, encoding="utf-8")
+
+
 def configure_project(android_root: Path) -> None:
     app_root = android_root / "app"
     gradle_candidates = [app_root / "build.gradle.kts", app_root / "build.gradle"]
@@ -275,6 +338,7 @@ def configure_project(android_root: Path) -> None:
 
     configure_gradle(gradle_files[0])
     configure_manifest(manifest_file)
+    configure_splash_activity(android_root)
     _write_backup_rules(android_root)
     configure_splash_resources(android_root)
 
