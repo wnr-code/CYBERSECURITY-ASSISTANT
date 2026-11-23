@@ -111,7 +111,7 @@ class _ProviderDetailsDialogState extends State<ProviderDetailsDialog> {
                     TextButton.icon(
                       onPressed: _busy ? null : _deleteCredential,
                       icon: const Icon(Icons.delete_outline),
-                      label: Text(context.tr('Hapus')),
+                      label: Text(context.tr('Delete')),
                     ),
                 ]),
                 if (_busy) const LinearProgressIndicator(),
@@ -198,7 +198,7 @@ class _ProviderDetailsDialogState extends State<ProviderDetailsDialog> {
         content: Text(context.tr('Kredensial provider ini akan dihapus dari penyimpanan aman.')),
         actions: [
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(context.tr('Batal'))),
-          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(context.tr('Hapus'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(context.tr('Delete'))),
         ],
       ),
     );
