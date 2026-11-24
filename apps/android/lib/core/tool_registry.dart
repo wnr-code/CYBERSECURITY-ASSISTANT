@@ -62,7 +62,7 @@ class ToolDefinition {
     this.supportedPlatforms = const ['Android'],
     this.architectures = const [],
     this.dependencies = const [],
-    this.requiredPermissions = const [],
+    this.requiredPermissions = const {},
     this.runtimeId,
     this.requiredCapabilities = const {},
     this.executionMethod,

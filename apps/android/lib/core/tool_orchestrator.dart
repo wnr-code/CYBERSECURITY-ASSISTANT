@@ -198,6 +198,13 @@ class ToolOrchestrator {
 
   Future<ToolStatus> statusForTool(String toolId) async => (await availabilityForTool(toolId)).status;
 
+  RuntimeDiscovery? _findDiscovery(List<RuntimeDiscovery> discoveries, String runtimeId) {
+    for (final discovery in discoveries) {
+      if (discovery.descriptor.id == runtimeId) return discovery;
+    }
+    return null;
+  }
+
   Future<ToolRunResult> execute(ToolInvocation invocation) async {
     final definition = registry.byId(invocation.toolId);
     if (definition == null) {
