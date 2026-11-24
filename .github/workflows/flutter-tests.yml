@@ -29,7 +29,7 @@ jobs:
 
       - name: Generate Android Gradle scaffold
         working-directory: apps/android
-        run: flutter create --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+        run: flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
 
       - name: Apply and test Android hardening configuration
         working-directory: apps/android
