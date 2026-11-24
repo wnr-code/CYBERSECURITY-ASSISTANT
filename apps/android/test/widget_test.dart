@@ -53,6 +53,11 @@ class _MemoryResultHistory implements ResultHistoryStore {
 
 void _ignoreResult(ToolRunResult _) {}
 
+Finder _assessmentScroll() => find.descendant(
+      of: find.byType(ToolsScreen),
+      matching: find.byType(Scrollable),
+    ).first;
+
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
 Future<void> _pumpApp(WidgetTester tester) async {
@@ -233,7 +238,7 @@ void main() {
     final catalogSearch = find.byWidgetPredicate(
       (widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori',
     );
-    await tester.scrollUntilVisible(catalogSearch, 240, scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(catalogSearch, 240, scrollable: _assessmentScroll());
     await tester.enterText(catalogSearch, 'TLS');
     await tester.pump();
 
@@ -246,7 +251,7 @@ void main() {
     await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
     final dnsToolEntry = find.text('Pencarian DNS');
-    await tester.scrollUntilVisible(dnsToolEntry, 260, scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(dnsToolEntry, 260, scrollable: _assessmentScroll());
     await tester.tap(dnsToolEntry);
     await tester.pumpAndSettle();
 
@@ -275,7 +280,7 @@ void main() {
     await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
     final releaseButton = find.text('Lihat rilis GitHub');
-    await tester.scrollUntilVisible(releaseButton, 260, scrollable: find.byType(Scrollable).first);
+    await tester.scrollUntilVisible(releaseButton, 260, scrollable: _assessmentScroll());
     await tester.tap(releaseButton);
     await tester.pumpAndSettle();
 
