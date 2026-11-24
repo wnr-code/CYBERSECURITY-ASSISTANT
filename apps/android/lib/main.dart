@@ -5,7 +5,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'core/diagnostics.dart';
@@ -40,13 +39,14 @@ void main() {
 Future<void> _initializeDiagnostics() async {
   try {
     await _diagnostics.initialize();
-    final package = await PackageInfo.fromPlatform();
+    const appVersion = '0.1.0'; // Keep aligned with pubspec.yaml.
+    const buildNumber = '1'; // Keep aligned with pubspec.yaml's +build suffix.
     var android = 'Android';
     if (Platform.isAndroid) {
       final info = await DeviceInfoPlugin().androidInfo;
       android = 'Android ${info.version.release} (API ${info.version.sdkInt})';
     }
-    _diagnostics.updateDeviceMetadata(appVersion: package.version, buildNumber: package.buildNumber, androidVersion: android);
+    _diagnostics.updateDeviceMetadata(appVersion: appVersion, buildNumber: buildNumber, androidVersion: android);
     final crashFile = File('${(await getApplicationSupportDirectory()).path}/pending_native_crash.txt');
     await consumeNativeCrashFile(_diagnostics, crashFile);
     Connectivity().checkConnectivity().then((results) {

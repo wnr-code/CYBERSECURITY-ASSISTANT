@@ -4,7 +4,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/diagnostics.dart';
 import '../core/package_manager.dart';
@@ -50,9 +49,8 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     _enabled = reporter.settings.autoReportingEnabled;
     _wifiOnly = reporter.settings.wifiOnly;
     _review = reporter.settings.reviewBeforeUpload;
+    _version = '${reporter.appVersion} (${reporter.buildNumber})';
     try {
-      final package = await PackageInfo.fromPlatform();
-      _version = '${package.version} (${package.buildNumber})';
       if (Platform.isAndroid) {
         final info = await DeviceInfoPlugin().androidInfo;
         _device = 'Android ${info.version.release} · API ${info.version.sdkInt} · ${info.supportedAbis.join(', ')}';
