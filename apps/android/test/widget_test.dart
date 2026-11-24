@@ -84,7 +84,7 @@ class _CancellableAssessmentOrchestrator extends ToolOrchestrator {
     receivedToken = cancellationToken;
     if (!started.isCompleted) started.complete();
     await cancellationToken!.whenCancelled;
-    final outcome = AssessmentCheckOutcome(
+    const outcome = AssessmentCheckOutcome(
       toolId: 'dns_lookup',
       status: AssessmentCheckStatus.cancelled,
       error: 'Check cancelled.',
