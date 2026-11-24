@@ -333,6 +333,7 @@ void main() {
   });
 
   testWidgets('activity timeline filters by date, target, tool type and status', (tester) async {
+    _useTallViewport(tester);
     final now = DateTime.now().toUtc();
     final events = <ActivityEvent>[
       ActivityEvent(
