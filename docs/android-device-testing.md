@@ -124,6 +124,15 @@ The app labels findings with confidence and severity separately. Severity is a p
 - [ ] Restore connectivity and repeat a valid check; app recovers without restart.
 - [ ] Test a controlled slow/unreachable endpoint where safe; confirm the 8-second timeout path and UI returns to idle.
 
+### 10. Market and package lifecycle (offline example)
+
+- [ ] Open Tools → **Open Market**. Confirm the page is separate from the primary four-destination navigation and shows the six categories.
+- [ ] Inspect one catalog-only Runtime/Plugin/AI entry. Confirm it is marked incompatible/unsupported or metadata-only and cannot be installed or run.
+- [ ] Open the **Security Assessment Evidence Guide** knowledge pack, review its CC BY-SA 4.0 license and installation guide, then accept the license. Confirm installation reaches **Installed** after Downloaded/Verifying and the registry count updates. The bundled demonstration package reads a local app asset; it makes no network request.
+- [ ] Close/reopen Market and confirm the app-private registry still marks the package installed. Its JSON is data only and must not be executed or loaded as code.
+- [ ] Uninstall the example and confirm the installed status and stored package file are removed. This is an app-private package fixture, not a device-wide app uninstall.
+- [ ] Do not treat a matching SHA-256 from a catalog as publisher authentication; external signing keys and remote catalog management are not configured in this foundation.
+
 ## Issue log and exit criteria
 
 | ID | Case | Device/API | Expected | Actual | Severity | Repro steps | Fixed in commit |

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
+import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
@@ -8,9 +10,17 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
+import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+
+class _UnusedPackageDownloader implements PackageDownloader {
+  @override
+  Future<DownloadedPackage> download(MarketPackage package, {required int maxBytes, required Duration timeout}) async {
+    throw StateError('The catalog-only widget test does not initiate downloads.');
+  }
+}
 
 class _MemorySecretBackend implements SecureStorageBackend {
   final values = <String, String>{};
@@ -75,6 +85,38 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('Market is a separate package page with the six catalog categories and honest placeholders', (tester) async {
+    final directory = await Directory.systemTemp.createTemp('market-widget-');
+    final manager = MarketPackageManager(
+      catalog: bundledMarketCatalog,
+      environment: const CompatibilityEnvironment(platform: 'Android'),
+      downloader: _UnusedPackageDownloader(),
+      supportDirectoryProvider: () async => directory,
+    );
+    try {
+      await tester.pumpWidget(MaterialApp(
+        locale: const Locale('id'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+        home: MarketScreen(packageManager: manager),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('MARKET'), findsOneWidget);
+      for (final category in ['Alat Keamanan', 'Runtime', 'Plugin', 'Model AI', 'Paket Pengetahuan', 'Konektor Cloud/API']) {
+        expect(find.text(category), findsWidgets);
+      }
+      expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
+      expect(find.text('Embedded Runtime (planned)'), findsOneWidget);
+      expect(find.text('Runtime execution, plugin loading, AI inference, and authenticated cloud connectors are not implemented in this foundation.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      manager.dispose();
+      if (await directory.exists()) await directory.delete(recursive: true);
+    }
+  });
+
   testWidgets('animated splash renders the digital map, orbiting shield and four feature marks on compact screens', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(320, 640);

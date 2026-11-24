@@ -12,9 +12,11 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  crypto: ^3.0.6
   flutter_secure_storage: ^11.2.0
   material_ui: ^1.11.1
   path: ^1.9.1
+  path_provider: ^2.1.5
   sqflite: ^2.4.2
 
 dev_dependencies:
@@ -25,3 +27,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/market/

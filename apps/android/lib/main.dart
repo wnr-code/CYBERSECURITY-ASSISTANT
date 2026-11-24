@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'core/local_result_store.dart';
+import 'core/package_manager.dart';
 import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
 import 'core/security_tools.dart';
@@ -13,6 +14,7 @@ import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
 import 'widgets/assessment_runner.dart';
+import 'widgets/market_screen.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
@@ -157,6 +159,7 @@ class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
   final List<ToolRunResult> _recentResults = [];
   late final ResultHistoryStore _resultStore;
+  late final MarketPackageManager _marketPackageManager;
   List<ToolRunResult> _savedResults = [];
   bool _savedHistoryLoaded = false;
   bool _storageBusy = false;
@@ -167,6 +170,7 @@ class _MainShellState extends State<MainShell> {
     super.initState();
     StartupTrace.mark('dashboard-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
+    _marketPackageManager = MarketPackageManager.bundled();
     final startupResults = widget.initialSavedResults;
     if (startupResults != null) {
       _savedResults = List.unmodifiable(startupResults);
@@ -194,6 +198,12 @@ class _MainShellState extends State<MainShell> {
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
         child: child,
       ),
+    ));
+  }
+
+  void _openMarket() {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => MarketScreen(packageManager: _marketPackageManager),
     ));
   }
 
@@ -291,6 +301,7 @@ class _MainShellState extends State<MainShell> {
   @override
   void dispose() {
     unawaited(_resultStore.close());
+    _marketPackageManager.dispose();
     super.dispose();
   }
 
@@ -315,7 +326,7 @@ class _MainShellState extends State<MainShell> {
         onOpenAssistant: _openAssistantModule,
         onSaveResult: _saveResultLocally,
       ),
-      ToolsScreen(recentResults: recentResults, onResult: _rememberResult),
+      ToolsScreen(recentResults: recentResults, onResult: _rememberResult, onOpenMarket: _openMarket),
       ReportsScreen(
         recentResults: recentResults,
         savedResults: savedResults,
@@ -1230,10 +1241,11 @@ String _severityName(FindingSeverity severity, BuildContext context) => switch (
 String _displayRecommendation(String recommendation, BuildContext context) => context.tr(recommendation);
 
 class ToolsScreen extends StatefulWidget {
-  const ToolsScreen({super.key, required this.recentResults, required this.onResult});
+  const ToolsScreen({super.key, required this.recentResults, required this.onResult, required this.onOpenMarket});
 
   final List<ToolRunResult> recentResults;
   final ValueChanged<ToolRunResult> onResult;
+  final VoidCallback onOpenMarket;
 
   @override
   State<ToolsScreen> createState() => _ToolsScreenState();
@@ -1282,14 +1294,18 @@ class _ToolsScreenState extends State<ToolsScreen> {
             const SizedBox(height: 8),
             Text(context.tr('KATALOG ALAT'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
+            Wrap(spacing: 9, runSpacing: 8, children: [
+              OutlinedButton.icon(
+                onPressed: widget.onOpenMarket,
+                icon: const Icon(Icons.storefront_outlined),
+                label: Text(context.tr('Open Market')),
+              ),
+              OutlinedButton.icon(
                 onPressed: () => _showReleaseCatalog(context),
                 icon: const Icon(Icons.code_rounded),
                 label: Text(context.tr('Lihat rilis GitHub')),
               ),
-            ),
+            ]),
             const SizedBox(height: 8),
             TextField(
               controller: _searchController,
