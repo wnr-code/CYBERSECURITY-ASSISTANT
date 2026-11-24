@@ -216,7 +216,7 @@ class BundledAndHttpPackageDownloader implements PackageDownloader {
     final deadline = Stopwatch()..start();
     Duration remaining() {
       final value = timeout - deadline.elapsed;
-      if (value <= Duration.zero) throw const TimeoutException('Package download timed out.');
+      if (value <= Duration.zero) throw TimeoutException('Package download timed out.');
       return value;
     }
 
@@ -231,7 +231,7 @@ class BundledAndHttpPackageDownloader implements PackageDownloader {
       if (proxyHost != null ||
           requestUri.host.toLowerCase() != uri.host.toLowerCase() ||
           requestUri.port != 443) {
-        throw const HttpException('Package request escaped its trusted HTTPS source.');
+        throw HttpException('Package request escaped its trusted HTTPS source.');
       }
       Object? lastError;
       for (final address in addresses) {
@@ -240,7 +240,7 @@ class BundledAndHttpPackageDownloader implements PackageDownloader {
           task = await Socket.startConnect(address, 443).timeout(remaining());
           await task.socket.timeout(remaining(), onTimeout: () {
             task?.cancel();
-            throw const TimeoutException('Package source connection timed out.');
+            throw TimeoutException('Package source connection timed out.');
           });
           return task;
         } on SocketException catch (error) {
@@ -751,7 +751,7 @@ class MarketPackageManager extends ChangeNotifier {
 
 typedef HostResolver = Future<List<InternetAddress>> Function(String host);
 
-const bundledMarketCatalog = <MarketPackage>[
+final bundledMarketCatalog = <MarketPackage>[
   MarketPackage(
     id: 'tool.dns-lookup',
     name: 'DNS Lookup',
