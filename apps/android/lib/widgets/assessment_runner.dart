@@ -134,12 +134,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
                 final availability = snapshot.data;
                 final status = availability?.status ?? (snapshot.hasError ? ToolStatus.error : null);
                 final ready = status == ToolStatus.ready;
-                final skippedLabel = context.tr('Skipped until ready');
-                final readinessText = status == null
-                    ? context.tr('Checking readiness')
-                    : ready
-                        ? context.tr('Ready')
-                        : '$skippedLabel: ${availability?.reason ?? status.name}';
+                final readinessText = status == null || ready ? null : '${context.tr('Unavailable')}: ${status.name}';
                 return CheckboxListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
@@ -155,7 +150,9 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
                           }),
                   title: Text(_selectionName(check.id, context)),
                   subtitle: Text(
-                    '${_toolDescription(check.id, context)} · $readinessText',
+                    readinessText == null
+                        ? _toolDescription(check.id, context)
+                        : '${_toolDescription(check.id, context)} · $readinessText',
                     style: const TextStyle(fontSize: 11),
                   ),
                   controlAffinity: ListTileControlAffinity.leading,
