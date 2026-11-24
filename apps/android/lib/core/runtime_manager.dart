@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'diagnostics.dart';
 import 'policy_engine.dart';
+import 'security_tools.dart';
 
 enum RuntimeLifecycle { available, installed, initialized, running, stopped, failed, incompatible }
 enum RuntimeCapability { filesystemRead, filesystemWrite, network, processExecution, nativeCode }
@@ -147,9 +148,11 @@ class RuntimeDiscovery {
   final RuntimeState? state;
 }
 
-class RuntimeCancellationToken {
+class RuntimeCancellationToken implements ToolCancellation {
   final Completer<void> _cancelled = Completer<void>();
+  @override
   bool get isCancelled => _cancelled.isCompleted;
+  @override
   Future<void> get whenCancelled => _cancelled.future;
   void cancel() {
     if (!_cancelled.isCompleted) _cancelled.complete();

@@ -11,7 +11,7 @@ class _AdapterTools extends SecurityTools {
   int dnsCalls = 0;
 
   @override
-  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized}) async {
+  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async {
     dnsCalls++;
     return ToolRunResult(
       toolId: 'dns_lookup',

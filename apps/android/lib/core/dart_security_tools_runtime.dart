@@ -125,7 +125,7 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
     switch (request.toolId) {
       case 'dns_lookup':
         _requireKeys(input, const {'target'});
-        operation = _tools.runDnsLookup(_requireTarget(input), authorized: request.networkAuthorized);
+        operation = _tools.runDnsLookup(_requireTarget(input), authorized: request.networkAuthorized, cancellationToken: request.cancellationToken);
         break;
       case 'tls_inspector':
         _requireKeys(input, const {'target', 'allowPrivateNetwork'});
@@ -133,6 +133,7 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
           _requireTarget(input),
           authorized: request.networkAuthorized,
           allowPrivateNetwork: _optionalBool(input, 'allowPrivateNetwork'),
+          cancellationToken: request.cancellationToken,
         );
         break;
       case 'http_headers':
@@ -141,6 +142,7 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
           _requireTarget(input),
           authorized: request.networkAuthorized,
           allowPrivateNetwork: _optionalBool(input, 'allowPrivateNetwork'),
+          cancellationToken: request.cancellationToken,
         );
         break;
       case 'response_analyzer':
@@ -161,10 +163,15 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
       default:
         throw const RuntimeExecutionException('Tool is not allowlisted by the bundled runtime.');
     }
-    final result = await Future.any<ToolRunResult>([
-      operation,
-      request.cancellationToken.whenCancelled.then((_) => throw const RuntimeExecutionCancelled()),
-    ]);
+    final ToolRunResult result;
+    try {
+      result = await Future.any<ToolRunResult>([
+        operation,
+        request.cancellationToken.whenCancelled.then((_) => throw const RuntimeExecutionCancelled()),
+      ]);
+    } on ToolExecutionCancelled {
+      throw const RuntimeExecutionCancelled();
+    }
     request.cancellationToken.throwIfCancelled();
     if (result.toolId != request.toolId || result.target.length > 2048 || result.details.length > 128 || result.findings.length > 128) {
       throw const FormatException('Tool returned an invalid result shape.');

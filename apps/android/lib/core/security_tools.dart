@@ -58,6 +58,17 @@ class ToolExecutionException implements Exception {
   String toString() => message;
 }
 
+abstract interface class ToolCancellation {
+  bool get isCancelled;
+  Future<void> get whenCancelled;
+}
+
+class ToolExecutionCancelled implements Exception {
+  const ToolExecutionCancelled();
+  @override
+  String toString() => 'Tool execution was cancelled.';
+}
+
 /// Built-in, narrowly scoped P0 adapters. No shell commands or downloaded code
 /// are executed. Every target is validated immediately before the network call.
 class BoundedHttpResponse {
@@ -117,14 +128,14 @@ class SecurityTools {
     Duration? timeout,
   })  : _policy = policy ?? PolicyEngine(),
         _hostResolver = hostResolver ?? InternetAddress.lookup,
-        _httpGet = httpGet ?? _requestHttp,
-        _tlsHandshake = tlsHandshake ?? _performTlsHandshake,
+        _customHttpGet = httpGet,
+        _customTlsHandshake = tlsHandshake,
         _timeout = timeout ?? const Duration(seconds: 8);
   final PolicyEngine _policy;
   final Duration _timeout;
   final HostResolver _hostResolver;
-  final HttpGet _httpGet;
-  final TlsHandshake _tlsHandshake;
+  final HttpGet? _customHttpGet;
+  final TlsHandshake? _customTlsHandshake;
   static const maxApiResponseBytes = 32 * 1024;
   static final _sensitiveJsonKeyPattern = RegExp(
     r'(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|private[_-]?key)',
@@ -171,10 +182,11 @@ class SecurityTools {
         .replaceAllMapped(_urlCredentialPattern, (match) => '${match[1]}[redacted]@');
   }
 
-  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized}) async {
+  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async {
+    if (cancellationToken?.isCancelled == true) throw const ToolExecutionCancelled();
     final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: true);
     try {
-      final addresses = await _hostResolver(target.host).timeout(_timeout);
+      final addresses = await _awaitCancellable(_hostResolver(target.host).timeout(_timeout), cancellationToken);
       final ipv4 = addresses
           .where((address) => address.type == InternetAddressType.IPv4)
           .map((address) => address.address)
@@ -224,7 +236,9 @@ class SecurityTools {
     String input, {
     required bool authorized,
     bool allowPrivateNetwork = false,
+    ToolCancellation? cancellationToken,
   }) async {
+    if (cancellationToken?.isCancelled == true) throw const ToolExecutionCancelled();
     final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: allowPrivateNetwork);
     final deadline = Stopwatch()..start();
     Duration remaining() {
@@ -233,11 +247,14 @@ class SecurityTools {
       return value;
     }
     try {
-      final addresses = await _resolveNetworkDestination(
-        target,
-        allowPrivateNetwork: allowPrivateNetwork,
-      ).timeout(remaining());
-      final certificate = await _tlsHandshake(target.host, addresses, remaining()).timeout(remaining());
+      final addresses = await _awaitCancellable(
+        _resolveNetworkDestination(target, allowPrivateNetwork: allowPrivateNetwork).timeout(remaining()),
+        cancellationToken,
+      );
+      final customHandshake = _customTlsHandshake;
+      final certificate = customHandshake == null
+          ? await _performTlsHandshake(target.host, addresses, remaining(), cancellationToken: cancellationToken).timeout(remaining())
+          : await _awaitCancellable(customHandshake(target.host, addresses, remaining()).timeout(remaining()), cancellationToken);
       final now = DateTime.now().toUtc();
       final expires = certificate.validUntil.toUtc();
       final daysRemaining = expires.difference(now).inDays;
@@ -283,8 +300,9 @@ class SecurityTools {
   static Future<TlsPeerEvidence> _performTlsHandshake(
     String host,
     List<InternetAddress> approvedAddresses,
-    Duration timeout,
-  ) async {
+    Duration timeout, {
+    ToolCancellation? cancellationToken,
+  }) async {
     final deadline = Stopwatch()..start();
     Duration remaining() {
       final value = timeout - deadline.elapsed;
@@ -295,8 +313,13 @@ class SecurityTools {
     for (final address in approvedAddresses) {
       Socket? plainSocket;
       try {
-        plainSocket = await Socket.connect(address, 443, timeout: remaining());
-        final secureSocket = await SecureSocket.secure(plainSocket, host: host).timeout(remaining());
+        final connection = Socket.startConnect(address, 443);
+        plainSocket = await _awaitCancellable(connection.socket.timeout(remaining()), cancellationToken, onCancel: connection.cancel);
+        final secureSocket = await _awaitCancellable(
+          SecureSocket.secure(plainSocket, host: host).timeout(remaining()),
+          cancellationToken,
+          onCancel: () => plainSocket?.destroy(),
+        );
         try {
           final certificate = secureSocket.peerCertificate;
           if (certificate == null) throw const ToolExecutionException('The server did not present a peer certificate.');
@@ -328,7 +351,9 @@ class SecurityTools {
     String input, {
     required bool authorized,
     bool allowPrivateNetwork = false,
+    ToolCancellation? cancellationToken,
   }) async {
+    if (cancellationToken?.isCancelled == true) throw const ToolExecutionCancelled();
     final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: allowPrivateNetwork);
     final deadline = Stopwatch()..start();
     Duration remaining() {
@@ -337,11 +362,14 @@ class SecurityTools {
       return value;
     }
     try {
-      final addresses = await _resolveNetworkDestination(
-        target,
-        allowPrivateNetwork: allowPrivateNetwork,
-      ).timeout(remaining());
-      final response = await _httpGet(target.uri, addresses, remaining()).timeout(remaining());
+      final addresses = await _awaitCancellable(
+        _resolveNetworkDestination(target, allowPrivateNetwork: allowPrivateNetwork).timeout(remaining()),
+        cancellationToken,
+      );
+      final customHttpGet = _customHttpGet;
+      final response = customHttpGet == null
+          ? await _requestHttpCancellable(target.uri, addresses, remaining(), cancellationToken: cancellationToken).timeout(remaining())
+          : await _awaitCancellable(customHttpGet(target.uri, addresses, remaining()).timeout(remaining()), cancellationToken);
       final statusCode = response.statusCode;
       final headers = <String, String>{
         for (final entry in response.headers.entries) entry.key.toLowerCase(): entry.value,
@@ -451,11 +479,12 @@ class SecurityTools {
     return List.unmodifiable(unique);
   }
 
-  static Future<BoundedHttpResponse> _requestHttp(
+  static Future<BoundedHttpResponse> _requestHttpCancellable(
     Uri uri,
     List<InternetAddress> approvedAddresses,
-    Duration timeout,
-  ) async {
+    Duration timeout, {
+    ToolCancellation? cancellationToken,
+  }) async {
     final expectedHost = uri.host.toLowerCase();
     final deadline = Stopwatch()..start();
     Duration remaining() {
@@ -491,14 +520,26 @@ class SecurityTools {
       throw const HttpException('No approved HTTPS destination could be reached.');
     };
     try {
-      final request = await client.getUrl(uri).timeout(remaining());
+      final request = await _awaitCancellable(
+        client.getUrl(uri).timeout(remaining()),
+        cancellationToken,
+        onCancel: () => client.close(force: true),
+      );
       request.followRedirects = false;
       request.maxRedirects = 0;
       request.headers.set(HttpHeaders.acceptHeader, 'application/json, text/plain;q=0.9, */*;q=0.5');
-      final response = await request.close().timeout(remaining());
+      final response = await _awaitCancellable(
+        request.close().timeout(remaining()),
+        cancellationToken,
+        onCancel: () => client.close(force: true),
+      );
       final headers = <String, String>{};
       response.headers.forEach((name, values) => headers[name.toLowerCase()] = values.join(', '));
-      final capture = await _readBoundedBody(response, timeout: remaining());
+      final capture = await _awaitCancellable(
+        _readBoundedBody(response, timeout: remaining()),
+        cancellationToken,
+        onCancel: () => client.close(force: true),
+      );
       return BoundedHttpResponse(
         statusCode: response.statusCode,
         headers: Map.unmodifiable(headers),
@@ -647,6 +688,25 @@ class SecurityTools {
         recommendation: recommendation,
       ));
     }
+  }
+
+  static Future<T> _awaitCancellable<T>(
+    Future<T> operation,
+    ToolCancellation? cancellationToken, {
+    void Function()? onCancel,
+  }) {
+    if (cancellationToken == null) return operation;
+    if (cancellationToken.isCancelled) {
+      onCancel?.call();
+      return Future<T>.error(const ToolExecutionCancelled());
+    }
+    return Future.any<T>([
+      operation,
+      cancellationToken.whenCancelled.then<T>((_) {
+        onCancel?.call();
+        throw const ToolExecutionCancelled();
+      }),
+    ]);
   }
 
   String _safeError(String message) {

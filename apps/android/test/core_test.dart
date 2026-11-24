@@ -7,6 +7,7 @@ import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/report_exporter.dart';
+import 'package:cybersecurity_assistant/core/runtime_manager.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/core/tool_registry.dart';
@@ -15,7 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _ScriptedSecurityTools extends SecurityTools {
   @override
-  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized}) async => ToolRunResult(
+  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async => ToolRunResult(
         toolId: 'dns_lookup',
         target: 'example.com',
         summary: 'DNS fixture completed.',
@@ -26,12 +27,12 @@ class _ScriptedSecurityTools extends SecurityTools {
       );
 
   @override
-  Future<ToolRunResult> inspectTls(String input, {required bool authorized, bool allowPrivateNetwork = false}) async {
+  Future<ToolRunResult> inspectTls(String input, {required bool authorized, bool allowPrivateNetwork = false, ToolCancellation? cancellationToken}) async {
     throw const ToolExecutionException('TLS fixture failed.');
   }
 
   @override
-  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized, bool allowPrivateNetwork = false}) async => ToolRunResult(
+  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized, bool allowPrivateNetwork = false, ToolCancellation? cancellationToken}) async => ToolRunResult(
         toolId: 'http_headers',
         target: 'example.com',
         summary: 'HTTP fixture completed.',
@@ -196,6 +197,21 @@ void main() {
         throwsA(isA<ToolExecutionException>()),
       );
       expect(httpCalls, 0, reason: 'A mixed public/private DNS answer must be blocked as a whole.');
+    });
+
+    test('cancellation stops the active tool operation without waiting for a pending resolver', () async {
+      final resolver = Completer<List<InternetAddress>>();
+      final started = Completer<void>();
+      final token = RuntimeCancellationToken();
+      final tools = SecurityTools(hostResolver: (_) {
+        if (!started.isCompleted) started.complete();
+        return resolver.future;
+      });
+      final operation = tools.runDnsLookup('owned.example', authorized: true, cancellationToken: token);
+      await started.future;
+      token.cancel();
+      await expectLater(operation, throwsA(isA<ToolExecutionCancelled>()));
+      resolver.complete([publicFixtureAddress]);
     });
 
     test('explicit local-target option reaches the approved fixture address', () async {
