@@ -177,7 +177,7 @@ void main() {
       final oldApi = RuntimeManager(environment: environment.copyWith(androidApiLevel: 28), store: _Store(), adapters: [executionAdapter]);
       expect(oldApi.compatibilityProblem(executionAdapter.descriptor), contains('Android API'));
       final linux = RuntimeManager(environment: const RuntimeEnvironment(platform: 'Linux', abi: 'aarch64', availableCapabilities: {RuntimeCapability.network}), store: _Store(), adapters: [executionAdapter]);
-      expect(linux.compatibilityProblem(executionAdapter.descriptor), isNull);
+      expect(linux.compatibilityProblem(executionAdapter.descriptor), contains('platform'));
       wrongAbi.dispose(); oldApi.dispose(); linux.dispose();
     });
   });

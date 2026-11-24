@@ -637,7 +637,7 @@ class RuntimeManager extends ChangeNotifier {
       await _set(runtimeId, healthy ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
           version: descriptor.version, error: sanitizeDiagnosticText(detail), health: _clock().toUtc());
       if (error is RuntimeExecutionException || error is RuntimeExecutionCancelled || error is TimeoutException) rethrow;
-      throw RuntimeExecutionException(sanitizeDiagnosticText(error.runtimeType.toString()));
+      throw RuntimeExecutionException(sanitizeDiagnosticText(error.toString()));
     } finally {
       _busy = false;
     }
