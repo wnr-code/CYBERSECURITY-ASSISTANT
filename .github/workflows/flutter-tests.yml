@@ -53,6 +53,17 @@ jobs:
         working-directory: apps/android
         run: python3 tool/run_flutter_build.py
 
+      - name: Report debug APK size
+        working-directory: apps/android
+        run: |
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          bytes=$(stat -c '%s' "$apk")
+          mib=$(awk -v bytes="$bytes" 'BEGIN { printf "%.2f", bytes / 1048576 }')
+          echo "Debug APK: ${bytes} bytes (${mib} MiB)"
+          echo "::notice title=Debug APK size::${bytes} bytes (${mib} MiB)"
+          echo "### Android debug APK size" >> "$GITHUB_STEP_SUMMARY"
+          echo "${bytes} bytes (${mib} MiB)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify native splash in built APK
         working-directory: apps/android
         run: python3 tool/verify_android_splash.py --apk build/app/outputs/flutter-apk/app-debug.apk
