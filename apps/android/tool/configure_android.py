@@ -292,15 +292,16 @@ def configure_splash_activity(android_root: Path) -> None:
         package_line = re.search(r"(?m)^package\s+[\w.]+\s*$", source)
         if package_line is None:
             raise RuntimeError(f"No Kotlin package declaration found in {activity_file}.")
-        imports = "\nimport android.os.Bundle\nimport android.util.Log\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen\n"
+        imports = "\nimport android.content.pm.ApplicationInfo\nimport android.os.Bundle\nimport android.util.Log\nimport androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen\n"
         source = source[:package_line.end()] + imports + source[package_line.end():]
         declaration = re.compile(r"class\s+MainActivity\s*:\s*FlutterActivity\(\)\s*(?:\{\s*\})?")
         replacement = (
             "class MainActivity : FlutterActivity() {\n"
             "    override fun onCreate(savedInstanceState: Bundle?) {\n"
-            "        if (BuildConfig.DEBUG) Log.i(\"AppStartup\", \"native:activity-onCreate\")\n"
+            "        val isDebuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0\n"
+            "        if (isDebuggable) Log.i(\"AppStartup\", \"native:activity-onCreate\")\n"
             "        installSplashScreen()\n"
-            "        if (BuildConfig.DEBUG) Log.i(\"AppStartup\", \"native:splash-installed\")\n"
+            "        if (isDebuggable) Log.i(\"AppStartup\", \"native:splash-installed\")\n"
             "        super.onCreate(savedInstanceState)\n"
             "    }\n"
             "}"
@@ -309,16 +310,17 @@ def configure_splash_activity(android_root: Path) -> None:
         package_line = re.search(r"(?m)^package\s+[\w.]+\s*;?\s*$", source)
         if package_line is None:
             raise RuntimeError(f"No Java package declaration found in {activity_file}.")
-        imports = "\nimport android.os.Bundle;\nimport android.util.Log;\nimport androidx.core.splashscreen.SplashScreen;\n"
+        imports = "\nimport android.content.pm.ApplicationInfo;\nimport android.os.Bundle;\nimport android.util.Log;\nimport androidx.core.splashscreen.SplashScreen;\n"
         source = source[:package_line.end()] + imports + source[package_line.end():]
         declaration = re.compile(r"public\s+class\s+MainActivity\s+extends\s+FlutterActivity\s*\{\s*\}")
         replacement = (
             "public class MainActivity extends FlutterActivity {\n"
             "    @Override\n"
             "    protected void onCreate(Bundle savedInstanceState) {\n"
-            "        if (BuildConfig.DEBUG) Log.i(\"AppStartup\", \"native:activity-onCreate\");\n"
+            "        boolean isDebuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;\n"
+            "        if (isDebuggable) Log.i(\"AppStartup\", \"native:activity-onCreate\");\n"
             "        SplashScreen.installSplashScreen(this);\n"
-            "        if (BuildConfig.DEBUG) Log.i(\"AppStartup\", \"native:splash-installed\");\n"
+            "        if (isDebuggable) Log.i(\"AppStartup\", \"native:splash-installed\");\n"
             "        super.onCreate(savedInstanceState);\n"
             "    }\n"
             "}"

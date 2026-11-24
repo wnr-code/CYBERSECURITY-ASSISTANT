@@ -222,6 +222,7 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertLess(activity_text.index("installSplashScreen()"), activity_text.index("super.onCreate"))
             self.assertIn("native:activity-onCreate", activity_text)
             self.assertIn("native:splash-installed", activity_text)
+            self.assertIn("ApplicationInfo.FLAG_DEBUGGABLE", activity_text)
 
 
 if __name__ == "__main__":
