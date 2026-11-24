@@ -34,7 +34,7 @@ class ToolOrchestrationException implements Exception {
   String toString() => message;
 }
 
-enum AssessmentCheckStatus { completed, failed }
+enum AssessmentCheckStatus { completed, failed, cancelled }
 
 class AssessmentCheckOutcome {
   const AssessmentCheckOutcome({required this.toolId, required this.status, this.result, this.error});
@@ -53,6 +53,7 @@ class AssessmentExecution {
 
   int get completedCount => outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length;
   int get failedCount => outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length;
+  int get cancelledCount => outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length;
 }
 
 /// The only dispatch boundary for model- or UI-originated tool requests.
@@ -177,6 +178,9 @@ class ToolOrchestrator {
       }
       return result;
     } on Exception catch (error, stack) {
+      if (error is RuntimeExecutionCancelled || invocation.cancellationToken?.isCancelled == true) {
+        throw const RuntimeExecutionCancelled();
+      }
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
       if (error is RuntimeExecutionException) throw ToolExecutionException(error.message);
       rethrow;
@@ -191,6 +195,7 @@ class ToolOrchestrator {
     required bool authorized,
     bool allowPrivateNetwork = false,
     bool includeResponseAnalysis = true,
+    RuntimeCancellationToken? cancellationToken,
     void Function(AssessmentCheckOutcome outcome)? onOutcome,
   }) async {
     final ids = toolIds.toSet().where((id) => id != 'response_analyzer').toList();
@@ -214,17 +219,23 @@ class ToolOrchestrator {
           authorized: checkAuthorized,
           allowPrivateNetwork: allowPrivate,
           priorResults: prior,
+          cancellationToken: cancellationToken,
         ));
         results.add(result);
         outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.completed, result: result);
       } on Exception catch (error) {
-        outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.failed, error: error.toString());
+        if (error is RuntimeExecutionCancelled || cancellationToken?.isCancelled == true) {
+          outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.cancelled, error: 'Check cancelled.');
+        } else {
+          outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.failed, error: error.toString());
+        }
       }
       outcomes.add(outcome);
       onOutcome?.call(outcome);
     }
 
     for (final id in ids) {
+      if (cancellationToken?.isCancelled == true) break;
       await runOne(
         id,
         checkTarget: target,
@@ -232,7 +243,7 @@ class ToolOrchestrator {
         allowPrivate: allowPrivateNetwork,
       );
     }
-    if (includeResponseAnalysis && results.isNotEmpty) {
+    if (includeResponseAnalysis && results.isNotEmpty && cancellationToken?.isCancelled != true) {
       await runOne(
         'response_analyzer',
         checkTarget: results.first.target,

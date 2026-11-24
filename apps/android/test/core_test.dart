@@ -14,6 +14,33 @@ import 'package:cybersecurity_assistant/core/tool_registry.dart';
 import 'package:cybersecurity_assistant/core/tool_result_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+class _PendingDnsSecurityTools extends SecurityTools {
+  final started = Completer<void>();
+  final pending = Completer<ToolRunResult>();
+  int dnsCalls = 0;
+  int tlsCalls = 0;
+  int httpCalls = 0;
+
+  @override
+  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) {
+    dnsCalls++;
+    if (!started.isCompleted) started.complete();
+    return pending.future;
+  }
+
+  @override
+  Future<ToolRunResult> inspectTls(String input, {required bool authorized, bool allowPrivateNetwork = false, ToolCancellation? cancellationToken}) async {
+    tlsCalls++;
+    throw StateError('TLS should not run after cancellation.');
+  }
+
+  @override
+  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized, bool allowPrivateNetwork = false, ToolCancellation? cancellationToken}) async {
+    httpCalls++;
+    throw StateError('HTTP should not run after cancellation.');
+  }
+}
+
 class _ScriptedSecurityTools extends SecurityTools {
   @override
   Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async => ToolRunResult(
@@ -505,6 +532,42 @@ void main() {
       expect(assessment.outcomes[1].error, contains('TLS fixture failed'));
       expect(assessment.outcomes.last.result?.findings.single.title, 'Fixture finding');
       expect(callbacks, hasLength(4));
+    });
+
+    test('cancelling a running check stops the assessment before later checks and analysis', () async {
+      final tools = _PendingDnsSecurityTools();
+      final orchestrator = ToolOrchestrator(tools: tools);
+      final cancellationToken = RuntimeCancellationToken();
+      final outcomes = <AssessmentCheckOutcome>[];
+      final assessmentFuture = orchestrator.runAssessment(
+        target: 'owned.example',
+        toolIds: const ['dns_lookup', 'tls_inspector', 'http_headers'],
+        authorized: true,
+        cancellationToken: cancellationToken,
+        onOutcome: outcomes.add,
+      );
+
+      await tools.started.future;
+      cancellationToken.cancel();
+      final assessment = await assessmentFuture;
+
+      expect(assessment.outcomes.map((outcome) => outcome.status), [AssessmentCheckStatus.cancelled]);
+      expect(assessment.outcomes.map((outcome) => outcome.toolId), ['dns_lookup']);
+      expect(assessment.cancelledCount, 1);
+      expect(assessment.failedCount, 0);
+      expect(tools.dnsCalls, 1);
+      expect(tools.tlsCalls, 0);
+      expect(tools.httpCalls, 0);
+      expect(outcomes, hasLength(1));
+      tools.pending.complete(ToolRunResult(
+        toolId: 'dns_lookup',
+        target: 'owned.example',
+        summary: 'Fixture DNS result',
+        details: const [],
+        findings: const [],
+        completedAt: DateTime.utc(2026),
+        authorizationConfirmed: true,
+      ));
     });
 
     test('requires at least one technical check', () async {

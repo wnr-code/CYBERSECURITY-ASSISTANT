@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../core/runtime_manager.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
@@ -101,10 +102,11 @@ String _severityLabel(FindingSeverity severity, BuildContext context) => switch 
     };
 
 class ToolRunnerDialog extends StatefulWidget {
-  const ToolRunnerDialog({super.key, required this.tool, required this.recentResults});
+  const ToolRunnerDialog({super.key, required this.tool, required this.recentResults, this.orchestrator});
 
   final ToolDefinition tool;
   final List<ToolRunResult> recentResults;
+  final ToolOrchestrator? orchestrator;
 
   @override
   State<ToolRunnerDialog> createState() => _ToolRunnerDialogState();
@@ -119,9 +121,11 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
     final latestTarget = checks.first.target;
     return checks.where((result) => result.target == latestTarget).toList();
   }
-  final _orchestrator = ToolOrchestrator();
+  late final _orchestrator = widget.orchestrator ?? ToolOrchestrator();
   bool _authorized = false;
   bool _running = false;
+  bool _cancelRequested = false;
+  RuntimeCancellationToken? _cancellationToken;
   String? _error;
   ToolRunResult? _result;
 
@@ -134,7 +138,9 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
   @override
   Widget build(BuildContext context) {
     final isAnalyzer = widget.tool.id == 'response_analyzer';
-    return AlertDialog(
+    return PopScope(
+      canPop: !_running,
+      child: AlertDialog(
       title: Text(_toolName(widget.tool.id, context)),
       content: SizedBox(
         width: 440,
@@ -213,6 +219,12 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
         ),
       ),
       actions: [
+        if (_running)
+          TextButton.icon(
+            onPressed: _cancelRequested ? null : _cancel,
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: Text(_cancelRequested ? context.tr('Stopping…') : context.tr('Cancel checks')),
+          ),
         TextButton(
           onPressed: _running ? null : () => Navigator.of(context).pop(_result),
           child: Text(_result == null ? context.tr('Batal') : context.tr('Simpan ke sesi')),
@@ -225,6 +237,7 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
           label: Text(_running ? context.tr('Memproses…') : isAnalyzer ? context.tr('Analisis hasil') : context.tr('Jalankan pemeriksaan')),
         ),
       ],
+      ),
     );
   }
 
@@ -234,8 +247,11 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
       setState(() => _error = 'Confirm that you own or are authorized to test this target.');
       return;
     }
+    final cancellationToken = RuntimeCancellationToken();
     setState(() {
       _running = true;
+      _cancelRequested = false;
+      _cancellationToken = cancellationToken;
       _error = null;
       _result = null;
     });
@@ -245,12 +261,27 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
         target: isAnalyzer ? (_analysisInput.isEmpty ? '' : _analysisInput.first.target) : _targetController.text,
         authorized: _authorized,
         priorResults: _analysisInput,
+        cancellationToken: cancellationToken,
       ));
       if (mounted) setState(() => _result = result);
+    } on RuntimeExecutionCancelled {
+      if (mounted) setState(() => _error = context.tr('Check cancelled.'));
     } on Exception catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
-      if (mounted) setState(() => _running = false);
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _cancelRequested = false;
+          _cancellationToken = null;
+        });
+      }
     }
+  }
+
+  void _cancel() {
+    if (_cancelRequested) return;
+    setState(() => _cancelRequested = true);
+    _cancellationToken?.cancel();
   }
 }

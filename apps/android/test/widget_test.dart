@@ -4,14 +4,18 @@ import 'dart:io';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
+import 'package:cybersecurity_assistant/core/runtime_manager.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
+import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
+import 'package:cybersecurity_assistant/core/tool_registry.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
+import 'package:cybersecurity_assistant/widgets/tool_runner_dialog.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -59,6 +63,51 @@ class _MemoryResultHistory implements ResultHistoryStore {
 
   @override
   Future<void> close() async {}
+}
+
+class _CancellableAssessmentOrchestrator extends ToolOrchestrator {
+  _CancellableAssessmentOrchestrator(this.started);
+
+  final Completer<void> started;
+  RuntimeCancellationToken? receivedToken;
+
+  @override
+  Future<AssessmentExecution> runAssessment({
+    required String target,
+    required Iterable<String> toolIds,
+    required bool authorized,
+    bool allowPrivateNetwork = false,
+    bool includeResponseAnalysis = true,
+    RuntimeCancellationToken? cancellationToken,
+    void Function(AssessmentCheckOutcome outcome)? onOutcome,
+  }) async {
+    receivedToken = cancellationToken;
+    if (!started.isCompleted) started.complete();
+    await cancellationToken!.whenCancelled;
+    final outcome = AssessmentCheckOutcome(
+      toolId: 'dns_lookup',
+      status: AssessmentCheckStatus.cancelled,
+      error: 'Check cancelled.',
+    );
+    onOutcome?.call(outcome);
+    final now = DateTime.now().toUtc();
+    return AssessmentExecution(target: target, startedAt: now, completedAt: now, outcomes: [outcome]);
+  }
+}
+
+class _CancellableToolOrchestrator extends ToolOrchestrator {
+  _CancellableToolOrchestrator(this.started);
+
+  final Completer<void> started;
+  RuntimeCancellationToken? receivedToken;
+
+  @override
+  Future<ToolRunResult> execute(ToolInvocation invocation) async {
+    receivedToken = invocation.cancellationToken;
+    if (!started.isCompleted) started.complete();
+    await invocation.cancellationToken!.whenCancelled;
+    throw const RuntimeExecutionCancelled();
+  }
 }
 
 void _ignoreResult(ToolRunResult _) {}
@@ -171,6 +220,67 @@ void main() {
     expect(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'), findsOneWidget);
     expect(find.text('Izinkan target jaringan lokal/private'), findsOneWidget);
     expect(find.byType(CheckboxListTile), findsNWidgets(5));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('assessment displays a cancel action and reports a cancelled outcome', (tester) async {
+    final started = Completer<void>();
+    final orchestrator = _CancellableAssessmentOrchestrator(started);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: AssessmentRunner(onResult: _ignoreResult, orchestrator: orchestrator),
+        ),
+      ),
+    ));
+
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan assessment'));
+    await tester.pump();
+    await started.future;
+
+    expect(orchestrator.receivedToken, isNotNull);
+    expect(find.text('Batalkan pemeriksaan'), findsOneWidget);
+    await tester.tap(find.text('Batalkan pemeriksaan'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.receivedToken!.isCancelled, isTrue);
+    expect(find.text('Pemeriksaan dibatalkan.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('individual tool dialog can cancel its active execution', (tester) async {
+    final started = Completer<void>();
+    final orchestrator = _CancellableToolOrchestrator(started);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: ToolRunnerDialog(
+        tool: toolById('dns_lookup')!,
+        recentResults: const [],
+        orchestrator: orchestrator,
+      ),
+    ));
+
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan pemeriksaan'));
+    await tester.pump();
+    await started.future;
+
+    expect(find.text('Batalkan pemeriksaan'), findsOneWidget);
+    await tester.tap(find.text('Batalkan pemeriksaan'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.receivedToken!.isCancelled, isTrue);
+    expect(find.text('Pemeriksaan dibatalkan.'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

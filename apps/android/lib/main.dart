@@ -2033,6 +2033,7 @@ Future<void> _showToolRunner(
 ) async {
   final result = await showDialog<ToolRunResult>(
     context: context,
+    barrierDismissible: false,
     builder: (_) => ToolRunnerDialog(tool: tool, recentResults: recentResults),
   );
   if (result != null) onResult(result);

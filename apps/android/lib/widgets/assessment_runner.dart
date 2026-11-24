@@ -1,14 +1,16 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../core/tool_orchestrator.dart';
+import '../core/runtime_manager.dart';
 import '../core/security_tools.dart';
+import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
 
 class AssessmentRunner extends StatefulWidget {
-  const AssessmentRunner({super.key, required this.onResult});
+  const AssessmentRunner({super.key, required this.onResult, this.orchestrator});
 
   final ValueChanged<ToolRunResult> onResult;
+  final ToolOrchestrator? orchestrator;
 
   @override
   State<AssessmentRunner> createState() => _AssessmentRunnerState();
@@ -16,12 +18,14 @@ class AssessmentRunner extends StatefulWidget {
 
 class _AssessmentRunnerState extends State<AssessmentRunner> {
   final _targetController = TextEditingController();
-  final _orchestrator = ToolOrchestrator();
+  late final _orchestrator = widget.orchestrator ?? ToolOrchestrator();
   final Set<String> _selected = {'dns_lookup', 'tls_inspector', 'http_headers'};
   final List<AssessmentCheckOutcome> _outcomes = [];
   bool _authorized = false;
   bool _allowPrivateNetwork = false;
   bool _running = false;
+  bool _cancelRequested = false;
+  RuntimeCancellationToken? _cancellationToken;
   String? _error;
   String? _assessmentTarget;
 
@@ -108,16 +112,21 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             ),
             controlAffinity: ListTileControlAffinity.leading,
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            FilledButton.icon(
               onPressed: _running ? null : _run,
               icon: _running
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.play_arrow_rounded),
               label: Text(_running ? context.tr('Running selected checks…') : context.tr('Run assessment')),
             ),
-          ),
+            if (_running)
+              OutlinedButton.icon(
+                onPressed: _cancelRequested ? null : _cancel,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: Text(_cancelRequested ? context.tr('Stopping…') : context.tr('Cancel checks')),
+              ),
+          ]),
           if (_error != null) ...[
             const SizedBox(height: 8),
             Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
@@ -127,7 +136,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             Text('${context.tr('Assessment target')}: ${_assessmentTarget ?? _targetController.text.trim()}', style: const TextStyle(fontWeight: FontWeight.w600)),
             if (_running) Text(context.tr('Checks are running sequentially; these are live outcomes.'), style: const TextStyle(fontSize: 11)),
             Text(
-              '${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length} ${context.tr('completed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length} ${context.tr('failed')}',
+              '${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length} ${context.tr('completed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length} ${context.tr('failed')}${_outcomes.any((outcome) => outcome.status == AssessmentCheckStatus.cancelled) ? ' · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length} ${context.tr('cancelled')}' : ''}',
               style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 12),
             ),
             for (final outcome in _outcomes) _outcomeTile(outcome, context),
@@ -139,12 +148,16 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
 
   Widget _outcomeTile(AssessmentCheckOutcome outcome, BuildContext context) {
     final succeeded = outcome.status == AssessmentCheckStatus.completed;
+    final cancelled = outcome.status == AssessmentCheckStatus.cancelled;
     final result = outcome.result;
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
-      leading: Icon(succeeded ? Icons.check_circle_outline : Icons.error_outline, color: succeeded ? const Color(0xFF73F0C2) : Colors.orangeAccent),
+      leading: Icon(
+        succeeded ? Icons.check_circle_outline : cancelled ? Icons.cancel_outlined : Icons.error_outline,
+        color: succeeded ? const Color(0xFF73F0C2) : cancelled ? Colors.white54 : Colors.orangeAccent,
+      ),
       title: Text(_toolName(outcome.toolId, context), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-      subtitle: Text(succeeded ? result!.summary : outcome.error ?? context.tr('Check failed'), maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(succeeded ? result!.summary : context.tr(outcome.error ?? 'Check failed'), maxLines: 2, overflow: TextOverflow.ellipsis),
       childrenPadding: const EdgeInsets.only(left: 8, right: 8, bottom: 10),
       children: [
         if (result != null) ...[
@@ -164,8 +177,11 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   }
 
   Future<void> _run() async {
+    final cancellationToken = RuntimeCancellationToken();
     setState(() {
       _running = true;
+      _cancelRequested = false;
+      _cancellationToken = cancellationToken;
       _error = null;
       _outcomes.clear();
       _assessmentTarget = null;
@@ -176,6 +192,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
         toolIds: _selected,
         authorized: _authorized,
         allowPrivateNetwork: _allowPrivateNetwork,
+        cancellationToken: cancellationToken,
         onOutcome: (outcome) {
           if (!mounted) return;
           setState(() => _outcomes.add(outcome));
@@ -186,8 +203,20 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     } on Exception catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
-      if (mounted) setState(() => _running = false);
+      if (mounted) {
+        setState(() {
+          _running = false;
+          _cancelRequested = false;
+          _cancellationToken = null;
+        });
+      }
     }
+  }
+
+  void _cancel() {
+    if (_cancelRequested) return;
+    setState(() => _cancelRequested = true);
+    _cancellationToken?.cancel();
   }
 
   String _selectionName(String id, BuildContext context) => switch (id) {
