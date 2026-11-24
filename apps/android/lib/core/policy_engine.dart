@@ -7,9 +7,11 @@ class PolicyException implements Exception {
 }
 
 class AuthorizedTarget {
-  const AuthorizedTarget({required this.host, required this.uri});
+  const AuthorizedTarget({required this.host, required this.uri, required this.scope});
   final String host;
   final Uri uri;
+  /// A query-free target identifier shared by checks in one assessment.
+  final String scope;
 }
 
 /// Validates a narrow, explicitly approved target before any network operation.
@@ -63,8 +65,8 @@ class PolicyEngine {
     if (port != 443) {
       throw const PolicyException('Only the standard HTTPS port 443 is supported.');
     }
-    if (uri.path.isNotEmpty && uri.path != '/') {
-      throw const PolicyException('Use the origin only; checks are limited to the root path.');
+    if (uri.path.length > 2048 || uri.path.contains('\r') || uri.path.contains('\n')) {
+      throw const PolicyException('The HTTPS request path is invalid or too long.');
     }
 
     final host = parsedHost.toLowerCase();
@@ -74,6 +76,10 @@ class PolicyEngine {
     if (host.contains('.') && RegExp(r'^[0-9.]+$').hasMatch(host) && !_isValidIpv4(host)) {
       throw const PolicyException('Enter a valid IPv4 address.');
     }
-    return AuthorizedTarget(host: host, uri: Uri.https(host, '/'));
+    final normalizedUri = uri.replace(scheme: 'https', host: host, port: null, userInfo: '');
+    final normalizedPath = normalizedUri.path.isEmpty ? '/' : normalizedUri.path;
+    final requestUri = normalizedUri.replace(path: normalizedPath);
+    final scope = normalizedPath == '/' ? host : '$host$normalizedPath';
+    return AuthorizedTarget(host: host, uri: requestUri, scope: scope);
   }
 }

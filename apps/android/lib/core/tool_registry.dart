@@ -1,6 +1,18 @@
 enum ToolStatus { available, notInstalled, environmentRequired, limitedCompatibility, unsupported }
 
-enum ToolCategory { webSecurity, networkSecurity, analysis }
+enum ToolCategory {
+  webSecurity,
+  networkSecurity,
+  osint,
+  apkMobileSecurity,
+  codeSecurity,
+  cloudSecurity,
+  vulnerabilityAssessment,
+  malwareAnalysis,
+  threatIntelligence,
+  digitalForensics,
+  analysis,
+}
 
 class ToolDefinition {
   const ToolDefinition({
@@ -45,7 +57,7 @@ const toolRegistry = <ToolDefinition>[
     id: 'dns_lookup',
     name: 'DNS Lookup',
     category: ToolCategory.networkSecurity,
-    description: 'Resolve A/AAAA addresses using the device DNS resolver.',
+    description: 'Resolve and classify A/AAAA addresses using the Android system resolver; other record types are not currently exposed.',
     status: ToolStatus.available,
     activeCheck: false,
   ),
@@ -53,7 +65,7 @@ const toolRegistry = <ToolDefinition>[
     id: 'tls_inspector',
     name: 'SSL/TLS Inspector',
     category: ToolCategory.webSecurity,
-    description: 'Connect to HTTPS and inspect the peer certificate.',
+    description: 'Perform standard-port TLS validation and inspect peer certificate identity and validity dates.',
     status: ToolStatus.available,
     activeCheck: true,
   ),
@@ -61,7 +73,7 @@ const toolRegistry = <ToolDefinition>[
     id: 'http_headers',
     name: 'HTTP Header Checker',
     category: ToolCategory.webSecurity,
-    description: 'Send one HTTPS GET to / and review response security headers.',
+    description: 'Send one bounded HTTPS GET to the selected authorized path and inspect headers and response content.',
     status: ToolStatus.available,
     activeCheck: true,
   ),

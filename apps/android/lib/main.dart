@@ -12,6 +12,7 @@ import 'core/startup_trace.dart';
 import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
+import 'widgets/assessment_runner.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
@@ -300,7 +301,7 @@ class _MainShellState extends State<MainShell> {
     final savedResults = List<ToolRunResult>.unmodifiable(_savedResults);
     final destinations = <({String label, IconData icon})>[
       (label: context.tr('Home'), icon: Icons.home_rounded),
-      (label: context.tr('Tools'), icon: Icons.grid_view_rounded),
+      (label: context.tr('Assessment'), icon: Icons.radar_rounded),
       (label: context.tr('Reports'), icon: Icons.article_outlined),
       (label: context.tr('Settings'), icon: Icons.settings_outlined),
     ];
@@ -1263,18 +1264,24 @@ class _ToolsScreenState extends State<ToolsScreen> {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 960),
-        child: Column(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
           children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(context.tr('KATALOG ALAT'), style: _eyebrow(context)),
+            Text(context.tr('SECURITY ASSESSMENT'), style: _eyebrow(context)),
             const SizedBox(height: 8),
             Text(context.tr('Pemeriksaan keamanan'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(context.tr('Alat bawaan berjalan di perangkat. Pemeriksaan jaringan memerlukan target dan konfirmasi izin.'),
                 style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
+            AssessmentRunner(onResult: widget.onResult),
+            const SizedBox(height: 20),
+            const Divider(),
+            const SizedBox(height: 8),
+            Text(context.tr('TOOL REGISTRY'), style: _eyebrow(context)),
+            const SizedBox(height: 8),
+            Text(context.tr('KATALOG ALAT'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
               child: OutlinedButton.icon(
@@ -1283,7 +1290,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
                 label: Text(context.tr('Lihat rilis GitHub')),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             TextField(
               controller: _searchController,
               onChanged: (_) => setState(() {}),
@@ -1300,47 +1307,43 @@ class _ToolsScreenState extends State<ToolsScreen> {
                 selected: _selectedCategory == null,
                 onSelected: (_) => setState(() => _selectedCategory = null),
               ),
-              for (final category in ToolCategory.values)
+              for (final category in toolRegistry.map((tool) => tool.category).toSet())
                 FilterChip(
                   label: Text(_categoryLabel(category, context)),
                   selected: _selectedCategory == category,
                   onSelected: (selected) => setState(() => _selectedCategory = selected ? category : null),
                 ),
             ]),
-          ]),
-        ),
-        Expanded(
-          child: filteredTools.isEmpty
-              ? Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.')))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-                  itemCount: filteredTools.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final tool = filteredTools[index];
-                    return Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.all(16),
-                        leading: CircleAvatar(
-                          backgroundColor: _mint.withValues(alpha: .12),
-                          child: Icon(_toolIcon(tool.id), color: _mint),
-                        ),
-                        title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(tool.status, context)}\n${_toolDisplayDescription(tool.id, context)}',
-                            style: const TextStyle(height: 1.4),
-                          ),
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        isThreeLine: true,
-                        onTap: () => _showToolRunner(context, tool, widget.recentResults, widget.onResult),
+            const SizedBox(height: 8),
+            if (filteredTools.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(18),
+                child: Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.'))),
+              )
+            else
+              for (final tool in filteredTools) ...[
+                Card(
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.all(16),
+                    leading: CircleAvatar(
+                      backgroundColor: _mint.withValues(alpha: .12),
+                      child: Icon(_toolIcon(tool.id), color: _mint),
+                    ),
+                    title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(tool.status, context)}\n${_toolDisplayDescription(tool.id, context)}',
+                        style: const TextStyle(height: 1.4),
                       ),
-                    );
-                  },
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    isThreeLine: true,
+                    onTap: () => _showToolRunner(context, tool, widget.recentResults, widget.onResult),
+                  ),
                 ),
-        ),
+                const SizedBox(height: 10),
+              ],
           ],
         ),
       ),
@@ -1753,9 +1756,17 @@ TextStyle _eyebrow(BuildContext context) => TextStyle(
     );
 
 String _categoryLabel(ToolCategory category, BuildContext context) => switch (category) {
-      ToolCategory.webSecurity => context.tr('Keamanan web'),
-      ToolCategory.networkSecurity => context.tr('Keamanan jaringan'),
-      ToolCategory.analysis => context.tr('Analisis'),
+      ToolCategory.webSecurity => context.tr('Web Security'),
+      ToolCategory.networkSecurity => context.tr('Network Security'),
+      ToolCategory.osint => context.tr('OSINT'),
+      ToolCategory.apkMobileSecurity => context.tr('APK / Mobile Security'),
+      ToolCategory.codeSecurity => context.tr('Code Security'),
+      ToolCategory.cloudSecurity => context.tr('Cloud Security'),
+      ToolCategory.vulnerabilityAssessment => context.tr('Vulnerability Assessment'),
+      ToolCategory.malwareAnalysis => context.tr('Malware Analysis'),
+      ToolCategory.threatIntelligence => context.tr('Threat Intelligence'),
+      ToolCategory.digitalForensics => context.tr('Digital Forensics'),
+      ToolCategory.analysis => context.tr('Analysis'),
     };
 
 String _toolStatusLabel(ToolStatus status, BuildContext context) => switch (status) {
@@ -1787,9 +1798,9 @@ String _providerDescription(ProviderDefinition provider, BuildContext context) =
     };
 
 String _toolDisplayDescription(String id, BuildContext context) => switch (id) {
-      'dns_lookup' => context.tr('Mencari alamat IPv4 dan IPv6 domain melalui DNS perangkat.'),
-      'tls_inspector' => context.tr('Memeriksa sertifikat TLS pada koneksi HTTPS port standar.'),
-      'http_headers' => context.tr('Membaca header keamanan dari satu permintaan HTTPS ke halaman utama.'),
+      'dns_lookup' => context.tr('Mencari alamat IPv4 dan IPv6 melalui resolver sistem Android; CNAME dan record lain belum tersedia.'),
+      'tls_inspector' => context.tr('Memvalidasi koneksi TLS dan memeriksa identitas serta masa berlaku sertifikat.'),
+      'http_headers' => context.tr('Mengirim satu GET HTTPS terbatas ke path yang dipilih dan memeriksa header serta body respons.'),
       'response_analyzer' => context.tr('Merangkum temuan dari pemeriksaan yang sudah dijalankan.'),
       _ => '',
     };

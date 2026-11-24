@@ -9,6 +9,8 @@ void main() {
     expect(localization.text('Home'), 'Beranda');
     expect(localization.text('Could not load local history.'), 'Riwayat lokal tidak dapat dimuat.');
     expect(localization.text('User-owned API key required'), 'Memerlukan API key milik pengguna');
+    expect(localization.text('Assessment'), 'Assessment');
+    expect(localization.text('Run assessment'), 'Jalankan assessment');
   });
 
   test('English can be selected through the same source-key catalog', () {

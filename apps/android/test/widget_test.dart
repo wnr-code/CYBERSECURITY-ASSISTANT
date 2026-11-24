@@ -7,6 +7,7 @@ import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
+import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -49,6 +50,8 @@ class _MemoryResultHistory implements ResultHistoryStore {
   @override
   Future<void> close() async {}
 }
+
+void _ignoreResult(ToolRunResult _) {}
 
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
@@ -95,6 +98,26 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('assessment presents multi-check target entry and explicit permission gate', (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      locale: Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: [
+        AppLocalizationsDelegate(),
+        ...GlobalMaterialLocalizations.delegates,
+      ],
+      home: Scaffold(body: SingleChildScrollView(child: AssessmentRunner(onResult: _ignoreResult))),
+    ));
+
+    expect(find.text('Assessment keamanan'), findsOneWidget);
+    expect(find.text('Domain target atau URL HTTPS'), findsOneWidget);
+    expect(find.text('Pemeriksaan yang dijalankan'), findsOneWidget);
+    expect(find.text('Jalankan assessment'), findsOneWidget);
+    expect(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'), findsOneWidget);
+    expect(find.byType(CheckboxListTile), findsNWidgets(4));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('branded splash hands off to dashboard while SQLite history is pending', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
@@ -132,7 +155,7 @@ void main() {
     await _pumpApp(tester);
 
     expect(find.text('Beranda'), findsOneWidget);
-    expect(find.text('Alat'), findsOneWidget);
+    expect(find.text('Assessment'), findsOneWidget);
     expect(find.text('Laporan'), findsOneWidget);
     expect(find.text('Pengaturan'), findsOneWidget);
     expect(find.text('Chat AI'), findsOneWidget);
@@ -195,7 +218,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Tools'), findsOneWidget);
+    expect(find.text('Assessment'), findsOneWidget);
     expect(find.text('Reports'), findsOneWidget);
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Connections'), findsNothing);
@@ -204,10 +227,14 @@ void main() {
 
   testWidgets('filters the tool registry by search text', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Alat'));
+    await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'TLS');
+    final catalogSearch = find.byWidgetPredicate(
+      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori',
+    );
+    await tester.scrollUntilVisible(catalogSearch, 240, scrollable: find.byType(Scrollable).first);
+    await tester.enterText(catalogSearch, 'TLS');
     await tester.pump();
 
     expect(find.text('Inspeksi Sertifikat TLS'), findsOneWidget);
@@ -216,9 +243,11 @@ void main() {
 
   testWidgets('does not run a network check until authorization is confirmed', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Alat'));
+    await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Pencarian DNS'));
+    final dnsToolEntry = find.text('Pencarian DNS');
+    await tester.scrollUntilVisible(dnsToolEntry, 260, scrollable: find.byType(Scrollable).first);
+    await tester.tap(dnsToolEntry);
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField).last, 'example.com');
@@ -228,7 +257,10 @@ void main() {
 
     expect(find.text('Konfirmasi bahwa Anda memiliki atau mendapat izin untuk menguji target ini.'), findsOneWidget);
 
-    final authorization = find.byType(CheckboxListTile).first;
+    final authorization = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(CheckboxListTile),
+    ).first;
     await tester.tap(authorization);
     await tester.pump();
     expect(tester.widget<CheckboxListTile>(authorization).value, isTrue);
@@ -240,9 +272,11 @@ void main() {
 
   testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Alat'));
+    await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Lihat rilis GitHub'));
+    final releaseButton = find.text('Lihat rilis GitHub');
+    await tester.scrollUntilVisible(releaseButton, 260, scrollable: find.byType(Scrollable).first);
+    await tester.tap(releaseButton);
     await tester.pumpAndSettle();
 
     expect(find.text('Metadata rilis GitHub'), findsOneWidget);
@@ -338,7 +372,10 @@ void main() {
     await _openConnectionsFromSettings(tester);
 
     final connectionButton = find.widgetWithText(FilledButton, 'Uji koneksi');
-    final authorization = find.byType(CheckboxListTile).first;
+    final authorization = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(CheckboxListTile),
+    ).first;
     final connectionScroll = find.descendant(
       of: find.byType(ConnectionsScreen),
       matching: find.byType(Scrollable),
