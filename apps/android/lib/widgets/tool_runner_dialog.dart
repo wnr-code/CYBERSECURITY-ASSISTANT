@@ -229,13 +229,17 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
   }
 
   Future<void> _run() async {
+    final isAnalyzer = widget.tool.id == 'response_analyzer';
+    if (!isAnalyzer && !_authorized) {
+      setState(() => _error = 'Confirm that you own or are authorized to test this target.');
+      return;
+    }
     setState(() {
       _running = true;
       _error = null;
       _result = null;
     });
     try {
-      final isAnalyzer = widget.tool.id == 'response_analyzer';
       final result = await _orchestrator.execute(ToolInvocation(
         toolId: widget.tool.id,
         target: isAnalyzer ? (_analysisInput.isEmpty ? '' : _analysisInput.first.target) : _targetController.text,
