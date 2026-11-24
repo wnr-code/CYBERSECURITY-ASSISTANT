@@ -380,7 +380,7 @@ void main() {
 
     final connectionButton = find.widgetWithText(FilledButton, 'Uji koneksi');
     final authorization = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byType(ConnectionsScreen),
       matching: find.byType(CheckboxListTile),
     ).first;
     final connectionScroll = find.descendant(
