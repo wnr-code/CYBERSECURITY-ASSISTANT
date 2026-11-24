@@ -353,7 +353,9 @@ void main() {
   testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment'));
+    await tester.tap(find.text('Assessment').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Katalog alat'));
     await tester.pumpAndSettle();
     final releaseButton = find.text('Lihat rilis GitHub');
     await tester.tap(releaseButton);
