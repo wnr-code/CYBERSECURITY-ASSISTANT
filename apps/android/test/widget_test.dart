@@ -101,7 +101,8 @@ void main() {
         localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
         home: MarketScreen(packageManager: manager),
       ));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.text('MARKET'), findsOneWidget);
       for (final category in ['Alat Keamanan', 'Runtime', 'Plugin', 'Model AI', 'Paket Pengetahuan', 'Konektor Cloud/API']) {
