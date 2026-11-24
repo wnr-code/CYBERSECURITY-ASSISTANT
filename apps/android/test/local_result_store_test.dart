@@ -189,6 +189,8 @@ void main() {
     final directory = await Directory.systemTemp.createTemp('cybersecurity-v3-migration-');
     final databasePath = p.join(directory.path, 'legacy-v3.sqlite');
     final legacyResult = result('legacy-v3.example');
+    final stableId = activityResultKey(legacyResult.toolId, legacyResult.target, legacyResult.completedAt);
+    final legacyFinding = _testFindingRecord(DateTime.utc(2026, 11, 23), sourceKey: stableId);
     final legacyDatabase = await databaseFactoryFfi.openDatabase(
       databasePath,
       options: OpenDatabaseOptions(
@@ -205,19 +207,84 @@ void main() {
               payload_json TEXT NOT NULL
             )
           ''');
-          await db.execute('CREATE TABLE activity_events (event_id TEXT PRIMARY KEY, source_result_key TEXT)');
-          await db.execute('CREATE TABLE security_findings (finding_id TEXT PRIMARY KEY, source_report_keys_json TEXT NOT NULL)');
-          final legacyReportId = 'dns_lookup|legacy-v3.example|${legacyResult.completedAt.toUtc().microsecondsSinceEpoch}';
+          await db.execute('''
+            CREATE TABLE activity_events (
+              event_id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              parent_event_id TEXT,
+              tool_id TEXT,
+              target TEXT NOT NULL,
+              status TEXT NOT NULL,
+              started_at TEXT NOT NULL,
+              finished_at TEXT,
+              summary TEXT,
+              finding_count INTEGER,
+              source_result_key TEXT
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE security_findings (
+              finding_id TEXT PRIMARY KEY,
+              fingerprint TEXT NOT NULL UNIQUE,
+              title TEXT NOT NULL,
+              category TEXT NOT NULL,
+              target TEXT NOT NULL,
+              severity TEXT NOT NULL,
+              confidence TEXT NOT NULL,
+              status TEXT NOT NULL,
+              description TEXT NOT NULL,
+              evidence_json TEXT NOT NULL,
+              source_report_keys_json TEXT NOT NULL,
+              recommendation TEXT NOT NULL,
+              first_seen TEXT NOT NULL,
+              last_seen TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              source_tool TEXT,
+              assessment_id TEXT
+            )
+          ''');
+          final legacyReportKey = 'dns_lookup|legacy-v3.example|${legacyResult.completedAt.toUtc().microsecondsSinceEpoch}';
           await db.insert('scan_results', {
-            'result_key': legacyReportId,
+            'result_key': legacyReportKey,
             'tool_id': legacyResult.toolId,
             'target': legacyResult.target,
             'completed_at': legacyResult.completedAt.toUtc().toIso8601String(),
             'authorization_confirmed': 1,
             'payload_json': encodeToolRunResult(legacyResult),
           });
-          await db.insert('activity_events', {'event_id': 'legacy-activity', 'source_result_key': legacyReportId});
-          await db.insert('security_findings', {'finding_id': 'legacy-finding', 'source_report_keys_json': jsonEncode([legacyReportId])});
+          await db.insert('activity_events', {
+            'event_id': 'legacy-activity',
+            'kind': ActivityKind.tool.name,
+            'tool_id': 'dns_lookup',
+            'target': 'legacy-v3.example',
+            'status': ActivityStatus.completed.name,
+            'started_at': activityTimestamp(DateTime.utc(2026, 11, 23)),
+            'finished_at': activityTimestamp(DateTime.utc(2026, 11, 23, 0, 0, 2)),
+            'summary': 'Legacy activity survived migration.',
+            'finding_count': 1,
+            'source_result_key': stableId,
+          });
+          await db.insert('security_findings', {
+            'finding_id': legacyFinding.findingId,
+            'fingerprint': legacyFinding.fingerprint,
+            'title': legacyFinding.title,
+            'category': legacyFinding.category,
+            'target': legacyFinding.target,
+            'severity': legacyFinding.severity.name,
+            'confidence': legacyFinding.confidence.name,
+            'status': legacyFinding.status.name,
+            'description': legacyFinding.description,
+            'evidence_json': jsonEncode(legacyFinding.evidence),
+            'source_report_keys_json': jsonEncode(legacyFinding.sourceReportKeys),
+            'recommendation': legacyFinding.recommendation,
+            'first_seen': activityTimestamp(legacyFinding.firstSeen),
+            'last_seen': activityTimestamp(legacyFinding.lastSeen),
+            'created_at': activityTimestamp(legacyFinding.createdAt),
+            'updated_at': activityTimestamp(legacyFinding.updatedAt),
+            'source_tool': legacyFinding.sourceTool,
+            'assessment_id': legacyFinding.assessmentId,
+          });
         },
       ),
     );
@@ -231,13 +298,16 @@ void main() {
       await upgradedStore.close();
       await directory.delete(recursive: true);
     });
-    final stableId = activityResultKey(legacyResult.toolId, legacyResult.target, legacyResult.completedAt);
     expect((await upgradedStore.loadReportById(stableId))?.target, 'legacy-v3.example');
     expect(await upgradedStore.loadRecent(), hasLength(1));
-    final db = await databaseFactoryFfi.openDatabase(databasePath, options: OpenDatabaseOptions(version: 4));
-    expect((await db.query('activity_events')).single['source_result_key'], stableId);
-    expect(jsonDecode((await db.query('security_findings')).single['source_report_keys_json'] as String), [stableId]);
-    await db.close();
+    final migratedActivities = await upgradedStore.loadActivities();
+    expect(migratedActivities, hasLength(1));
+    expect(migratedActivities.single.summary, 'Legacy activity survived migration.');
+    expect(migratedActivities.single.sourceResultKey, stableId);
+    final migratedFindings = await upgradedStore.loadFindings();
+    expect(migratedFindings, hasLength(1));
+    expect(migratedFindings.single.title, legacyFinding.title);
+    expect(migratedFindings.single.sourceReportKeys, [stableId]);
   });
 
   test('version one database migrates without losing saved reports', () async {

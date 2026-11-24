@@ -208,6 +208,8 @@ void main() {
     final eventIds = manager.auditEvents.map((event) => event['eventId']).whereType<String>().toList();
     expect(eventIds.toSet(), hasLength(eventIds.length));
     expect(manager.auditEvents.map((event) => event['action']), containsAll(['install-start', 'uninstall-start']));
+    final persistedAudit = store.value['audit'] as List;
+    expect((persistedAudit.first as Map<String, Object?>)['eventId'], manager.auditEvents.first['eventId']);
   });
 
   test('rejects unknown ABI and missing capabilities and persists lifecycle state', () async {
@@ -240,6 +242,7 @@ void main() {
     expect(restored.auditEvents.length, manager.auditEvents.length);
     final restoredIds = restored.auditEvents.map((event) => event['eventId']).whereType<String>().toList();
     expect(restoredIds.toSet(), hasLength(restoredIds.length));
+    expect(restored.auditEvents.first['eventId'], manager.auditEvents.first['eventId']);
     expect(restored.stateFor('runtime.fixture')?.lifecycle, RuntimeLifecycle.installed);
     await restored.initializeRuntime('runtime.fixture', userApproved: true);
     expect((await restored.start('runtime.fixture', userApproved: true, policyAllowed: true)).lifecycle, RuntimeLifecycle.running);

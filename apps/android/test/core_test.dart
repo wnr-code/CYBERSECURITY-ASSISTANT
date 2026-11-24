@@ -16,6 +16,7 @@ import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/core/tool_registry.dart';
 import 'package:cybersecurity_assistant/core/tool_result_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 class _PendingDnsSecurityTools extends SecurityTools {
   final started = Completer<void>();
@@ -107,6 +108,8 @@ class _ScriptedSecurityTools extends SecurityTools {
 }
 
 void main() {
+  setUpAll(sqfliteFfiInit);
+
   group('PolicyEngine', () {
     final policy = PolicyEngine();
 
@@ -601,6 +604,52 @@ void main() {
       expect(persistedFindings.single.assessmentId, assessmentEvent.eventId);
       expect(persistedFindings.single.sourceReportKeys, hasLength(1));
       expect(persistedFindings.single.status, FindingStatus.open);
+    });
+
+    test('automatically persists completed reports to SQLite across reopen without duplicates', () async {
+      final directory = await Directory.systemTemp.createTemp('automatic-report-persistence-');
+      final databasePath = '${directory.path}/reports.sqlite';
+      final store = LocalResultStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePathProvider: () async => databasePath,
+      );
+      addTearDown(() async {
+        await store.close();
+        await directory.delete(recursive: true);
+      });
+      final savedCallbacks = <ToolRunResult>[];
+      final orchestrator = ToolOrchestrator(
+        tools: _ScriptedSecurityTools(),
+        activityStore: store,
+        findingRepository: store,
+        onReportSaved: savedCallbacks.add,
+      );
+
+      final first = await orchestrator.execute(const ToolInvocation(
+        toolId: 'dns_lookup',
+        target: 'example.com',
+        authorized: true,
+      ));
+      final second = await orchestrator.execute(const ToolInvocation(
+        toolId: 'dns_lookup',
+        target: 'example.com',
+        authorized: true,
+      ));
+      final reportId = activityResultKey(first.toolId, first.target, first.completedAt);
+      expect(second.completedAt, first.completedAt);
+      expect(savedCallbacks, hasLength(2));
+      expect((await store.loadRecent()).map((entry) => entry.target), ['example.com']);
+      expect((await store.loadReportById(reportId))?.summary, first.summary);
+      expect((await store.loadActivities()).where((event) => event.kind == ActivityKind.tool), hasLength(2));
+      await store.close();
+
+      final reopenedStore = LocalResultStore(
+        databaseFactory: databaseFactoryFfi,
+        databasePathProvider: () async => databasePath,
+      );
+      addTearDown(reopenedStore.close);
+      expect((await reopenedStore.loadReportById(reportId))?.target, 'example.com');
+      expect(await reopenedStore.loadRecent(), hasLength(1));
     });
 
     test('reports a local report-save failure without claiming a report reference', () async {
