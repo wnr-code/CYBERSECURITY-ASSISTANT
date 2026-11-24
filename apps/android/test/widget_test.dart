@@ -86,8 +86,7 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 
 void main() {
   testWidgets('Market is a separate package page with the six catalog categories and honest placeholders', (tester) async {
-    final directory = await Directory.systemTemp.createTemp('market-widget-');
-    debugPrint('MARKET_TEST directory created');
+    final directory = (await tester.runAsync(() => Directory.systemTemp.createTemp('market-widget-')))!;
     final manager = MarketPackageManager(
       catalog: bundledMarketCatalog,
       environment: const CompatibilityEnvironment(platform: 'Android'),
@@ -95,18 +94,15 @@ void main() {
       supportDirectoryProvider: () async => directory,
     );
     try {
-      await manager.initialize();
-      debugPrint('MARKET_TEST registry initialized');
+      await tester.runAsync(manager.initialize);
       await tester.pumpWidget(MaterialApp(
         locale: const Locale('id'),
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
         home: MarketScreen(packageManager: manager),
       ));
-      debugPrint('MARKET_TEST widget pumped');
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      debugPrint('MARKET_TEST frames pumped');
 
       expect(find.text('MARKET'), findsOneWidget);
       for (final category in ['Alat Keamanan', 'Runtime', 'Plugin', 'Model AI', 'Paket Pengetahuan', 'Konektor Cloud/API']) {
@@ -117,12 +113,11 @@ void main() {
       expect(find.text('Runtime execution, plugin loading, AI inference, and authenticated cloud connectors are not implemented in this foundation.'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
-      debugPrint('MARKET_TEST cleanup start');
       await tester.pumpWidget(const SizedBox.shrink());
-      debugPrint('MARKET_TEST widget disposed');
       manager.dispose();
-      if (await directory.exists()) await directory.delete(recursive: true);
-      debugPrint('MARKET_TEST cleanup complete');
+      await tester.runAsync(() async {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      });
     }
   }, timeout: const Timeout(Duration(seconds: 60)));
 
