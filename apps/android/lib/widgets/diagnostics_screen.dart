@@ -1,8 +1,7 @@
 import 'dart:io';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../core/diagnostics.dart';
@@ -136,7 +135,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           _section('App & device', [
             ListTile(leading: const Icon(Icons.info_outline), title: const Text('Application'), subtitle: Text(_version)),
             ListTile(leading: const Icon(Icons.phone_android), title: const Text('Device (non-unique)'), subtitle: Text(_device)),
-            ListTile(leading: const Icon(Icons.memory), title: const Text('Embedded runtime'), subtitle: const Text('No executable runtime is installed or enabled in this build.')),
+            const ListTile(leading: Icon(Icons.memory), title: Text('Embedded runtime'), subtitle: Text('No executable runtime is installed or enabled in this build.')),
             ListTile(leading: const Icon(Icons.inventory_2_outlined), title: Text('Market packages (${widget.marketManager.installedPackages.length} installed)'), subtitle: Text(widget.marketManager.installedPackages.isEmpty ? 'No user-installed packages.' : widget.marketManager.installedPackages.map((entry) => '${entry.id} ${entry.version}').join(' · '))),
           ]),
           const SizedBox(height: 12),

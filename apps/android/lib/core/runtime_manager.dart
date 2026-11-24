@@ -219,7 +219,7 @@ class RuntimeManager extends ChangeNotifier {
       return !_adapters.containsKey(dependency) || (state?.lifecycle != RuntimeLifecycle.installed && state?.lifecycle != RuntimeLifecycle.stopped);
     }).toList();
     if (missingDependencies.isNotEmpty) throw StateError('Missing runtime dependencies: ${missingDependencies.join(', ')}.');
-    if (!descriptor.requiredCapabilities.difference(grantedCapabilities).isEmpty) throw StateError('Required capabilities were not explicitly granted.');
+    if (descriptor.requiredCapabilities.difference(grantedCapabilities).isNotEmpty) throw StateError('Required capabilities were not explicitly granted.');
     final directory = await _workingDirectory(id);
     return _withLifecycle(id, RuntimeLifecycle.installed, () async {
       await adapter.install(directory);
@@ -245,7 +245,7 @@ class RuntimeManager extends ChangeNotifier {
     if (!userApproved || !policyAllowed) throw StateError('Runtime execution requires user approval and policy authorization.');
     final adapter = _requireAdapter(id);
     if (_states[id]?.lifecycle != RuntimeLifecycle.initialized && _states[id]?.lifecycle != RuntimeLifecycle.stopped) throw StateError('Runtime must be initialized before start.');
-    if (!adapter.descriptor.requiredCapabilities.difference(_grants[id] ?? const <RuntimeCapability>{}).isEmpty) throw StateError('Required runtime capabilities are not granted.');
+    if (adapter.descriptor.requiredCapabilities.difference(_grants[id] ?? const <RuntimeCapability>{}).isNotEmpty) throw StateError('Required runtime capabilities are not granted.');
     if (!await adapter.healthCheck()) return _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed.');
     return _set(id, RuntimeLifecycle.running, version: adapter.descriptor.version);
   }
@@ -271,7 +271,7 @@ class RuntimeManager extends ChangeNotifier {
     final directory = await _workingDirectory(id);
     try {
       await adapter.update(directory, version);
-      return _set(id, RuntimeLifecycle.stopped, version: version);
+      return await _set(id, RuntimeLifecycle.stopped, version: version);
     } catch (error) {
       await _record('update-rollback', id);
       if (previous.installedVersion != null) await adapter.update(directory, previous.installedVersion!);

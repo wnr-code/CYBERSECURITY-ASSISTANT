@@ -14,8 +14,8 @@ class _Store implements RuntimeStateStore {
 }
 
 class _Adapter implements RuntimeAdapter {
-  _Adapter({this.healthy = true});
-  bool healthy;
+  _Adapter();
+  bool healthy = true;
   int installs = 0;
   int initializes = 0;
   int stops = 0;
