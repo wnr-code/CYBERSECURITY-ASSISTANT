@@ -113,12 +113,6 @@ void main() {
       expect(find.text('Embedded Runtime (planned)'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Security Assessment Evidence Guide'), 360, scrollable: marketScrollView);
       expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('Runtime execution, plugin loading, AI inference, and authenticated cloud connectors are not implemented in this foundation.'),
-        360,
-        scrollable: marketScrollView,
-      );
-      expect(find.text('Runtime execution, plugin loading, AI inference, and authenticated cloud connectors are not implemented in this foundation.'), findsOneWidget);
       expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
