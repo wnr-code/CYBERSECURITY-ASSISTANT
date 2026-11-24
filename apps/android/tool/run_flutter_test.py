@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ANSI_ESCAPE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
-MAX_FAILURE_OUTPUT_CHARS = 50_000
+MAX_FAILURE_OUTPUT_CHARS = 16_000
 ANNOTATION_CHUNK_CHARS = 2_000
 TEST_SUMMARY = re.compile(r"(?m)^\d+:\d{2}\s+\+(\d+)(?:\s+-(\d+))?:\s+(All tests passed!|Some tests failed\.)\s*$")
 
