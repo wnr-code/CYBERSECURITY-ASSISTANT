@@ -102,50 +102,6 @@ typedef HttpGet = Future<BoundedHttpResponse> Function(
   Duration timeout,
 );
 
-class _PinnedSocketConnectionTask implements ConnectionTask<Socket> {
-  _PinnedSocketConnectionTask(this.addresses, this.remaining);
-
-  final List<InternetAddress> addresses;
-  final Duration Function() remaining;
-  ConnectionTask<Socket>? _activeTask;
-  bool _cancelled = false;
-  late final Future<Socket> _socket = _connect();
-
-  @override
-  Future<Socket> get socket => _socket;
-
-  Future<Socket> _connect() async {
-    Object? lastError;
-    for (final address in addresses) {
-      if (_cancelled) throw const SocketException('Connection was cancelled.');
-      final task = Socket.startConnect(address, 443);
-      _activeTask = task;
-      try {
-        final connected = await task.socket.timeout(remaining(), onTimeout: () {
-          task.cancel();
-          throw TimeoutException('Pinned HTTPS socket connection timed out.');
-        });
-        if (_cancelled) {
-          connected.destroy();
-          throw const SocketException('Connection was cancelled.');
-        }
-        return connected;
-      } on SocketException catch (error) {
-        lastError = error;
-        task.cancel();
-      }
-    }
-    if (lastError is SocketException) throw lastError;
-    throw const SocketException('No preflight-approved address could be connected.');
-  }
-
-  @override
-  void cancel() {
-    _cancelled = true;
-    _activeTask?.cancel();
-  }
-}
-
 class BoundedBodyCapture {
   const BoundedBodyCapture(this.bytes, this.truncated);
   final Uint8List bytes;
@@ -513,7 +469,26 @@ class SecurityTools {
       if (proxyHost != null || requestUri.host.toLowerCase() != expectedHost || requestUri.port != 443) {
         throw const HttpException('Request escaped the preflight-approved HTTPS destination.');
       }
-      return _PinnedSocketConnectionTask(approvedAddresses, remaining);
+      Object? lastError;
+      for (final address in approvedAddresses) {
+        ConnectionTask<Socket>? task;
+        try {
+          task = await Socket.startConnect(address, 443).timeout(remaining());
+          await task.socket.timeout(remaining(), onTimeout: () {
+            task?.cancel();
+            throw TimeoutException('Pinned HTTPS socket connection timed out.');
+          });
+          return task;
+        } on SocketException catch (error) {
+          lastError = error;
+          task?.cancel();
+        } on TimeoutException {
+          task?.cancel();
+          rethrow;
+        }
+      }
+      if (lastError is SocketException) throw lastError;
+      throw const HttpException('No approved HTTPS destination could be reached.');
     };
     try {
       final request = await client.getUrl(uri).timeout(remaining());
