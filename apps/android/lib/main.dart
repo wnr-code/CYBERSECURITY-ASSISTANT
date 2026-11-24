@@ -1311,6 +1311,8 @@ String _severityName(FindingSeverity severity, BuildContext context) => switch (
 
 String _displayRecommendation(String recommendation, BuildContext context) => context.tr(recommendation);
 
+enum _ToolsView { assessment, catalog }
+
 class ToolsScreen extends StatefulWidget {
   const ToolsScreen({super.key, required this.recentResults, required this.onResult, required this.onOpenMarket});
 
@@ -1326,6 +1328,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
   final _searchController = TextEditingController();
   ToolCategory? _selectedCategory;
   final Map<String, Future<ToolStatus>> _toolStatusFutures = {};
+  _ToolsView _activeView = _ToolsView.assessment;
 
   Future<ToolStatus> _statusForTool(String id) =>
       _toolStatusFutures.putIfAbsent(id, () => ToolOrchestrator().statusForTool(id));
@@ -1360,84 +1363,121 @@ class _ToolsScreenState extends State<ToolsScreen> {
             const SizedBox(height: 8),
             Text(context.tr('Alat bawaan berjalan di perangkat. Pemeriksaan jaringan memerlukan target dan konfirmasi izin.'),
                 style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
-            const SizedBox(height: 14),
-            AssessmentRunner(onResult: widget.onResult),
-            const SizedBox(height: 20),
-            const Divider(),
-            const SizedBox(height: 8),
-            Text(context.tr('TOOL REGISTRY'), style: _eyebrow(context)),
-            const SizedBox(height: 8),
-            Text(context.tr('KATALOG ALAT'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Wrap(spacing: 9, runSpacing: 8, children: [
-              OutlinedButton.icon(
-                onPressed: widget.onOpenMarket,
-                icon: const Icon(Icons.storefront_outlined),
-                label: Text(context.tr('Open Market')),
-              ),
-              OutlinedButton.icon(
-                onPressed: () => _showReleaseCatalog(context),
-                icon: const Icon(Icons.code_rounded),
-                label: Text(context.tr('Lihat rilis GitHub')),
-              ),
-            ]),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _searchController,
-              onChanged: (_) => setState(() {}),
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: context.tr('Cari alat atau kategori'),
-                isDense: true,
+            const SizedBox(height: 16),
+            SegmentedButton<_ToolsView>(
+              segments: [
+                ButtonSegment(
+                  value: _ToolsView.assessment,
+                  icon: const Icon(Icons.radar_rounded),
+                  label: Text(context.tr('Assessment')),
+                ),
+                ButtonSegment(
+                  value: _ToolsView.catalog,
+                  icon: const Icon(Icons.grid_view_rounded),
+                  label: Text(context.tr('Tool catalog')),
+                ),
+              ],
+              selected: {_activeView},
+              onSelectionChanged: (selection) => setState(() => _activeView = selection.first),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(
+                    _activeView == _ToolsView.assessment ? Icons.fact_check_outlined : Icons.touch_app_outlined,
+                    color: _mint,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _activeView == _ToolsView.assessment
+                          ? context.tr('Run several checks in one authorized assessment.')
+                          : context.tr('Search and filter available tools, then open one to review its purpose and run it individually.'),
+                      style: TextStyle(color: Colors.white.withValues(alpha: .76), height: 1.4),
+                    ),
+                  ),
+                ]),
               ),
             ),
-            const SizedBox(height: 10),
-            Wrap(spacing: 8, runSpacing: 4, children: [
-              FilterChip(
-                label: Text(context.tr('Semua')),
-                selected: _selectedCategory == null,
-                onSelected: (_) => setState(() => _selectedCategory = null),
-              ),
-              for (final category in toolRegistry.map((tool) => tool.category).toSet())
-                FilterChip(
-                  label: Text(_categoryLabel(category, context)),
-                  selected: _selectedCategory == category,
-                  onSelected: (selected) => setState(() => _selectedCategory = selected ? category : null),
+            if (_activeView == _ToolsView.assessment) ...[
+              const SizedBox(height: 10),
+              AssessmentRunner(onResult: widget.onResult),
+            ] else ...[
+              const SizedBox(height: 18),
+              Text(context.tr('KATALOG ALAT'), style: _eyebrow(context)),
+              const SizedBox(height: 8),
+              Wrap(spacing: 9, runSpacing: 8, children: [
+                OutlinedButton.icon(
+                  onPressed: widget.onOpenMarket,
+                  icon: const Icon(Icons.storefront_outlined),
+                  label: Text(context.tr('Open Market')),
                 ),
-            ]),
-            const SizedBox(height: 8),
-            if (filteredTools.isEmpty)
-              Padding(
-                padding: const EdgeInsets.all(18),
-                child: Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.'))),
-              )
-            else
-              for (final tool in filteredTools) ...[
-                Card(
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.all(16),
-                    leading: CircleAvatar(
-                      backgroundColor: _mint.withValues(alpha: .12),
-                      child: Icon(_toolIcon(tool.id), color: _mint),
-                    ),
-                    title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: FutureBuilder<ToolStatus>(
-                        future: _statusForTool(tool.id),
-                        builder: (context, snapshot) => Text(
-                          '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(snapshot.data ?? ToolStatus.environmentRequired, context)}\n${_toolDisplayDescription(tool.id, context)}',
-                          style: const TextStyle(height: 1.4),
+                OutlinedButton.icon(
+                  onPressed: () => _showReleaseCatalog(context),
+                  icon: const Icon(Icons.code_rounded),
+                  label: Text(context.tr('Lihat rilis GitHub')),
+                ),
+              ]),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _searchController,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: context.tr('Cari alat atau kategori'),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(spacing: 8, runSpacing: 4, children: [
+                FilterChip(
+                  label: Text(context.tr('Semua')),
+                  selected: _selectedCategory == null,
+                  onSelected: (_) => setState(() => _selectedCategory = null),
+                ),
+                for (final category in toolRegistry.map((tool) => tool.category).toSet())
+                  FilterChip(
+                    label: Text(_categoryLabel(category, context)),
+                    selected: _selectedCategory == category,
+                    onSelected: (selected) => setState(() => _selectedCategory = selected ? category : null),
+                  ),
+              ]),
+              const SizedBox(height: 8),
+              if (filteredTools.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.'))),
+                )
+              else
+                for (final tool in filteredTools) ...[
+                  Card(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.all(16),
+                      leading: CircleAvatar(
+                        backgroundColor: _mint.withValues(alpha: .12),
+                        child: Icon(_toolIcon(tool.id), color: _mint),
+                      ),
+                      title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: FutureBuilder<ToolStatus>(
+                          future: _statusForTool(tool.id),
+                          builder: (context, snapshot) => Text(
+                            '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(snapshot.data ?? ToolStatus.environmentRequired, context)}\n${_toolDisplayDescription(tool.id, context)}',
+                            style: const TextStyle(height: 1.4),
+                          ),
                         ),
                       ),
+                      trailing: const Icon(Icons.chevron_right),
+                      isThreeLine: true,
+                      onTap: () => _showToolRunner(context, tool, widget.recentResults, widget.onResult),
                     ),
-                    trailing: const Icon(Icons.chevron_right),
-                    isThreeLine: true,
-                    onTap: () => _showToolRunner(context, tool, widget.recentResults, widget.onResult),
                   ),
-                ),
-                const SizedBox(height: 10),
-              ],
+                  const SizedBox(height: 10),
+                ],
+            ],
           ],
         ),
       ),

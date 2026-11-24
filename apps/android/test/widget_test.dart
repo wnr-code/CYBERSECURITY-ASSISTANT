@@ -284,10 +284,29 @@ void main() {
     expect(find.text('Assistant'), findsNothing);
   });
 
+  testWidgets('assessment and individual-tool catalog have separate, clearly labeled views', (tester) async {
+    _useTallViewport(tester);
+    await _pumpApp(tester);
+    await tester.tap(find.text('Assessment').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Jalankan assessment'), findsOneWidget);
+    expect(find.text('Katalog alat'), findsOneWidget);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori'), findsNothing);
+
+    await tester.tap(find.text('Katalog alat'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jalankan assessment'), findsNothing);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('filters the tool registry by search text', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment'));
+    await tester.tap(find.text('Assessment').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Katalog alat'));
     await tester.pumpAndSettle();
 
     final catalogSearch = find.byWidgetPredicate(
@@ -303,7 +322,9 @@ void main() {
   testWidgets('does not run a network check until authorization is confirmed', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment'));
+    await tester.tap(find.text('Assessment').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Katalog alat'));
     await tester.pumpAndSettle();
     final dnsToolEntry = find.text('Pencarian DNS');
     await tester.tap(dnsToolEntry);
