@@ -39,7 +39,25 @@ jobs:
 
       - name: Resolve Flutter dependencies
         working-directory: apps/android
-        run: flutter pub get
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+
+          result = subprocess.run(["flutter", "pub", "get"], capture_output=True, text=True)
+          output = result.stdout + result.stderr
+          print(output, end="" if output.endswith("\n") else "\n")
+          if result.returncode:
+              detail = output[-3000:]
+              escaped = detail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=Flutter pub get::{escaped}")
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("### Flutter dependency resolution failure\n\n```text\n")
+                  summary.write(output[-12000:])
+                  summary.write("\n```\n")
+          sys.exit(result.returncode)
+          PY
 
       - name: Analyze Flutter source
         working-directory: apps/android
