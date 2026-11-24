@@ -231,7 +231,7 @@ class BundledAndHttpPackageDownloader implements PackageDownloader {
       if (proxyHost != null ||
           requestUri.host.toLowerCase() != uri.host.toLowerCase() ||
           requestUri.port != 443) {
-        throw HttpException('Package request escaped its trusted HTTPS source.');
+        throw const HttpException('Package request escaped its trusted HTTPS source.');
       }
       Object? lastError;
       for (final address in addresses) {

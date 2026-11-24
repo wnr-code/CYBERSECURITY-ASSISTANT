@@ -97,7 +97,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         locale: const Locale('id'),
         supportedLocales: AppLocalizations.supportedLocales,
-        localizationsDelegates: [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+        localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
         home: MarketScreen(packageManager: manager),
       ));
       await tester.pumpAndSettle();
