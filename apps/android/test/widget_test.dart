@@ -53,10 +53,12 @@ class _MemoryResultHistory implements ResultHistoryStore {
 
 void _ignoreResult(ToolRunResult _) {}
 
-Finder _assessmentScroll() => find.descendant(
-      of: find.byType(ToolsScreen),
-      matching: find.byType(Scrollable),
-    ).first;
+void _useTallViewport(WidgetTester tester) {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(800, 1400);
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
 
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
@@ -231,6 +233,7 @@ void main() {
   });
 
   testWidgets('filters the tool registry by search text', (tester) async {
+    _useTallViewport(tester);
     await _pumpApp(tester);
     await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
@@ -238,7 +241,6 @@ void main() {
     final catalogSearch = find.byWidgetPredicate(
       (widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori',
     );
-    await tester.scrollUntilVisible(catalogSearch, 240, scrollable: _assessmentScroll());
     await tester.enterText(catalogSearch, 'TLS');
     await tester.pump();
 
@@ -247,11 +249,11 @@ void main() {
   });
 
   testWidgets('does not run a network check until authorization is confirmed', (tester) async {
+    _useTallViewport(tester);
     await _pumpApp(tester);
     await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
     final dnsToolEntry = find.text('Pencarian DNS');
-    await tester.scrollUntilVisible(dnsToolEntry, 260, scrollable: _assessmentScroll());
     await tester.tap(dnsToolEntry);
     await tester.pumpAndSettle();
 
@@ -276,11 +278,11 @@ void main() {
   });
 
   testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
+    _useTallViewport(tester);
     await _pumpApp(tester);
     await tester.tap(find.text('Assessment'));
     await tester.pumpAndSettle();
     final releaseButton = find.text('Lihat rilis GitHub');
-    await tester.scrollUntilVisible(releaseButton, 260, scrollable: _assessmentScroll());
     await tester.tap(releaseButton);
     await tester.pumpAndSettle();
 
