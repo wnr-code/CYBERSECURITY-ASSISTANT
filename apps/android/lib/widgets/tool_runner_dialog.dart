@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../core/activity_timeline.dart';
 import '../core/runtime_manager.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
@@ -102,11 +103,20 @@ String _severityLabel(FindingSeverity severity, BuildContext context) => switch 
     };
 
 class ToolRunnerDialog extends StatefulWidget {
-  const ToolRunnerDialog({super.key, required this.tool, required this.recentResults, this.orchestrator});
+  const ToolRunnerDialog({
+    super.key,
+    required this.tool,
+    required this.recentResults,
+    this.orchestrator,
+    this.activityStore,
+    this.onActivity,
+  });
 
   final ToolDefinition tool;
   final List<ToolRunResult> recentResults;
   final ToolOrchestrator? orchestrator;
+  final ActivityHistoryStore? activityStore;
+  final void Function(ActivityEvent event)? onActivity;
 
   @override
   State<ToolRunnerDialog> createState() => _ToolRunnerDialogState();
@@ -121,7 +131,10 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
     final latestTarget = checks.first.target;
     return checks.where((result) => result.target == latestTarget).toList();
   }
-  late final _orchestrator = widget.orchestrator ?? ToolOrchestrator();
+  late final _orchestrator = widget.orchestrator ?? ToolOrchestrator(
+        activityStore: widget.activityStore,
+        onActivity: widget.onActivity,
+      );
   bool _authorized = false;
   bool _running = false;
   bool _cancelRequested = false;

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'core/activity_timeline.dart';
 import 'core/diagnostics.dart';
 import 'core/local_result_store.dart';
 import 'core/package_manager.dart';
@@ -177,6 +178,7 @@ class MainShell extends StatefulWidget {
   const MainShell({
     super.key,
     this.resultStore,
+    this.activityStore,
     this.initialSavedResults,
     this.initialStorageError,
     this.locale = const Locale('id'),
@@ -184,6 +186,7 @@ class MainShell extends StatefulWidget {
   });
 
   final ResultHistoryStore? resultStore;
+  final ActivityHistoryStore? activityStore;
   final List<ToolRunResult>? initialSavedResults;
   final String? initialStorageError;
   final Locale locale;
@@ -197,7 +200,12 @@ class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
   final List<ToolRunResult> _recentResults = [];
   late final ResultHistoryStore _resultStore;
+  late final ActivityHistoryStore _activityStore;
   late final MarketPackageManager _marketPackageManager;
+  List<ActivityEvent> _activityEvents = [];
+  bool _activityHistoryLoaded = false;
+  bool _activityBusy = false;
+  String? _activityError;
   List<ToolRunResult> _savedResults = [];
   bool _savedHistoryLoaded = false;
   bool _storageBusy = false;
@@ -208,6 +216,8 @@ class _MainShellState extends State<MainShell> {
     super.initState();
     StartupTrace.mark('dashboard-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
+    _activityStore = widget.activityStore ??
+        (_resultStore is ActivityHistoryStore ? _resultStore as ActivityHistoryStore : MemoryActivityHistoryStore());
     _marketPackageManager = MarketPackageManager.bundled();
     unawaited(_synchronizeMarketRuntimeAvailability());
     final startupResults = widget.initialSavedResults;
@@ -220,6 +230,7 @@ class _MainShellState extends State<MainShell> {
       if (!mounted) return;
       StartupTrace.mark('dashboard-first-frame');
       if (startupResults == null) unawaited(_loadSavedResults());
+      unawaited(_loadActivityEvents());
     });
   }
 
@@ -281,7 +292,121 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
+  Future<void> _openActivitySource(ActivityEvent event) async {
+    ToolRunResult? sourceResult;
+    final sourceKey = event.sourceResultKey;
+    if (sourceKey != null) {
+      final inMemory = [..._recentResults, ..._savedResults];
+      for (final result in inMemory) {
+        if (activityResultKey(result.toolId, result.target, result.completedAt) == sourceKey) {
+          sourceResult = result;
+          break;
+        }
+      }
+      if (sourceResult == null) {
+        try {
+          final persisted = await _resultStore.loadRecent(limit: 500);
+          for (final result in persisted) {
+            if (activityResultKey(result.toolId, result.target, result.completedAt) == sourceKey) {
+              sourceResult = result;
+              break;
+            }
+          }
+        } catch (error, stack) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+        }
+      }
+    }
+    if (!mounted) return;
+    final openSource = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Activity details')),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _ActivityDetailLine(label: dialogContext.tr('Activity type'), value: event.kind == ActivityKind.assessment ? dialogContext.tr('Assessment run') : _toolDisplayName(event.toolId ?? '', dialogContext)),
+          _ActivityDetailLine(label: dialogContext.tr('Target'), value: event.target),
+          _ActivityDetailLine(label: dialogContext.tr('Status'), value: _activityStatusLabel(event.status, dialogContext)),
+          _ActivityDetailLine(label: dialogContext.tr('Started'), value: event.startedAt.toLocal().toString()),
+          if (event.finishedAt != null) _ActivityDetailLine(label: dialogContext.tr('Finished'), value: event.finishedAt!.toLocal().toString()),
+          if (event.summary != null) _ActivityDetailLine(label: dialogContext.tr('Summary'), value: _activitySummary(event, dialogContext)),
+          if (event.findingCount != null) _ActivityDetailLine(label: dialogContext.tr('Indicators'), value: '${event.findingCount}'),
+          if (event.parentEventId != null) _ActivityDetailLine(label: dialogContext.tr('Assessment run ID'), value: event.parentEventId!),
+          const SizedBox(height: 8),
+          Text(
+            sourceResult == null
+                ? dialogContext.tr('Activity data stores only the host and bounded status metadata. The full source report was not saved or is no longer available.')
+                : dialogContext.tr('Open the source report to review full evidence.'),
+            style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12),
+          ),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Tutup'))),
+          if (sourceResult != null)
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.article_outlined),
+              label: Text(dialogContext.tr('Open source report')),
+            ),
+        ],
+      ),
+    );
+    if (openSource == true && sourceResult != null && mounted) {
+      _showResultDetails(context, sourceResult!, onSaveResult: _saveResultLocally);
+    }
+  }
+
   void _clearResults() => setState(_recentResults.clear);
+
+  void _acceptActivity(ActivityEvent event) {
+    final eventsById = {for (final item in _activityEvents) item.eventId: item};
+    eventsById[event.eventId] = event;
+    final events = eventsById.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    if (mounted) setState(() => _activityEvents = events.take(500).toList(growable: false));
+  }
+
+  Future<void> _loadActivityEvents() async {
+    if (mounted) setState(() {
+      _activityBusy = true;
+      _activityError = null;
+    });
+    try {
+      final loaded = await _activityStore.loadActivities(limit: 500);
+      if (!mounted) return;
+      final eventsById = {for (final event in loaded) event.eventId: event};
+      for (final event in _activityEvents) {
+        eventsById[event.eventId] = event;
+      }
+      final events = eventsById.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+      setState(() {
+        _activityEvents = events.take(500).toList(growable: false);
+        _activityHistoryLoaded = true;
+      });
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      if (mounted) setState(() => _activityError = 'Could not load local activity history.');
+    } finally {
+      if (mounted) setState(() => _activityBusy = false);
+    }
+  }
+
+  Future<void> _clearActivityEvents() async {
+    if (mounted) setState(() {
+      _activityBusy = true;
+      _activityError = null;
+    });
+    try {
+      await _activityStore.clearActivities();
+      if (mounted) setState(() {
+        _activityEvents = [];
+        _activityHistoryLoaded = true;
+      });
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      if (mounted) setState(() => _activityError = 'Could not clear local activity history.');
+    } finally {
+      if (mounted) setState(() => _activityBusy = false);
+    }
+  }
 
   Future<void> _synchronizeMarketRuntimeAvailability() async {
     try {
@@ -384,7 +509,13 @@ class _MainShellState extends State<MainShell> {
         onOpenAssistant: _openAssistantModule,
         onSaveResult: _saveResultLocally,
       ),
-      ToolsScreen(recentResults: recentResults, onResult: _rememberResult, onOpenMarket: _openMarket),
+      ToolsScreen(
+        recentResults: recentResults,
+        onResult: _rememberResult,
+        onOpenMarket: _openMarket,
+        activityStore: _activityStore,
+        onActivity: _acceptActivity,
+      ),
       ReportsScreen(
         recentResults: recentResults,
         savedResults: savedResults,
@@ -395,6 +526,13 @@ class _MainShellState extends State<MainShell> {
         onClearResults: _clearResults,
         onClearSavedResults: _clearSavedResults,
         onSaveResult: _saveResultLocally,
+        activityEvents: List.unmodifiable(_activityEvents),
+        activityHistoryLoaded: _activityHistoryLoaded,
+        activityBusy: _activityBusy,
+        activityError: _activityError,
+        onLoadActivities: _loadActivityEvents,
+        onClearActivities: _clearActivityEvents,
+        onOpenActivitySource: _openActivitySource,
       ),
       SettingsScreen(
         locale: widget.locale,
@@ -883,7 +1021,8 @@ class _ReportEntry {
 }
 
 enum _ReportFilter { all, session, saved }
-enum _ReportContent { reports, findings }
+enum _ReportContent { reports, findings, activity }
+enum _ActivityDateFilter { all, today, week, month }
 
 class _FindingEntry {
   const _FindingEntry({required this.result, required this.finding, required this.saved});
@@ -904,6 +1043,13 @@ class ReportsScreen extends StatefulWidget {
     required this.onClearResults,
     required this.onClearSavedResults,
     required this.onSaveResult,
+    this.activityEvents = const [],
+    this.activityHistoryLoaded = false,
+    this.activityBusy = false,
+    this.activityError,
+    this.onLoadActivities,
+    this.onClearActivities,
+    this.onOpenActivitySource,
   });
 
   final List<ToolRunResult> recentResults;
@@ -915,6 +1061,13 @@ class ReportsScreen extends StatefulWidget {
   final VoidCallback onClearResults;
   final Future<void> Function() onClearSavedResults;
   final Future<bool> Function(ToolRunResult) onSaveResult;
+  final List<ActivityEvent> activityEvents;
+  final bool activityHistoryLoaded;
+  final bool activityBusy;
+  final String? activityError;
+  final Future<void> Function()? onLoadActivities;
+  final Future<void> Function()? onClearActivities;
+  final ValueChanged<ActivityEvent>? onOpenActivitySource;
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -923,6 +1076,17 @@ class ReportsScreen extends StatefulWidget {
 class _ReportsScreenState extends State<ReportsScreen> {
   _ReportFilter _filter = _ReportFilter.all;
   _ReportContent _content = _ReportContent.reports;
+  final _activityTargetController = TextEditingController();
+  _ActivityDateFilter _activityDateFilter = _ActivityDateFilter.all;
+  ActivityKind? _activityKind;
+  String? _activityToolId;
+  ActivityStatus? _activityStatus;
+
+  @override
+  void dispose() {
+    _activityTargetController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -949,6 +1113,22 @@ class _ReportsScreenState extends State<ReportsScreen> {
         .map((entry) => '${entry.result.toolId}|${entry.result.target}|${entry.result.completedAt.toUtc().microsecondsSinceEpoch}')
         .toSet()
         .length;
+    final now = DateTime.now();
+    final activityFrom = switch (_activityDateFilter) {
+      _ActivityDateFilter.all => null,
+      _ActivityDateFilter.today => DateTime(now.year, now.month, now.day).toUtc(),
+      _ActivityDateFilter.week => now.subtract(const Duration(days: 7)).toUtc(),
+      _ActivityDateFilter.month => now.subtract(const Duration(days: 30)).toUtc(),
+    };
+    final targetQuery = _activityTargetController.text.trim().toLowerCase();
+    final activities = widget.activityEvents.where((event) {
+      if (activityFrom != null && event.startedAt.isBefore(activityFrom)) return false;
+      if (_activityKind != null && event.kind != _activityKind) return false;
+      if (_activityToolId != null && event.toolId != _activityToolId) return false;
+      if (_activityStatus != null && event.status != _activityStatus) return false;
+      if (targetQuery.isNotEmpty && !event.target.toLowerCase().contains(targetQuery)) return false;
+      return true;
+    }).toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 960),
@@ -972,20 +1152,28 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 icon: const Icon(Icons.rule_folder_outlined),
                 label: Text(context.tr('Findings')),
               ),
+              ButtonSegment(
+                value: _ReportContent.activity,
+                icon: const Icon(Icons.timeline_rounded),
+                label: Text(context.tr('Activity')),
+              ),
             ],
             selected: {_content},
             onSelectionChanged: (selection) => setState(() => _content = selection.first),
           ),
           const SizedBox(height: 10),
           Text(
-            context.tr(_content == _ReportContent.reports
-                ? 'Reports show complete check results and evidence.'
-                : 'Findings are indicators from checks, not proof that a system is vulnerable.'),
+            context.tr(switch (_content) {
+              _ReportContent.reports => 'Reports show complete check results and evidence.',
+              _ReportContent.findings => 'Findings are indicators from checks, not proof that a system is vulnerable.',
+              _ReportContent.activity => 'Activity records what the assessment engine actually attempted and completed.',
+            }),
             style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12),
           ),
           const SizedBox(height: 14),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final filter in _ReportFilter.values)
+          if (_content != _ReportContent.activity)
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final filter in _ReportFilter.values)
               ChoiceChip(
                 label: Text(context.tr(switch (filter) {
                   _ReportFilter.all => 'All reports',
@@ -1010,7 +1198,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 label: Text(context.tr('Clear session')),
               ),
             ]),
-          if (_filter != _ReportFilter.session)
+          if (_content != _ReportContent.activity && _filter != _ReportFilter.session)
             Row(children: [
               Expanded(
                 child: Text(context.tr('Stored locally in app-private SQLite. Not encrypted or synced.'),
@@ -1030,12 +1218,128 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     : const Icon(Icons.refresh_rounded),
               ),
             ]),
-          if (widget.storageError != null) ...[
+          if (_content != _ReportContent.activity && widget.storageError != null) ...[
             const SizedBox(height: 8),
             Text(_translateStorageError(context, widget.storageError!), style: const TextStyle(color: Colors.orangeAccent)),
           ],
           const SizedBox(height: 8),
-          if (widget.storageBusy && rows.isEmpty && _filter != _ReportFilter.session)
+          if (_content == _ReportContent.activity) ...[
+            TextField(
+              controller: _activityTargetController,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search_rounded),
+                hintText: context.tr('Filter activity by target'),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              for (final filter in _ActivityDateFilter.values)
+                ChoiceChip(
+                  label: Text(context.tr(switch (filter) {
+                    _ActivityDateFilter.all => 'All time',
+                    _ActivityDateFilter.today => 'Today',
+                    _ActivityDateFilter.week => 'Last 7 days',
+                    _ActivityDateFilter.month => 'Last 30 days',
+                  })),
+                  selected: _activityDateFilter == filter,
+                  onSelected: (_) => setState(() => _activityDateFilter = filter),
+                ),
+            ]),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              ChoiceChip(
+                label: Text(context.tr('All activity types')),
+                selected: _activityKind == null && _activityToolId == null,
+                onSelected: (_) => setState(() {
+                  _activityKind = null;
+                  _activityToolId = null;
+                }),
+              ),
+              ChoiceChip(
+                label: Text(context.tr('Assessments')),
+                selected: _activityKind == ActivityKind.assessment,
+                onSelected: (_) => setState(() {
+                  _activityKind = ActivityKind.assessment;
+                  _activityToolId = null;
+                }),
+              ),
+              ChoiceChip(
+                label: Text(context.tr('All tools')),
+                selected: _activityKind == ActivityKind.tool && _activityToolId == null,
+                onSelected: (_) => setState(() {
+                  _activityKind = ActivityKind.tool;
+                  _activityToolId = null;
+                }),
+              ),
+              for (final toolId in const ['dns_lookup', 'tls_inspector', 'http_headers', 'response_analyzer'])
+                ChoiceChip(
+                  label: Text(_toolDisplayName(toolId, context)),
+                  selected: _activityToolId == toolId,
+                  onSelected: (_) => setState(() {
+                    _activityKind = ActivityKind.tool;
+                    _activityToolId = toolId;
+                  }),
+                ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                child: InputDecorator(
+                  decoration: InputDecoration(labelText: context.tr('Activity status'), isDense: true),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<ActivityStatus?>(
+                      key: const ValueKey('activity-status-filter'),
+                      value: _activityStatus,
+                      isExpanded: true,
+                      items: [
+                        DropdownMenuItem(value: null, child: Text(context.tr('Any status'))),
+                        for (final status in ActivityStatus.values)
+                          DropdownMenuItem(value: status, child: Text(_activityStatusLabel(status, context))),
+                      ],
+                      onChanged: (status) => setState(() => _activityStatus = status),
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: context.tr('Refresh activity'),
+                onPressed: widget.activityBusy ? null : () => widget.onLoadActivities?.call(),
+                icon: widget.activityBusy
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh_rounded),
+              ),
+              if (widget.activityEvents.isNotEmpty)
+                IconButton(
+                  tooltip: context.tr('Clear activity'),
+                  onPressed: widget.activityBusy ? null : () => _confirmClearActivity(context, widget.onClearActivities),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
+            ]),
+            if (widget.activityError != null) ...[
+              const SizedBox(height: 8),
+              Text(context.tr(widget.activityError!), style: const TextStyle(color: Colors.orangeAccent)),
+            ],
+            const SizedBox(height: 8),
+            if ((widget.activityBusy || !widget.activityHistoryLoaded) && widget.activityEvents.isEmpty)
+              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else if (activities.isEmpty)
+              _EmptyState(
+                icon: Icons.timeline_rounded,
+                title: context.tr('No activity matches these filters'),
+                detail: context.tr('Run a security assessment or an individual tool. Only attempted and completed work is recorded.'),
+              )
+            else
+              for (final event in activities) ...[
+                _ActivityCard(
+                  key: ValueKey('activity-${event.eventId}'),
+                  event: event,
+                  onTap: () => widget.onOpenActivitySource?.call(event),
+                ),
+                const SizedBox(height: 8),
+              ],
+          ] else if (widget.storageBusy && rows.isEmpty && _filter != _ReportFilter.session)
             const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
           else if (_content == _ReportContent.reports && rows.isEmpty)
             _EmptyState(
@@ -1086,6 +1390,110 @@ class _ReportsScreenState extends State<ReportsScreen> {
       ),
     );
   }
+}
+
+class _ActivityDetailLine extends StatelessWidget {
+  const _ActivityDetailLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(bottom: 7),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          SelectableText(value, style: const TextStyle(height: 1.35)),
+        ]),
+      );
+}
+
+class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({super.key, required this.event, required this.onTap});
+
+  final ActivityEvent event;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _activityStatusColor(event.status);
+    final title = event.kind == ActivityKind.assessment
+        ? context.tr('Assessment run')
+        : _toolDisplayName(event.toolId ?? '', context);
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(12)),
+              child: Icon(event.kind == ActivityKind.assessment ? Icons.radar_rounded : _toolIcon(event.toolId ?? ''), color: color, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w700))),
+                const SizedBox(width: 6),
+                _FindingTag(label: _activityStatusLabel(event.status, context), color: color),
+              ]),
+              const SizedBox(height: 4),
+              Text('${event.target} · ${event.startedAt.toLocal()}',
+                  style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11, height: 1.35)),
+              if (event.finishedAt != null)
+                Text('${context.tr('Finished')}: ${event.finishedAt!.toLocal()}',
+                    style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 11)),
+              if (event.summary != null) ...[
+                const SizedBox(height: 6),
+                Text(_activitySummary(event, context), style: TextStyle(color: Colors.white.withValues(alpha: .8), height: 1.35)),
+              ],
+              if (event.findingCount != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Text('${context.tr('Indicators')}: ${event.findingCount}',
+                      style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11)),
+                ),
+              if (event.parentEventId != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 5),
+                  child: Text(context.tr('Part of an assessment run'),
+                      style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 11)),
+                ),
+            ])),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right_rounded),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+Color _activityStatusColor(ActivityStatus status) => switch (status) {
+      ActivityStatus.started || ActivityStatus.running => const Color(0xFF71B7FF),
+      ActivityStatus.completed => _mint,
+      ActivityStatus.failed => Colors.orangeAccent,
+      ActivityStatus.cancelled => Colors.white54,
+    };
+
+String _activityStatusLabel(ActivityStatus status, BuildContext context) => switch (status) {
+      ActivityStatus.started => context.tr('Started'),
+      ActivityStatus.running => context.tr('Running'),
+      ActivityStatus.completed => context.tr('Completed'),
+      ActivityStatus.failed => context.tr('Failed'),
+      ActivityStatus.cancelled => context.tr('Cancelled'),
+    };
+
+String _activitySummary(ActivityEvent event, BuildContext context) {
+  final summary = event.summary ?? '';
+  if (summary == 'Check cancelled.') return context.tr(summary);
+  if (summary == 'Assessment cancelled.') return context.tr(summary);
+  if (event.kind == ActivityKind.tool) return _displayResultSummary(summary, context);
+  return summary;
 }
 
 class _ResultCard extends StatelessWidget {
@@ -1477,11 +1885,20 @@ String _displayRecommendation(String recommendation, BuildContext context) => co
 enum _ToolsView { assessment, catalog }
 
 class ToolsScreen extends StatefulWidget {
-  const ToolsScreen({super.key, required this.recentResults, required this.onResult, required this.onOpenMarket});
+  const ToolsScreen({
+    super.key,
+    required this.recentResults,
+    required this.onResult,
+    required this.onOpenMarket,
+    this.activityStore,
+    this.onActivity,
+  });
 
   final List<ToolRunResult> recentResults;
   final ValueChanged<ToolRunResult> onResult;
   final VoidCallback onOpenMarket;
+  final ActivityHistoryStore? activityStore;
+  final void Function(ActivityEvent event)? onActivity;
 
   @override
   State<ToolsScreen> createState() => _ToolsScreenState();
@@ -1566,7 +1983,11 @@ class _ToolsScreenState extends State<ToolsScreen> {
             ),
             if (_activeView == _ToolsView.assessment) ...[
               const SizedBox(height: 10),
-              AssessmentRunner(onResult: widget.onResult),
+              AssessmentRunner(
+                onResult: widget.onResult,
+                activityStore: widget.activityStore,
+                onActivity: widget.onActivity,
+              ),
             ] else ...[
               const SizedBox(height: 18),
               Text(context.tr('KATALOG ALAT'), style: _eyebrow(context)),
@@ -1635,7 +2056,14 @@ class _ToolsScreenState extends State<ToolsScreen> {
                       ),
                       trailing: const Icon(Icons.chevron_right),
                       isThreeLine: true,
-                      onTap: () => _showToolRunner(context, tool, widget.recentResults, widget.onResult),
+                      onTap: () => _showToolRunner(
+                        context,
+                        tool,
+                        widget.recentResults,
+                        widget.onResult,
+                        activityStore: widget.activityStore,
+                        onActivity: widget.onActivity,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -2133,6 +2561,22 @@ Future<bool?> _confirmSaveResult(BuildContext context) => showDialog<bool>(
       ),
     );
 
+Future<void> _confirmClearActivity(BuildContext context, Future<void> Function()? onClear) async {
+  if (onClear == null) return;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(dialogContext.tr('Clear local activity?')),
+      content: Text(dialogContext.tr('This removes the local activity timeline only. Saved security reports are not deleted.')),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+        FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Clear activity'))),
+      ],
+    ),
+  );
+  if (confirmed == true) await onClear();
+}
+
 Future<void> _confirmClearSavedResults(BuildContext context, Future<void> Function() onClear) async {
   final confirmed = await showDialog<bool>(
     context: context,
@@ -2192,12 +2636,19 @@ Future<void> _showToolRunner(
   BuildContext context,
   ToolDefinition tool,
   List<ToolRunResult> recentResults,
-  ValueChanged<ToolRunResult> onResult,
-) async {
+  ValueChanged<ToolRunResult> onResult, {
+  ActivityHistoryStore? activityStore,
+  void Function(ActivityEvent event)? onActivity,
+}) async {
   final result = await showDialog<ToolRunResult>(
     context: context,
     barrierDismissible: false,
-    builder: (_) => ToolRunnerDialog(tool: tool, recentResults: recentResults),
+    builder: (_) => ToolRunnerDialog(
+      tool: tool,
+      recentResults: recentResults,
+      activityStore: activityStore,
+      onActivity: onActivity,
+    ),
   );
   if (result != null) onResult(result);
 }

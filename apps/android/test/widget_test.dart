@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
@@ -328,6 +329,91 @@ void main() {
     expect(find.byKey(const ValueKey('finding-card-0')), findsOneWidget);
     expect(find.text('Buka laporan sumber'), findsOneWidget);
     expect(find.textContaining('Jumlah indikator: 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('activity timeline filters by date, target, tool type and status', (tester) async {
+    final now = DateTime.now().toUtc();
+    final events = <ActivityEvent>[
+      ActivityEvent(
+        eventId: 'assessment-old',
+        kind: ActivityKind.assessment,
+        target: 'alpha.example',
+        status: ActivityStatus.completed,
+        startedAt: now.subtract(const Duration(days: 8)),
+        finishedAt: now.subtract(const Duration(days: 8)).add(const Duration(minutes: 2)),
+        summary: '2 checks completed, 0 failed, 0 cancelled.',
+        findingCount: 0,
+      ),
+      ActivityEvent(
+        eventId: 'dns-today',
+        kind: ActivityKind.tool,
+        toolId: 'dns_lookup',
+        target: 'alpha.example',
+        status: ActivityStatus.failed,
+        startedAt: now,
+        finishedAt: now.add(const Duration(seconds: 1)),
+        summary: 'The check failed before producing a report.',
+      ),
+      ActivityEvent(
+        eventId: 'http-today',
+        kind: ActivityKind.tool,
+        toolId: 'http_headers',
+        target: 'alpha.example',
+        status: ActivityStatus.completed,
+        startedAt: now.add(const Duration(seconds: 3)),
+        finishedAt: now.add(const Duration(seconds: 5)),
+        summary: 'Received HTTP 200 and inspected 2 response headers.',
+        findingCount: 1,
+      ),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: ReportsScreen(
+          recentResults: const [],
+          savedResults: const [],
+          savedHistoryLoaded: true,
+          storageBusy: false,
+          storageError: null,
+          onLoadSavedResults: () async {},
+          onClearResults: () {},
+          onClearSavedResults: () async {},
+          onSaveResult: (_) async => true,
+          activityEvents: events,
+          activityHistoryLoaded: true,
+          onLoadActivities: () async {},
+          onClearActivities: () async {},
+        ),
+      ),
+    ));
+
+    await tester.tap(find.text('Aktivitas'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-assessment-old')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-dns-today')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-http-today')), findsOneWidget);
+
+    await tester.tap(find.text('Hari ini'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-assessment-old')), findsNothing);
+    expect(find.byKey(const ValueKey('activity-dns-today')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-http-today')), findsOneWidget);
+
+    await tester.enterText(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Saring aktivitas berdasarkan target'), 'alpha');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pencarian DNS').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-dns-today')), findsOneWidget);
+    expect(find.byKey(const ValueKey('activity-http-today')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('activity-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Gagal').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-dns-today')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'activity_timeline.dart';
 import 'diagnostics.dart';
 import 'dart_security_tools_runtime.dart';
 import 'runtime_manager.dart';
@@ -16,6 +17,7 @@ class ToolInvocation {
     this.allowPrivateNetwork = false,
     this.priorResults = const [],
     this.cancellationToken,
+    this.parentActivityId,
   });
 
   final String toolId;
@@ -24,6 +26,7 @@ class ToolInvocation {
   final bool allowPrivateNetwork;
   final List<ToolRunResult> priorResults;
   final RuntimeCancellationToken? cancellationToken;
+  final String? parentActivityId;
 }
 
 class ToolOrchestrationException implements Exception {
@@ -59,7 +62,14 @@ class AssessmentExecution {
 /// The only dispatch boundary for model- or UI-originated tool requests.
 /// It accepts typed registry IDs only: no free-form shell or executable input.
 class ToolOrchestrator {
-  ToolOrchestrator({SecurityTools? tools, RuntimeManager? runtimeManager}) : _tools = tools ?? SecurityTools() {
+  ToolOrchestrator({
+    SecurityTools? tools,
+    RuntimeManager? runtimeManager,
+    ActivityHistoryStore? activityStore,
+    void Function(ActivityEvent event)? onActivity,
+  })  : _tools = tools ?? SecurityTools(),
+        _activityStore = activityStore,
+        _onActivity = onActivity {
     _runtimeManager = runtimeManager != null
         ? Future.value(runtimeManager)
         : tools == null
@@ -72,6 +82,9 @@ class ToolOrchestrator {
       _sharedRuntimeManager ??= _createRuntimeManager(SecurityTools());
 
   final SecurityTools _tools;
+  final ActivityHistoryStore? _activityStore;
+  final void Function(ActivityEvent event)? _onActivity;
+  static int _activitySequence = 0;
   late final Future<RuntimeManager> _runtimeManager;
 
   static Future<RuntimeManager> _createRuntimeManager(SecurityTools tools) async {
@@ -86,6 +99,25 @@ class ToolOrchestrator {
   }
 
   Future<RuntimeManager> get runtimeManager async => _runtimeManager;
+
+  static String _newActivityId(String prefix) =>
+      '$prefix-${DateTime.now().toUtc().microsecondsSinceEpoch}-${++_activitySequence}';
+
+  static String _boundedActivitySummary(String value) => sanitizeActivitySummary(value);
+
+  Future<void> _emitActivity(ActivityEvent event) async {
+    final validated = event.sanitizedForStorage().validated();
+    try {
+      await _activityStore?.upsertActivity(validated);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+    }
+    try {
+      _onActivity?.call(validated);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+    }
+  }
 
   Future<ToolStatus> statusForTool(String toolId) async {
     final definition = toolById(toolId);
@@ -150,6 +182,17 @@ class ToolOrchestrator {
       input['priorResults'] = invocation.priorResults.map(encodeToolRunResult).toList(growable: false);
     }
 
+    final activityStartedAt = DateTime.now().toUtc();
+    final activity = ActivityEvent(
+      eventId: _newActivityId('tool'),
+      kind: ActivityKind.tool,
+      parentEventId: invocation.parentActivityId,
+      toolId: definition.id,
+      target: sanitizeActivityTarget(invocation.target),
+      status: ActivityStatus.started,
+      startedAt: activityStartedAt,
+    );
+    await _emitActivity(activity);
     try {
       final manager = await _runtimeManager;
       final discovery = _findDiscovery(await manager.discover(), runtimeId);
@@ -157,6 +200,7 @@ class ToolOrchestrator {
         final reason = discovery?.reason ?? 'No compatible runtime adapter is registered.';
         throw ToolOrchestrationException(reason);
       }
+      await _emitActivity(activity.copyWith(status: ActivityStatus.running));
       final execution = await manager.executeTool(
         runtimeId: runtimeId,
         toolId: definition.id,
@@ -176,11 +220,22 @@ class ToolOrchestrator {
           result.findings.any((finding) => finding.title.length > 512 || finding.recommendation.length > 2048)) {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result.');
       }
+      await _emitActivity(activity.copyWith(
+        status: ActivityStatus.completed,
+        finishedAt: DateTime.now().toUtc(),
+        summary: _boundedActivitySummary(result.summary),
+        findingCount: result.findings.length,
+        sourceResultKey: activityResultKey(result.toolId, result.target, result.completedAt),
+      ));
       return result;
     } on Exception catch (error, stack) {
-      if (error is RuntimeExecutionCancelled || invocation.cancellationToken?.isCancelled == true) {
-        throw const RuntimeExecutionCancelled();
-      }
+      final cancelled = error is RuntimeExecutionCancelled || invocation.cancellationToken?.isCancelled == true;
+      await _emitActivity(activity.copyWith(
+        status: cancelled ? ActivityStatus.cancelled : ActivityStatus.failed,
+        finishedAt: DateTime.now().toUtc(),
+        summary: cancelled ? 'Check cancelled.' : 'The check failed before producing a report.',
+      ));
+      if (cancelled) throw const RuntimeExecutionCancelled();
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
       if (error is RuntimeExecutionException) throw ToolExecutionException(error.message);
       rethrow;
@@ -203,6 +258,13 @@ class ToolOrchestrator {
     final startedAt = DateTime.now().toUtc();
     final outcomes = <AssessmentCheckOutcome>[];
     final results = <ToolRunResult>[];
+    final assessmentActivity = ActivityEvent(
+      eventId: _newActivityId('assessment'),
+      kind: ActivityKind.assessment,
+      target: sanitizeActivityTarget(target),
+      status: ActivityStatus.started,
+      startedAt: startedAt,
+    );
 
     Future<void> runOne(
       String toolId, {
@@ -220,6 +282,7 @@ class ToolOrchestrator {
           allowPrivateNetwork: allowPrivate,
           priorResults: prior,
           cancellationToken: cancellationToken,
+          parentActivityId: assessmentActivity.eventId,
         ));
         results.add(result);
         outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.completed, result: result);
@@ -234,29 +297,57 @@ class ToolOrchestrator {
       onOutcome?.call(outcome);
     }
 
-    for (final id in ids) {
-      if (cancellationToken?.isCancelled == true) break;
-      await runOne(
-        id,
-        checkTarget: target,
-        checkAuthorized: authorized,
-        allowPrivate: allowPrivateNetwork,
+    await _emitActivity(assessmentActivity);
+    await _emitActivity(assessmentActivity.copyWith(status: ActivityStatus.running));
+    try {
+      for (final id in ids) {
+        if (cancellationToken?.isCancelled == true) break;
+        await runOne(
+          id,
+          checkTarget: target,
+          checkAuthorized: authorized,
+          allowPrivate: allowPrivateNetwork,
+        );
+      }
+      if (includeResponseAnalysis && results.isNotEmpty && cancellationToken?.isCancelled != true) {
+        await runOne(
+          'response_analyzer',
+          checkTarget: results.first.target,
+          checkAuthorized: false,
+          prior: results.toList(growable: false),
+        );
+      }
+      final completedAt = DateTime.now().toUtc();
+      final completedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length;
+      final failedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length;
+      final cancelledCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length;
+      final cancelled = cancellationToken?.isCancelled == true || cancelledCount > 0;
+      final activityStatus = cancelled ? ActivityStatus.cancelled : failedCount > 0 ? ActivityStatus.failed : ActivityStatus.completed;
+      final findingCount = results.where((result) => result.toolId != 'response_analyzer').fold<int>(
+        0,
+        (sum, result) => sum + result.findings.length,
+      ).clamp(0, 128).toInt();
+      await _emitActivity(assessmentActivity.copyWith(
+        status: activityStatus,
+        finishedAt: completedAt,
+        summary: _boundedActivitySummary('$completedCount checks completed, $failedCount failed, $cancelledCount cancelled.'),
+        findingCount: findingCount,
+      ));
+      return AssessmentExecution(
+        target: results.isEmpty ? target : results.first.target,
+        startedAt: startedAt,
+        completedAt: completedAt,
+        outcomes: List.unmodifiable(outcomes),
       );
+    } catch (error) {
+      final cancelled = cancellationToken?.isCancelled == true || error is RuntimeExecutionCancelled;
+      await _emitActivity(assessmentActivity.copyWith(
+        status: cancelled ? ActivityStatus.cancelled : ActivityStatus.failed,
+        finishedAt: DateTime.now().toUtc(),
+        summary: cancelled ? 'Assessment cancelled.' : 'Assessment ended before completion.',
+      ));
+      rethrow;
     }
-    if (includeResponseAnalysis && results.isNotEmpty && cancellationToken?.isCancelled != true) {
-      await runOne(
-        'response_analyzer',
-        checkTarget: results.first.target,
-        checkAuthorized: false,
-        prior: results.toList(growable: false),
-      );
-    }
-    return AssessmentExecution(
-      target: results.isEmpty ? target : results.first.target,
-      startedAt: startedAt,
-      completedAt: DateTime.now().toUtc(),
-      outcomes: List.unmodifiable(outcomes),
-    );
   }
 
 }

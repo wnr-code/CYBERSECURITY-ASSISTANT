@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
@@ -534,9 +535,41 @@ void main() {
       expect(callbacks, hasLength(4));
     });
 
+    test('records assessment and actual tool lifecycle events without duplicate rows', () async {
+      final activityStore = MemoryActivityHistoryStore();
+      final observedTransitions = <ActivityEvent>[];
+      final orchestrator = ToolOrchestrator(
+        tools: _ScriptedSecurityTools(),
+        activityStore: activityStore,
+        onActivity: observedTransitions.add,
+      );
+      final assessment = await orchestrator.runAssessment(
+        target: 'https://example.com',
+        toolIds: const ['dns_lookup', 'tls_inspector', 'http_headers'],
+        authorized: true,
+      );
+      final events = await activityStore.loadActivities();
+
+      expect(events, hasLength(5)); // One assessment event plus four actual adapter invocations, including local analysis.
+      final assessmentEvent = events.singleWhere((event) => event.kind == ActivityKind.assessment);
+      expect(assessmentEvent.status, ActivityStatus.failed); // TLS fixture fails while other checks complete.
+      expect(assessmentEvent.findingCount, greaterThanOrEqualTo(0));
+      expect(assessmentEvent.target, 'example.com');
+      expect(events.where((event) => event.kind == ActivityKind.tool).map((event) => event.toolId).toSet(), {
+        'dns_lookup', 'tls_inspector', 'http_headers', 'response_analyzer',
+      });
+      expect(events.where((event) => event.kind == ActivityKind.tool).every((event) => event.parentEventId == assessmentEvent.eventId), isTrue);
+      expect(events.every((event) => !event.target.contains('secret') && !event.target.contains('/private')), isTrue);
+      expect(observedTransitions.any((event) => event.status == ActivityStatus.started), isTrue);
+      expect(observedTransitions.any((event) => event.status == ActivityStatus.running), isTrue);
+      expect(observedTransitions.any((event) => event.status == ActivityStatus.failed), isTrue);
+      expect(assessment.failedCount, 1);
+    });
+
     test('cancelling a running check stops the assessment before later checks and analysis', () async {
       final tools = _PendingDnsSecurityTools();
-      final orchestrator = ToolOrchestrator(tools: tools);
+      final activityStore = MemoryActivityHistoryStore();
+      final orchestrator = ToolOrchestrator(tools: tools, activityStore: activityStore);
       final cancellationToken = RuntimeCancellationToken();
       final outcomes = <AssessmentCheckOutcome>[];
       final assessmentFuture = orchestrator.runAssessment(
@@ -559,6 +592,10 @@ void main() {
       expect(tools.tlsCalls, 0);
       expect(tools.httpCalls, 0);
       expect(outcomes, hasLength(1));
+      final activityEvents = await activityStore.loadActivities();
+      expect(activityEvents, hasLength(2));
+      expect(activityEvents.where((event) => event.kind == ActivityKind.tool).single.status, ActivityStatus.cancelled);
+      expect(activityEvents.where((event) => event.kind == ActivityKind.assessment).single.status, ActivityStatus.cancelled);
       tools.pending.complete(ToolRunResult(
         toolId: 'dns_lookup',
         target: 'owned.example',
