@@ -284,6 +284,53 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('reports and findings are separate views with deduplicated source evidence', (tester) async {
+    final result = ToolRunResult(
+      toolId: 'http_headers',
+      target: 'owned.example',
+      summary: 'Received HTTP 200 and inspected 2 response headers.',
+      details: const ['HTTP 200', 'security headers inspected'],
+      findings: const [
+        SecurityFinding(
+          title: 'Content-Security-Policy header not observed',
+          severity: FindingSeverity.medium,
+          confidence: FindingConfidence.potential,
+          recommendation: 'Review whether a Content-Security-Policy is appropriate for this application.',
+        ),
+      ],
+      completedAt: DateTime.utc(2026, 11, 23),
+      authorizationConfirmed: true,
+    );
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: ReportsScreen(
+          recentResults: [result],
+          savedResults: [result],
+          savedHistoryLoaded: true,
+          storageBusy: false,
+          storageError: null,
+          onLoadSavedResults: () async {},
+          onClearResults: () {},
+          onClearSavedResults: () async {},
+          onSaveResult: (_) async => true,
+        ),
+      ),
+    ));
+
+    expect(find.text('Laporan dan riwayat'), findsOneWidget);
+    expect(find.text('Temuan'), findsOneWidget);
+    await tester.tap(find.text('Temuan'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('finding-card-0')), findsOneWidget);
+    expect(find.text('Buka laporan sumber'), findsOneWidget);
+    expect(find.textContaining('Jumlah indikator: 1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('branded splash hands off to dashboard while SQLite history is pending', (tester) async {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);

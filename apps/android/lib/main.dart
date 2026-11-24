@@ -883,6 +883,14 @@ class _ReportEntry {
 }
 
 enum _ReportFilter { all, session, saved }
+enum _ReportContent { reports, findings }
+
+class _FindingEntry {
+  const _FindingEntry({required this.result, required this.finding, required this.saved});
+  final ToolRunResult result;
+  final SecurityFinding finding;
+  final bool saved;
+}
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({
@@ -914,6 +922,7 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   _ReportFilter _filter = _ReportFilter.all;
+  _ReportContent _content = _ReportContent.reports;
 
   @override
   Widget build(BuildContext context) {
@@ -921,6 +930,25 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (_filter != _ReportFilter.saved) for (final result in widget.recentResults) _ReportEntry(result: result, saved: false),
       if (_filter != _ReportFilter.session) for (final result in widget.savedResults) _ReportEntry(result: result, saved: true),
     ];
+    final uniqueSourceResults = <String, _ReportEntry>{};
+    for (final entry in rows) {
+      if (entry.result.toolId == 'response_analyzer') continue;
+      final result = entry.result;
+      final key = '${result.toolId}|${result.target}|${result.completedAt.toUtc().microsecondsSinceEpoch}';
+      final previous = uniqueSourceResults[key];
+      if (previous == null || entry.saved) uniqueSourceResults[key] = entry;
+    }
+    final findings = <_FindingEntry>[
+      for (final entry in uniqueSourceResults.values)
+        for (final finding in entry.result.findings) _FindingEntry(result: entry.result, finding: finding, saved: entry.saved),
+    ]..sort((a, b) {
+        final severityOrder = a.finding.severity.index.compareTo(b.finding.severity.index);
+        return severityOrder != 0 ? severityOrder : b.result.completedAt.compareTo(a.result.completedAt);
+      });
+    final findingSourceCount = findings
+        .map((entry) => '${entry.result.toolId}|${entry.result.target}|${entry.result.completedAt.toUtc().microsecondsSinceEpoch}')
+        .toSet()
+        .length;
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 960),
@@ -932,6 +960,30 @@ class _ReportsScreenState extends State<ReportsScreen> {
           Text(context.tr('Review current session checks and results saved in private on-device SQLite.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
           const SizedBox(height: 16),
+          SegmentedButton<_ReportContent>(
+            segments: [
+              ButtonSegment(
+                value: _ReportContent.reports,
+                icon: const Icon(Icons.article_outlined),
+                label: Text(context.tr('Reports')),
+              ),
+              ButtonSegment(
+                value: _ReportContent.findings,
+                icon: const Icon(Icons.rule_folder_outlined),
+                label: Text(context.tr('Findings')),
+              ),
+            ],
+            selected: {_content},
+            onSelectionChanged: (selection) => setState(() => _content = selection.first),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            context.tr(_content == _ReportContent.reports
+                ? 'Reports show complete check results and evidence.'
+                : 'Findings are indicators from checks, not proof that a system is vulnerable.'),
+            style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12),
+          ),
+          const SizedBox(height: 14),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final filter in _ReportFilter.values)
               ChoiceChip(
@@ -945,7 +997,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
           ]),
           const SizedBox(height: 12),
-          if (_filter != _ReportFilter.saved && widget.recentResults.isNotEmpty)
+          if (_content == _ReportContent.reports && _filter != _ReportFilter.saved && widget.recentResults.isNotEmpty)
             Wrap(spacing: 8, runSpacing: 8, children: [
               OutlinedButton.icon(
                 onPressed: () => _confirmCopyReport(context, widget.recentResults),
@@ -983,15 +1035,23 @@ class _ReportsScreenState extends State<ReportsScreen> {
             Text(_translateStorageError(context, widget.storageError!), style: const TextStyle(color: Colors.orangeAccent)),
           ],
           const SizedBox(height: 8),
-          if (widget.storageBusy && rows.isEmpty)
+          if (widget.storageBusy && rows.isEmpty && _filter != _ReportFilter.session)
             const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-          else if (rows.isEmpty)
+          else if (_content == _ReportContent.reports && rows.isEmpty)
             _EmptyState(
               icon: Icons.article_outlined,
               title: context.tr('No reports in this view'),
               detail: context.tr('Run a local check, or save a result from its details to keep it after closing the app.'),
             )
-          else
+          else if (_content == _ReportContent.findings && findings.isEmpty)
+            _EmptyState(
+              icon: Icons.rule_folder_outlined,
+              title: context.tr('No findings in this view'),
+              detail: rows.isEmpty
+                  ? context.tr('Run or load checks to review their findings here.')
+                  : context.tr('No indicators were produced by these checks. This does not prove that the target is secure.'),
+            )
+          else if (_content == _ReportContent.reports)
             for (final entry in rows) ...[
               _ResultCard(
                 result: entry.result,
@@ -1003,7 +1063,22 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
               ),
               const SizedBox(height: 8),
+            ]
+          else ...[
+            _FindingSummary(count: findings.length, reportCount: findingSourceCount),
+            for (var index = 0; index < findings.length; index++) ...[
+              _FindingCard(
+                key: ValueKey('finding-card-$index'),
+                entry: findings[index],
+                onTap: () => _showResultDetails(
+                  context,
+                  findings[index].result,
+                  onSaveResult: findings[index].saved ? null : widget.onSaveResult,
+                ),
+              ),
+              const SizedBox(height: 8),
             ],
+          ],
           const SizedBox(height: 16),
           Text(context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 12, height: 1.45)),
@@ -1050,6 +1125,94 @@ class _ResultCard extends StatelessWidget {
         ),
       );
 }
+
+class _FindingSummary extends StatelessWidget {
+  const _FindingSummary({required this.count, required this.reportCount});
+
+  final int count;
+  final int reportCount;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Icon(Icons.fact_check_outlined, color: _mint),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${context.tr('Total indicators')}: $count · ${context.tr('Source reports')}: $reportCount',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text(context.tr('Indicators are heuristic signals. Review the source report and evidence before drawing conclusions.'),
+                  style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12)),
+            ])),
+          ]),
+        ),
+      );
+}
+
+class _FindingCard extends StatelessWidget {
+  const _FindingCard({super.key, required this.entry, required this.onTap});
+
+  final _FindingEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final severity = entry.finding.severity;
+    final color = _findingColor(severity);
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              _FindingTag(label: _severityName(severity, context), color: color),
+              _FindingTag(label: context.tr(entry.finding.confidence.name), color: const Color(0xFF98A7BD)),
+              _FindingTag(label: context.tr(entry.saved ? 'Saved report' : 'Session result'), color: _mint),
+            ]),
+            const SizedBox(height: 10),
+            Text(_displayFindingTitle(entry.finding.title, context), style: const TextStyle(fontWeight: FontWeight.w700, height: 1.3)),
+            const SizedBox(height: 6),
+            Text('${entry.result.target} · ${_toolDisplayName(entry.result.toolId, context)} · ${entry.result.completedAt.toLocal()}',
+                style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11, height: 1.35)),
+            const SizedBox(height: 8),
+            Text(context.tr(entry.finding.recommendation), style: TextStyle(color: Colors.white.withValues(alpha: .78), height: 1.4)),
+            const SizedBox(height: 8),
+            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+              Text(context.tr('Open source report'), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_forward_rounded, size: 16, color: Theme.of(context).colorScheme.primary),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _FindingTag extends StatelessWidget {
+  const _FindingTag({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(24)),
+        child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+      );
+}
+
+Color _findingColor(FindingSeverity severity) => switch (severity) {
+      FindingSeverity.high => const Color(0xFFFF7070),
+      FindingSeverity.medium => Colors.orangeAccent,
+      FindingSeverity.low => const Color(0xFF71B7FF),
+      FindingSeverity.info => _mint,
+    };
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
