@@ -319,6 +319,7 @@ void main() {
   });
 
   testWidgets('reports remain separate while findings use independent records and source references', (tester) async {
+    _useTallViewport(tester);
     final result = ToolRunResult(
       toolId: 'http_headers',
       target: 'owned.example',
