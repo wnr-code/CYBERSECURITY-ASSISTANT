@@ -65,11 +65,9 @@ class ToolOrchestrator {
   ToolOrchestrator({
     SecurityTools? tools,
     RuntimeManager? runtimeManager,
-    ActivityHistoryStore? activityStore,
-    void Function(ActivityEvent event)? onActivity,
-  })  : _tools = tools ?? SecurityTools(),
-        _activityStore = activityStore,
-        _onActivity = onActivity {
+    this.activityStore,
+    this.onActivity,
+  })  : _tools = tools ?? SecurityTools() {
     _runtimeManager = runtimeManager != null
         ? Future.value(runtimeManager)
         : tools == null
@@ -82,8 +80,8 @@ class ToolOrchestrator {
       _sharedRuntimeManager ??= _createRuntimeManager(SecurityTools());
 
   final SecurityTools _tools;
-  final ActivityHistoryStore? _activityStore;
-  final void Function(ActivityEvent event)? _onActivity;
+  final ActivityHistoryStore? activityStore;
+  final void Function(ActivityEvent event)? onActivity;
   static int _activitySequence = 0;
   late final Future<RuntimeManager> _runtimeManager;
 
@@ -108,12 +106,12 @@ class ToolOrchestrator {
   Future<void> _emitActivity(ActivityEvent event) async {
     final validated = event.sanitizedForStorage().validated();
     try {
-      await _activityStore?.upsertActivity(validated);
+      await activityStore?.upsertActivity(validated);
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
     }
     try {
-      _onActivity?.call(validated);
+      onActivity?.call(validated);
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
     }

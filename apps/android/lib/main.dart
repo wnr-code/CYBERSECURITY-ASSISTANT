@@ -351,7 +351,7 @@ class _MainShellState extends State<MainShell> {
       ),
     );
     if (openSource == true && sourceResult != null && mounted) {
-      _showResultDetails(context, sourceResult!, onSaveResult: _saveResultLocally);
+      _showResultDetails(context, sourceResult, onSaveResult: _saveResultLocally);
     }
   }
 
@@ -365,10 +365,12 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _loadActivityEvents() async {
-    if (mounted) setState(() {
-      _activityBusy = true;
-      _activityError = null;
-    });
+    if (mounted) {
+      setState(() {
+        _activityBusy = true;
+        _activityError = null;
+      });
+    }
     try {
       final loaded = await _activityStore.loadActivities(limit: 500);
       if (!mounted) return;
@@ -390,16 +392,20 @@ class _MainShellState extends State<MainShell> {
   }
 
   Future<void> _clearActivityEvents() async {
-    if (mounted) setState(() {
-      _activityBusy = true;
-      _activityError = null;
-    });
+    if (mounted) {
+      setState(() {
+        _activityBusy = true;
+        _activityError = null;
+      });
+    }
     try {
       await _activityStore.clearActivities();
-      if (mounted) setState(() {
-        _activityEvents = [];
-        _activityHistoryLoaded = true;
-      });
+      if (mounted) {
+        setState(() {
+          _activityEvents = [];
+          _activityHistoryLoaded = true;
+        });
+      }
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       if (mounted) setState(() => _activityError = 'Could not clear local activity history.');
