@@ -240,7 +240,7 @@ class SecurityTools {
         summary: 'Received HTTP $statusCode and inspected ${headers.length} response headers.',
         details: [
           'Request: GET ${target.uri.path} (redirects not followed).',
-          'Response body: ${bodyCapture.bytes.length} byte(s) inspected${bodyCapture.truncated ? ' (truncated at ${maxApiResponseBytes} bytes)' : ''}.',
+          'Response body: ${bodyCapture.bytes.length} byte(s) inspected${bodyCapture.truncated ? ' (truncated at $maxApiResponseBytes bytes)' : ''}.',
           'Content-Type: ${contentType == null ? 'not provided' : redactResponseHeader(HttpHeaders.contentTypeHeader, contentType)}',
           ...bodyAnalysis.evidence,
           for (final entry in headers.entries)
@@ -397,7 +397,7 @@ class SecurityTools {
       visit(decoded, r'$');
       if (seenSensitivePaths.isEmpty) evidence.add('No sensitive-looking JSON field names were observed by the local rules.');
     }
-    if (truncated) evidence.add('Only the first ${maxApiResponseBytes} bytes were inspected; the body was truncated and findings may be incomplete.');
+    if (truncated) evidence.add('Only the first $maxApiResponseBytes bytes were inspected; the body was truncated and findings may be incomplete.');
     if (findings.isEmpty && evidence.isEmpty) evidence.add('No configured response indicators were observed.');
     return ApiResponseAnalysis(findings: findings, evidence: evidence);
   }

@@ -69,6 +69,7 @@ jobs:
 
       - name: Cold start on Android 12+ emulator (API 35)
         id: cold_api35
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
@@ -84,6 +85,7 @@ jobs:
 
       - name: Cold start on legacy Android emulator (API 30)
         id: cold_api30
+        if: github.event_name == 'workflow_dispatch'
         continue-on-error: true
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
@@ -98,7 +100,7 @@ jobs:
           script: python3 tool/capture_android_cold_start.py --apk build/app/outputs/flutter-apk/app-debug.apk --output-dir build/cold-start/api-30 --api-level 30
 
       - name: Upload cold-start screenshots, timing, and logcat
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-cold-start-captures
@@ -107,7 +109,7 @@ jobs:
           retention-days: 14
 
       - name: Require both emulator cold-start checks to pass
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         env:
           API35_RESULT: ${{ steps.cold_api35.outcome }}
           API30_RESULT: ${{ steps.cold_api30.outcome }}
