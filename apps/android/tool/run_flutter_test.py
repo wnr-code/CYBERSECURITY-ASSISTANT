@@ -32,7 +32,9 @@ def _failure_messages(exit_code: int, output: str) -> list[str]:
     suffix = "\n… failure output truncated …"
     available = MAX_FAILURE_OUTPUT_CHARS - len(prefix)
     if len(clean_output) > available:
-        clean_output = clean_output[: available - len(suffix)] + suffix
+        keep_head = max(1, (available - len(suffix)) // 2)
+        keep_tail = max(1, available - len(suffix) - keep_head)
+        clean_output = clean_output[:keep_head] + suffix + clean_output[-keep_tail:]
 
     chunks = [
         clean_output[start : start + ANNOTATION_CHUNK_CHARS]
