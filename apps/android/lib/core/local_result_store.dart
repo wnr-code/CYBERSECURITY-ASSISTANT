@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart' as sqflite;
 
 import 'activity_timeline.dart';
+import 'security_findings.dart';
 import 'security_tools.dart';
 import 'tool_result_codec.dart';
 
@@ -14,7 +17,7 @@ abstract interface class ResultHistoryStore {
 
 /// SQLite-backed local history for explicitly saved, completed tool checks.
 /// This stores no provider API keys and never syncs data to a remote service.
-class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore {
+class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, FindingRepository {
   LocalResultStore({
     sqflite.DatabaseFactory? databaseFactory,
     Future<String> Function()? databasePathProvider,
@@ -26,7 +29,8 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore {
 
   static const tableName = 'scan_results';
   static const activityTableName = 'activity_events';
-  static const _databaseVersion = 2;
+  static const findingTableName = 'security_findings';
+  static const _databaseVersion = 3;
   final sqflite.DatabaseFactory? _databaseFactoryOverride;
   sqflite.DatabaseFactory get _databaseFactory => _databaseFactoryOverride ?? sqflite.databaseFactory;
   final Future<String> Function() _databasePathProvider;
@@ -63,6 +67,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore {
         onCreate: (db, version) async {
           await _migrate(db, 1);
           await _migrate(db, 2);
+          await _migrate(db, 3);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           for (var version = oldVersion + 1; version <= newVersion; version++) {
@@ -107,6 +112,34 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore {
         await db.execute('CREATE INDEX activity_events_started_at ON $activityTableName(started_at DESC)');
         await db.execute('CREATE INDEX activity_events_target ON $activityTableName(target)');
         await db.execute('CREATE INDEX activity_events_status ON $activityTableName(status)');
+      case 3:
+        await db.execute('''
+          CREATE TABLE $findingTableName (
+            finding_id TEXT PRIMARY KEY,
+            fingerprint TEXT NOT NULL UNIQUE,
+            title TEXT NOT NULL,
+            category TEXT NOT NULL,
+            target TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            status TEXT NOT NULL,
+            description TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            source_report_keys_json TEXT NOT NULL,
+            recommendation TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            source_tool TEXT,
+            assessment_id TEXT
+          )
+        ''');
+        await db.execute('CREATE INDEX security_findings_last_seen ON $findingTableName(last_seen DESC)');
+        await db.execute('CREATE INDEX security_findings_target ON $findingTableName(target)');
+        await db.execute('CREATE INDEX security_findings_severity ON $findingTableName(severity)');
+        await db.execute('CREATE INDEX security_findings_status ON $findingTableName(status)');
+        await db.execute('CREATE INDEX security_findings_category ON $findingTableName(category)');
       default:
         throw StateError('No safe SQLite migration is registered for schema version $version.');
     }
@@ -247,6 +280,166 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore {
   Future<void> clearActivities() async {
     final db = await _open();
     await db.delete(activityTableName);
+  }
+
+  @override
+  Future<List<FindingRecord>> loadFindings({
+    int limit = 500,
+    FindingSeverity? severity,
+    FindingStatus? status,
+    String? category,
+    String? target,
+    String? query,
+  }) async {
+    final clauses = <String>[];
+    final args = <Object?>[];
+    if (severity != null) {
+      clauses.add('severity = ?');
+      args.add(severity.name);
+    }
+    if (status != null) {
+      clauses.add('status = ?');
+      args.add(status.name);
+    }
+    final normalizedCategory = category?.trim();
+    if (normalizedCategory != null && normalizedCategory.isNotEmpty) {
+      clauses.add('category LIKE ? COLLATE NOCASE');
+      args.add('%$normalizedCategory%');
+    }
+    final normalizedTarget = target?.trim();
+    if (normalizedTarget != null && normalizedTarget.isNotEmpty) {
+      clauses.add('target LIKE ? COLLATE NOCASE');
+      args.add('%$normalizedTarget%');
+    }
+    final normalizedQuery = query?.trim();
+    if (normalizedQuery != null && normalizedQuery.isNotEmpty) {
+      clauses.add('(title LIKE ? COLLATE NOCASE OR category LIKE ? COLLATE NOCASE OR target LIKE ? COLLATE NOCASE OR description LIKE ? COLLATE NOCASE OR recommendation LIKE ? COLLATE NOCASE OR evidence_json LIKE ? COLLATE NOCASE)');
+      args.addAll(List<Object?>.filled(6, '%$normalizedQuery%'));
+    }
+    final db = await _open();
+    final rows = await db.query(
+      findingTableName,
+      where: clauses.isEmpty ? null : clauses.join(' AND '),
+      whereArgs: args,
+      orderBy: 'last_seen DESC, finding_id ASC',
+      limit: limit.clamp(1, 5000).toInt(),
+    );
+    return List.unmodifiable(rows.map(_findingFromRow));
+  }
+
+  @override
+  Future<List<FindingRecord>> saveObservedFindings(Iterable<FindingRecord> findings) async {
+    final candidates = findings.map((finding) => finding.sanitized().validated()).toList(growable: false);
+    if (candidates.isEmpty) return const [];
+    final db = await _open();
+    return db.transaction((transaction) async {
+      final saved = <FindingRecord>[];
+      for (final incoming in candidates) {
+        final existingRows = await transaction.query(
+          findingTableName,
+          where: 'fingerprint = ?',
+          whereArgs: [incoming.fingerprint],
+          limit: 1,
+        );
+        final existing = existingRows.isEmpty ? null : _findingFromRow(existingRows.single);
+        final merged = existing == null
+            ? incoming
+            : existing.copyWith(
+                lastSeen: incoming.lastSeen.isAfter(existing.lastSeen) ? incoming.lastSeen : existing.lastSeen,
+                updatedAt: incoming.updatedAt.isAfter(existing.updatedAt) ? incoming.updatedAt : existing.updatedAt,
+                sourceReportKeys: {...existing.sourceReportKeys, ...incoming.sourceReportKeys}.take(50).toList(),
+                sourceTool: incoming.sourceTool ?? existing.sourceTool,
+                assessmentId: incoming.assessmentId ?? existing.assessmentId,
+                title: incoming.title,
+                category: incoming.category,
+                target: incoming.target,
+                severity: incoming.severity,
+                confidence: incoming.confidence,
+                description: incoming.description,
+                evidence: incoming.evidence,
+                recommendation: incoming.recommendation,
+              ).validated();
+        final values = _findingValues(merged);
+        if (existing == null) {
+          await transaction.insert(findingTableName, values);
+        } else {
+          await transaction.update(findingTableName, values, where: 'finding_id = ?', whereArgs: [existing.findingId]);
+        }
+        saved.add(merged);
+      }
+      return List.unmodifiable(saved);
+    });
+  }
+
+  @override
+  Future<FindingRecord> updateFindingStatus(String findingId, FindingStatus status) async {
+    final db = await _open();
+    return db.transaction((transaction) async {
+      final rows = await transaction.query(findingTableName, where: 'finding_id = ?', whereArgs: [findingId], limit: 1);
+      if (rows.isEmpty) throw StateError('Finding was not found.');
+      final current = _findingFromRow(rows.single);
+      final updated = current.copyWith(status: status, updatedAt: DateTime.now().toUtc()).validated();
+      await transaction.update(findingTableName, _findingValues(updated), where: 'finding_id = ?', whereArgs: [findingId]);
+      return updated;
+    });
+  }
+
+  @override
+  Future<void> clearFindings() async {
+    final db = await _open();
+    await db.delete(findingTableName);
+  }
+
+  Map<String, Object?> _findingValues(FindingRecord finding) => {
+        'finding_id': finding.findingId,
+        'fingerprint': finding.fingerprint,
+        'title': finding.title,
+        'category': finding.category,
+        'target': finding.target,
+        'severity': finding.severity.name,
+        'confidence': finding.confidence.name,
+        'status': finding.status.name,
+        'description': finding.description,
+        'evidence_json': jsonEncode(finding.evidence),
+        'source_report_keys_json': jsonEncode(finding.sourceReportKeys),
+        'recommendation': finding.recommendation,
+        'first_seen': activityTimestamp(finding.firstSeen),
+        'last_seen': activityTimestamp(finding.lastSeen),
+        'created_at': activityTimestamp(finding.createdAt),
+        'updated_at': activityTimestamp(finding.updatedAt),
+        'source_tool': finding.sourceTool,
+        'assessment_id': finding.assessmentId,
+      };
+
+  FindingRecord _findingFromRow(Map<String, Object?> row) {
+    List<String> decodeStringList(String key) {
+      final value = jsonDecode(row[key] as String);
+      if (value is! List || value.any((entry) => entry is! String)) {
+        throw FormatException('Stored finding field "$key" is invalid.');
+      }
+      return value.cast<String>();
+    }
+
+    return FindingRecord(
+      findingId: row['finding_id'] as String,
+      fingerprint: row['fingerprint'] as String,
+      title: row['title'] as String,
+      category: row['category'] as String,
+      target: row['target'] as String,
+      severity: FindingSeverity.values.byName(row['severity'] as String),
+      confidence: FindingConfidence.values.byName(row['confidence'] as String),
+      status: FindingStatus.values.byName(row['status'] as String),
+      description: row['description'] as String,
+      evidence: decodeStringList('evidence_json'),
+      sourceReportKeys: decodeStringList('source_report_keys_json'),
+      recommendation: row['recommendation'] as String,
+      firstSeen: DateTime.parse(row['first_seen'] as String).toUtc(),
+      lastSeen: DateTime.parse(row['last_seen'] as String).toUtc(),
+      createdAt: DateTime.parse(row['created_at'] as String).toUtc(),
+      updatedAt: DateTime.parse(row['updated_at'] as String).toUtc(),
+      sourceTool: row['source_tool'] as String?,
+      assessmentId: row['assessment_id'] as String?,
+    ).validated();
   }
 
   @override

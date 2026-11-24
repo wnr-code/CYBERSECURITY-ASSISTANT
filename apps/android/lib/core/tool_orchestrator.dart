@@ -5,6 +5,7 @@ import 'activity_timeline.dart';
 import 'diagnostics.dart';
 import 'dart_security_tools_runtime.dart';
 import 'runtime_manager.dart';
+import 'security_findings.dart';
 import 'security_tools.dart';
 import 'tool_registry.dart';
 import 'tool_result_codec.dart';
@@ -67,6 +68,8 @@ class ToolOrchestrator {
     RuntimeManager? runtimeManager,
     this.activityStore,
     this.onActivity,
+    this.findingRepository,
+    this.onFindings,
   })  : _tools = tools ?? SecurityTools() {
     _runtimeManager = runtimeManager != null
         ? Future.value(runtimeManager)
@@ -82,6 +85,8 @@ class ToolOrchestrator {
   final SecurityTools _tools;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
+  final FindingRepository? findingRepository;
+  final void Function(List<FindingRecord> findings)? onFindings;
   static int _activitySequence = 0;
   late final Future<RuntimeManager> _runtimeManager;
 
@@ -112,6 +117,32 @@ class ToolOrchestrator {
     }
     try {
       onActivity?.call(validated);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+    }
+  }
+
+  Future<void> _recordFindings(ToolRunResult result, {String? assessmentId}) async {
+    if (result.toolId == 'response_analyzer' || result.findings.isEmpty || findingRepository == null && onFindings == null) return;
+    final sourceReportKey = activityResultKey(result.toolId, result.target, result.completedAt);
+    final records = [
+      for (final finding in result.findings)
+        findingRecordFromTool(
+          finding: finding,
+          result: result,
+          sourceReportKey: sourceReportKey,
+          assessmentId: assessmentId,
+        ),
+    ];
+    var saved = records;
+    try {
+      final repository = findingRepository;
+      if (repository != null) saved = await repository.saveObservedFindings(records);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+    }
+    try {
+      onFindings?.call(List.unmodifiable(saved));
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
     }
@@ -218,6 +249,7 @@ class ToolOrchestrator {
           result.findings.any((finding) => finding.title.length > 512 || finding.recommendation.length > 2048)) {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result.');
       }
+      await _recordFindings(result, assessmentId: invocation.parentActivityId);
       await _emitActivity(activity.copyWith(
         status: ActivityStatus.completed,
         finishedAt: DateTime.now().toUtc(),

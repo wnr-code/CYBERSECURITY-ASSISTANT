@@ -13,6 +13,7 @@ import 'core/local_result_store.dart';
 import 'core/package_manager.dart';
 import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
+import 'core/security_findings.dart';
 import 'core/security_tools.dart';
 import 'core/startup_trace.dart';
 import 'core/tool_orchestrator.dart';
@@ -179,6 +180,7 @@ class MainShell extends StatefulWidget {
     super.key,
     this.resultStore,
     this.activityStore,
+    this.findingRepository,
     this.initialSavedResults,
     this.initialStorageError,
     this.locale = const Locale('id'),
@@ -187,6 +189,7 @@ class MainShell extends StatefulWidget {
 
   final ResultHistoryStore? resultStore;
   final ActivityHistoryStore? activityStore;
+  final FindingRepository? findingRepository;
   final List<ToolRunResult>? initialSavedResults;
   final String? initialStorageError;
   final Locale locale;
@@ -201,7 +204,12 @@ class _MainShellState extends State<MainShell> {
   final List<ToolRunResult> _recentResults = [];
   late final ResultHistoryStore _resultStore;
   late final ActivityHistoryStore _activityStore;
+  late final FindingRepository _findingRepository;
   late final MarketPackageManager _marketPackageManager;
+  List<FindingRecord> _findings = [];
+  bool _findingsLoaded = false;
+  bool _findingsBusy = false;
+  String? _findingsError;
   List<ActivityEvent> _activityEvents = [];
   bool _activityHistoryLoaded = false;
   bool _activityBusy = false;
@@ -218,6 +226,8 @@ class _MainShellState extends State<MainShell> {
     _resultStore = widget.resultStore ?? LocalResultStore();
     _activityStore = widget.activityStore ??
         (_resultStore is ActivityHistoryStore ? _resultStore as ActivityHistoryStore : MemoryActivityHistoryStore());
+    _findingRepository = widget.findingRepository ??
+        (_resultStore is FindingRepository ? _resultStore as FindingRepository : MemoryFindingRepository());
     _marketPackageManager = MarketPackageManager.bundled();
     unawaited(_synchronizeMarketRuntimeAvailability());
     final startupResults = widget.initialSavedResults;
@@ -231,6 +241,7 @@ class _MainShellState extends State<MainShell> {
       StartupTrace.mark('dashboard-first-frame');
       if (startupResults == null) unawaited(_loadSavedResults());
       unawaited(_loadActivityEvents());
+      unawaited(_loadFindings());
     });
   }
 
@@ -362,6 +373,116 @@ class _MainShellState extends State<MainShell> {
     eventsById[event.eventId] = event;
     final events = eventsById.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
     if (mounted) setState(() => _activityEvents = events.take(500).toList(growable: false));
+  }
+
+  void _acceptFindings(List<FindingRecord> findings) {
+    final byId = {for (final finding in _findings) finding.findingId: finding};
+    for (final finding in findings) {
+      byId[finding.findingId] = finding;
+    }
+    final ordered = byId.values.toList()..sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+    if (mounted) {
+      setState(() {
+        _findings = ordered.take(500).toList(growable: false);
+        _findingsLoaded = true;
+      });
+    }
+  }
+
+  Future<void> _loadFindings() async {
+    if (mounted) {
+      setState(() {
+        _findingsBusy = true;
+        _findingsError = null;
+      });
+    }
+    try {
+      final loaded = await _findingRepository.loadFindings(limit: 500);
+      if (!mounted) return;
+      final byId = {for (final finding in loaded) finding.findingId: finding};
+      for (final finding in _findings) {
+        byId[finding.findingId] = finding;
+      }
+      final ordered = byId.values.toList()..sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+      setState(() {
+        _findings = ordered.take(500).toList(growable: false);
+        _findingsLoaded = true;
+      });
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      if (mounted) setState(() => _findingsError = 'Could not load local security findings.');
+    } finally {
+      if (mounted) setState(() => _findingsBusy = false);
+    }
+  }
+
+  Future<void> _updateFindingStatus(String findingId, FindingStatus status) async {
+    try {
+      final updated = await _findingRepository.updateFindingStatus(findingId, status);
+      _acceptFindings([updated]);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      if (mounted) {
+        setState(() => _findingsError = 'Could not update finding status.');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Could not update finding status.'))));
+      }
+    }
+  }
+
+  Future<void> _openFindingActivity(String assessmentId) async {
+    if (_selectedIndex != 2 && mounted) setState(() => _selectedIndex = 2);
+    ActivityEvent? assessmentEvent;
+    for (final event in _activityEvents) {
+      if (event.eventId == assessmentId) {
+        assessmentEvent = event;
+        break;
+      }
+    }
+    if (assessmentEvent == null) {
+      try {
+        final loaded = await _activityStore.loadActivities(limit: 500);
+        for (final event in loaded) {
+          if (event.eventId == assessmentId) {
+            assessmentEvent = event;
+            break;
+          }
+        }
+        if (mounted) {
+          final byId = {for (final event in _activityEvents) event.eventId: event, for (final event in loaded) event.eventId: event};
+          setState(() => _activityEvents = byId.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt)));
+        }
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      }
+    }
+    if (assessmentEvent != null && mounted) await _openActivitySource(assessmentEvent);
+  }
+
+  Future<void> _openFindingReport(String sourceReportKey) async {
+    ToolRunResult? result;
+    for (final candidate in [..._recentResults, ..._savedResults]) {
+      if (activityResultKey(candidate.toolId, candidate.target, candidate.completedAt) == sourceReportKey) {
+        result = candidate;
+        break;
+      }
+    }
+    if (result == null) {
+      try {
+        for (final candidate in await _resultStore.loadRecent(limit: 500)) {
+          if (activityResultKey(candidate.toolId, candidate.target, candidate.completedAt) == sourceReportKey) {
+            result = candidate;
+            break;
+          }
+        }
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      }
+    }
+    if (result != null && mounted) {
+      _showResultDetails(context, result, onSaveResult: _saveResultLocally);
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Source report is not available on this device.'))));
+    }
   }
 
   Future<void> _loadActivityEvents() async {
@@ -521,6 +642,8 @@ class _MainShellState extends State<MainShell> {
         onOpenMarket: _openMarket,
         activityStore: _activityStore,
         onActivity: _acceptActivity,
+        findingRepository: _findingRepository,
+        onFindings: _acceptFindings,
       ),
       ReportsScreen(
         recentResults: recentResults,
@@ -539,6 +662,14 @@ class _MainShellState extends State<MainShell> {
         onLoadActivities: _loadActivityEvents,
         onClearActivities: _clearActivityEvents,
         onOpenActivitySource: _openActivitySource,
+        findings: List.unmodifiable(_findings),
+        findingsLoaded: _findingsLoaded,
+        findingsBusy: _findingsBusy,
+        findingsError: _findingsError,
+        onLoadFindings: _loadFindings,
+        onUpdateFindingStatus: _updateFindingStatus,
+        onOpenFindingReport: _openFindingReport,
+        onOpenFindingActivity: _openFindingActivity,
       ),
       SettingsScreen(
         locale: widget.locale,
@@ -1030,13 +1161,6 @@ enum _ReportFilter { all, session, saved }
 enum _ReportContent { reports, findings, activity }
 enum _ActivityDateFilter { all, today, week, month }
 
-class _FindingEntry {
-  const _FindingEntry({required this.result, required this.finding, required this.saved});
-  final ToolRunResult result;
-  final SecurityFinding finding;
-  final bool saved;
-}
-
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({
     super.key,
@@ -1056,6 +1180,14 @@ class ReportsScreen extends StatefulWidget {
     this.onLoadActivities,
     this.onClearActivities,
     this.onOpenActivitySource,
+    this.findings = const [],
+    this.findingsLoaded = false,
+    this.findingsBusy = false,
+    this.findingsError,
+    this.onLoadFindings,
+    this.onUpdateFindingStatus,
+    this.onOpenFindingReport,
+    this.onOpenFindingActivity,
   });
 
   final List<ToolRunResult> recentResults;
@@ -1074,6 +1206,14 @@ class ReportsScreen extends StatefulWidget {
   final Future<void> Function()? onLoadActivities;
   final Future<void> Function()? onClearActivities;
   final ValueChanged<ActivityEvent>? onOpenActivitySource;
+  final List<FindingRecord> findings;
+  final bool findingsLoaded;
+  final bool findingsBusy;
+  final String? findingsError;
+  final Future<void> Function()? onLoadFindings;
+  final Future<void> Function(String findingId, FindingStatus status)? onUpdateFindingStatus;
+  final Future<void> Function(String sourceReportKey)? onOpenFindingReport;
+  final Future<void> Function(String assessmentId)? onOpenFindingActivity;
 
   @override
   State<ReportsScreen> createState() => _ReportsScreenState();
@@ -1083,6 +1223,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
   _ReportFilter _filter = _ReportFilter.all;
   _ReportContent _content = _ReportContent.reports;
   final _activityTargetController = TextEditingController();
+  final _findingQueryController = TextEditingController();
+  final _findingTargetController = TextEditingController();
+  final _findingCategoryController = TextEditingController();
+  FindingSeverity? _findingSeverity;
+  FindingStatus? _findingStatus;
   _ActivityDateFilter _activityDateFilter = _ActivityDateFilter.all;
   ActivityKind? _activityKind;
   String? _activityToolId;
@@ -1091,7 +1236,69 @@ class _ReportsScreenState extends State<ReportsScreen> {
   @override
   void dispose() {
     _activityTargetController.dispose();
+    _findingQueryController.dispose();
+    _findingTargetController.dispose();
+    _findingCategoryController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openFindingDetails(FindingRecord finding) async {
+    final sourceAction = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Finding details')),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                _FindingTag(label: _severityName(finding.severity, dialogContext), color: _findingColor(finding.severity)),
+                _FindingTag(label: dialogContext.tr(finding.confidence.name), color: const Color(0xFF98A7BD)),
+                _FindingTag(label: _findingStatusLabel(finding.status, dialogContext), color: _findingStatusColor(finding.status)),
+              ]),
+              const SizedBox(height: 12),
+              _ActivityDetailLine(label: dialogContext.tr('Category'), value: finding.category),
+              _ActivityDetailLine(label: dialogContext.tr('Target'), value: finding.target),
+              _ActivityDetailLine(label: dialogContext.tr('Description'), value: finding.description),
+              _ActivityDetailLine(label: dialogContext.tr('Recommendation'), value: finding.recommendation),
+              _ActivityDetailLine(label: dialogContext.tr('First seen'), value: finding.firstSeen.toLocal().toString()),
+              _ActivityDetailLine(label: dialogContext.tr('Last seen'), value: finding.lastSeen.toLocal().toString()),
+              if (finding.sourceTool != null) _ActivityDetailLine(label: dialogContext.tr('Source tool'), value: finding.sourceTool!),
+              if (finding.assessmentId != null) _ActivityDetailLine(label: dialogContext.tr('Assessment ID'), value: finding.assessmentId!),
+              if (finding.evidence.isNotEmpty) ...[
+                Text(dialogContext.tr('Evidence'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                for (final item in finding.evidence) Padding(padding: const EdgeInsets.only(top: 4), child: SelectableText('• $item')),
+              ],
+              if (finding.sourceReportKeys.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(dialogContext.tr('Source reports'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                for (final key in finding.sourceReportKeys)
+                  TextButton.icon(
+                    onPressed: () => Navigator.of(dialogContext).pop(key),
+                    icon: const Icon(Icons.article_outlined),
+                    label: Text(dialogContext.tr('Open source report')),
+                  ),
+              ],
+            ]),
+          ),
+        ),
+        actions: [
+          if (finding.assessmentId != null)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop('activity:${finding.assessmentId}'),
+              child: Text(dialogContext.tr('Open assessment activity')),
+            ),
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: Text(dialogContext.tr('Tutup'))),
+        ],
+      ),
+    );
+    if (!mounted || sourceAction == null) return;
+    if (sourceAction.startsWith('activity:')) {
+      setState(() => _content = _ReportContent.activity);
+      await widget.onOpenFindingActivity?.call(sourceAction.substring('activity:'.length));
+    } else {
+      await widget.onOpenFindingReport?.call(sourceAction);
+    }
   }
 
   @override
@@ -1100,25 +1307,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (_filter != _ReportFilter.saved) for (final result in widget.recentResults) _ReportEntry(result: result, saved: false),
       if (_filter != _ReportFilter.session) for (final result in widget.savedResults) _ReportEntry(result: result, saved: true),
     ];
-    final uniqueSourceResults = <String, _ReportEntry>{};
-    for (final entry in rows) {
-      if (entry.result.toolId == 'response_analyzer') continue;
-      final result = entry.result;
-      final key = '${result.toolId}|${result.target}|${result.completedAt.toUtc().microsecondsSinceEpoch}';
-      final previous = uniqueSourceResults[key];
-      if (previous == null || entry.saved) uniqueSourceResults[key] = entry;
-    }
-    final findings = <_FindingEntry>[
-      for (final entry in uniqueSourceResults.values)
-        for (final finding in entry.result.findings) _FindingEntry(result: entry.result, finding: finding, saved: entry.saved),
-    ]..sort((a, b) {
-        final severityOrder = a.finding.severity.index.compareTo(b.finding.severity.index);
-        return severityOrder != 0 ? severityOrder : b.result.completedAt.compareTo(a.result.completedAt);
-      });
-    final findingSourceCount = findings
-        .map((entry) => '${entry.result.toolId}|${entry.result.target}|${entry.result.completedAt.toUtc().microsecondsSinceEpoch}')
-        .toSet()
-        .length;
+    final findingQuery = _findingQueryController.text.trim().toLowerCase();
+    final findingTarget = _findingTargetController.text.trim().toLowerCase();
+    final findingCategory = _findingCategoryController.text.trim().toLowerCase();
+    final findings = widget.findings.where((finding) {
+      if (_findingSeverity != null && finding.severity != _findingSeverity) return false;
+      if (_findingStatus != null && finding.status != _findingStatus) return false;
+      if (findingCategory.isNotEmpty && !finding.category.toLowerCase().contains(findingCategory)) return false;
+      if (findingTarget.isNotEmpty && !finding.target.toLowerCase().contains(findingTarget)) return false;
+      if (findingQuery.isNotEmpty) {
+        final searchable = '${finding.title} ${finding.category} ${finding.target} ${finding.description} ${finding.recommendation} ${finding.evidence.join(' ')}'.toLowerCase();
+        if (!searchable.contains(findingQuery)) return false;
+      }
+      return true;
+    }).toList()..sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
     final now = DateTime.now();
     final activityFrom = switch (_activityDateFilter) {
       _ActivityDateFilter.all => null,
@@ -1345,23 +1547,113 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
                 const SizedBox(height: 8),
               ],
+          ] else if (_content == _ReportContent.findings) ...[
+            TextField(
+              key: const ValueKey('finding-search-filter'),
+              controller: _findingQueryController,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(prefixIcon: const Icon(Icons.search_rounded), hintText: context.tr('Search findings'), isDense: true),
+            ),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('finding-target-filter'),
+                  controller: _findingTargetController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(labelText: context.tr('Target'), isDense: true),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('finding-category-filter'),
+                  controller: _findingCategoryController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(labelText: context.tr('Category'), isDense: true),
+                ),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              Expanded(
+                child: InputDecorator(
+                  decoration: InputDecoration(labelText: context.tr('Severity'), isDense: true),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<FindingSeverity?>(
+                      key: const ValueKey('finding-severity-filter'),
+                      value: _findingSeverity,
+                      isExpanded: true,
+                      items: [
+                        DropdownMenuItem(value: null, child: Text(context.tr('All severities'))),
+                        for (final severity in FindingSeverity.values)
+                          DropdownMenuItem(value: severity, child: Text(_severityName(severity, context))),
+                      ],
+                      onChanged: (value) => setState(() => _findingSeverity = value),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InputDecorator(
+                  decoration: InputDecoration(labelText: context.tr('Finding status'), isDense: true),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<FindingStatus?>(
+                      key: const ValueKey('finding-status-filter'),
+                      value: _findingStatus,
+                      isExpanded: true,
+                      items: [
+                        DropdownMenuItem(value: null, child: Text(context.tr('All statuses'))),
+                        for (final status in FindingStatus.values)
+                          DropdownMenuItem(value: status, child: Text(_findingStatusLabel(status, context))),
+                      ],
+                      onChanged: (value) => setState(() => _findingStatus = value),
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: context.tr('Refresh findings'),
+                onPressed: widget.findingsBusy ? null : () => widget.onLoadFindings?.call(),
+                icon: widget.findingsBusy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh_rounded),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            Text(context.tr('Findings are independent, reviewable indicators; an Error is not a vulnerability, and no indicator does not prove a target is secure.'),
+                style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 12, height: 1.4)),
+            if (widget.findingsError != null) ...[
+              const SizedBox(height: 8),
+              Text(context.tr(widget.findingsError!), style: const TextStyle(color: Colors.orangeAccent)),
+            ],
+            const SizedBox(height: 8),
+            if (widget.findingsBusy && !widget.findingsLoaded)
+              const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+            else if (findings.isEmpty)
+              _EmptyState(
+                icon: Icons.rule_folder_outlined,
+                title: context.tr('No findings match these filters'),
+                detail: context.tr('Run a check that produces an indicator, or revise the filters. Finding status is managed separately from report history.'),
+              )
+            else
+              for (final finding in findings) ...[
+                _StoredFindingCard(
+                  key: ValueKey('finding-${finding.findingId}'),
+                  finding: finding,
+                  onTap: () => _openFindingDetails(finding),
+                  onStatusChanged: (status) => widget.onUpdateFindingStatus?.call(finding.findingId, status),
+                ),
+                const SizedBox(height: 8),
+              ],
           ] else if (widget.storageBusy && rows.isEmpty && _filter != _ReportFilter.session)
             const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
-          else if (_content == _ReportContent.reports && rows.isEmpty)
+          else if (rows.isEmpty)
             _EmptyState(
               icon: Icons.article_outlined,
               title: context.tr('No reports in this view'),
               detail: context.tr('Run a local check, or save a result from its details to keep it after closing the app.'),
             )
-          else if (_content == _ReportContent.findings && findings.isEmpty)
-            _EmptyState(
-              icon: Icons.rule_folder_outlined,
-              title: context.tr('No findings in this view'),
-              detail: rows.isEmpty
-                  ? context.tr('Run or load checks to review their findings here.')
-                  : context.tr('No indicators were produced by these checks. This does not prove that the target is secure.'),
-            )
-          else if (_content == _ReportContent.reports)
+          else
             for (final entry in rows) ...[
               _ResultCard(
                 result: entry.result,
@@ -1373,22 +1665,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-            ]
-          else ...[
-            _FindingSummary(count: findings.length, reportCount: findingSourceCount),
-            for (var index = 0; index < findings.length; index++) ...[
-              _FindingCard(
-                key: ValueKey('finding-card-$index'),
-                entry: findings[index],
-                onTap: () => _showResultDetails(
-                  context,
-                  findings[index].result,
-                  onSaveResult: findings[index].saved ? null : widget.onSaveResult,
-                ),
-              ),
-              const SizedBox(height: 8),
             ],
-          ],
           const SizedBox(height: 16),
           Text(context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 12, height: 1.45)),
@@ -1479,6 +1756,77 @@ class _ActivityCard extends StatelessWidget {
   }
 }
 
+class _StoredFindingCard extends StatelessWidget {
+  const _StoredFindingCard({super.key, required this.finding, required this.onTap, required this.onStatusChanged});
+
+  final FindingRecord finding;
+  final VoidCallback onTap;
+  final ValueChanged<FindingStatus> onStatusChanged;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(
+                  child: Wrap(spacing: 6, runSpacing: 6, children: [
+                    _FindingTag(label: _severityName(finding.severity, context), color: _findingColor(finding.severity)),
+                    _FindingTag(label: context.tr(finding.confidence.name), color: const Color(0xFF98A7BD)),
+                    _FindingTag(label: _findingStatusLabel(finding.status, context), color: _findingStatusColor(finding.status)),
+                  ]),
+                ),
+                PopupMenuButton<FindingStatus>(
+                  key: ValueKey('finding-status-${finding.findingId}'),
+                  tooltip: context.tr('Change finding status'),
+                  onSelected: onStatusChanged,
+                  itemBuilder: (context) => [
+                    for (final status in FindingStatus.values)
+                      PopupMenuItem(value: status, child: Text(_findingStatusLabel(status, context))),
+                  ],
+                  icon: const Icon(Icons.more_vert_rounded),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              Text(finding.title, style: const TextStyle(fontWeight: FontWeight.w700, height: 1.3)),
+              const SizedBox(height: 5),
+              Text('${finding.category} · ${finding.target}', style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
+              const SizedBox(height: 6),
+              Text(finding.description, maxLines: 3, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.35)),
+              const SizedBox(height: 6),
+              Text('${context.tr('First seen')}: ${finding.firstSeen.toLocal()} · ${context.tr('Last seen')}: ${finding.lastSeen.toLocal()}',
+                  style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 11)),
+              if (finding.sourceReportKeys.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(context.tr('Source reports: ${finding.sourceReportKeys.length}'),
+                      style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+            ]),
+          ),
+        ),
+      );
+}
+
+Color _findingStatusColor(FindingStatus status) => switch (status) {
+      FindingStatus.open => const Color(0xFF71B7FF),
+      FindingStatus.inProgress => Colors.orangeAccent,
+      FindingStatus.resolved => _mint,
+      FindingStatus.accepted => const Color(0xFFAA9AFF),
+      FindingStatus.falsePositive => Colors.white54,
+    };
+
+String _findingStatusLabel(FindingStatus status, BuildContext context) => switch (status) {
+      FindingStatus.open => context.tr('Open'),
+      FindingStatus.inProgress => context.tr('In Progress'),
+      FindingStatus.resolved => context.tr('Resolved'),
+      FindingStatus.accepted => context.tr('Accepted'),
+      FindingStatus.falsePositive => context.tr('False Positive'),
+    };
+
 Color _activityStatusColor(ActivityStatus status) => switch (status) {
       ActivityStatus.started || ActivityStatus.running => const Color(0xFF71B7FF),
       ActivityStatus.completed => _mint,
@@ -1538,73 +1886,6 @@ class _ResultCard extends StatelessWidget {
           ),
         ),
       );
-}
-
-class _FindingSummary extends StatelessWidget {
-  const _FindingSummary({required this.count, required this.reportCount});
-
-  final int count;
-  final int reportCount;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Icon(Icons.fact_check_outlined, color: _mint),
-            const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${context.tr('Total indicators')}: $count · ${context.tr('Source reports')}: $reportCount',
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 4),
-              Text(context.tr('Indicators are heuristic signals. Review the source report and evidence before drawing conclusions.'),
-                  style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12)),
-            ])),
-          ]),
-        ),
-      );
-}
-
-class _FindingCard extends StatelessWidget {
-  const _FindingCard({super.key, required this.entry, required this.onTap});
-
-  final _FindingEntry entry;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final severity = entry.finding.severity;
-    final color = _findingColor(severity);
-    return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Wrap(spacing: 8, runSpacing: 6, children: [
-              _FindingTag(label: _severityName(severity, context), color: color),
-              _FindingTag(label: context.tr(entry.finding.confidence.name), color: const Color(0xFF98A7BD)),
-              _FindingTag(label: context.tr(entry.saved ? 'Saved report' : 'Session result'), color: _mint),
-            ]),
-            const SizedBox(height: 10),
-            Text(_displayFindingTitle(entry.finding.title, context), style: const TextStyle(fontWeight: FontWeight.w700, height: 1.3)),
-            const SizedBox(height: 6),
-            Text('${entry.result.target} · ${_toolDisplayName(entry.result.toolId, context)} · ${entry.result.completedAt.toLocal()}',
-                style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11, height: 1.35)),
-            const SizedBox(height: 8),
-            Text(context.tr(entry.finding.recommendation), style: TextStyle(color: Colors.white.withValues(alpha: .78), height: 1.4)),
-            const SizedBox(height: 8),
-            Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              Text(context.tr('Open source report'), style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
-              const SizedBox(width: 4),
-              Icon(Icons.arrow_forward_rounded, size: 16, color: Theme.of(context).colorScheme.primary),
-            ]),
-          ]),
-        ),
-      ),
-    );
-  }
 }
 
 class _FindingTag extends StatelessWidget {
@@ -1898,6 +2179,8 @@ class ToolsScreen extends StatefulWidget {
     required this.onOpenMarket,
     this.activityStore,
     this.onActivity,
+    this.findingRepository,
+    this.onFindings,
   });
 
   final List<ToolRunResult> recentResults;
@@ -1905,6 +2188,8 @@ class ToolsScreen extends StatefulWidget {
   final VoidCallback onOpenMarket;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
+  final FindingRepository? findingRepository;
+  final void Function(List<FindingRecord> findings)? onFindings;
 
   @override
   State<ToolsScreen> createState() => _ToolsScreenState();
@@ -1993,6 +2278,8 @@ class _ToolsScreenState extends State<ToolsScreen> {
                 onResult: widget.onResult,
                 activityStore: widget.activityStore,
                 onActivity: widget.onActivity,
+                findingRepository: widget.findingRepository,
+                onFindings: widget.onFindings,
               ),
             ] else ...[
               const SizedBox(height: 18),
@@ -2069,6 +2356,8 @@ class _ToolsScreenState extends State<ToolsScreen> {
                         widget.onResult,
                         activityStore: widget.activityStore,
                         onActivity: widget.onActivity,
+                        findingRepository: widget.findingRepository,
+                        onFindings: widget.onFindings,
                       ),
                     ),
                   ),
@@ -2645,6 +2934,8 @@ Future<void> _showToolRunner(
   ValueChanged<ToolRunResult> onResult, {
   ActivityHistoryStore? activityStore,
   void Function(ActivityEvent event)? onActivity,
+  FindingRepository? findingRepository,
+  void Function(List<FindingRecord> findings)? onFindings,
 }) async {
   final result = await showDialog<ToolRunResult>(
     context: context,
@@ -2654,6 +2945,8 @@ Future<void> _showToolRunner(
       recentResults: recentResults,
       activityStore: activityStore,
       onActivity: onActivity,
+      findingRepository: findingRepository,
+      onFindings: onFindings,
     ),
   );
   if (result != null) onResult(result);

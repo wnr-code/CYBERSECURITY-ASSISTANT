@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'policy_engine.dart';
 
 enum FindingSeverity { high, medium, low, info }
-enum FindingConfidence { confirmed, potential, informational }
+enum FindingConfidence { confirmed, potential, informational, error }
 
 class SecurityFinding {
   const SecurityFinding({
@@ -14,12 +14,20 @@ class SecurityFinding {
     required this.severity,
     required this.recommendation,
     FindingConfidence? confidence,
+    this.category = 'General',
+    this.description = '',
+    this.evidence = const [],
+    this.riskIdentity,
   }) : confidence = confidence ??
             (severity == FindingSeverity.info ? FindingConfidence.informational : FindingConfidence.potential);
   final String title;
   final FindingSeverity severity;
   final FindingConfidence confidence;
   final String recommendation;
+  final String category;
+  final String description;
+  final List<String> evidence;
+  final String? riskIdentity;
 }
 
 class ApiResponseAnalysis {
@@ -215,11 +223,15 @@ class SecurityTools {
         ],
         findings: [
           if (nonPublic.isNotEmpty)
-            const SecurityFinding(
+            SecurityFinding(
               title: 'DNS returned a local or non-public address range',
               severity: FindingSeverity.info,
               confidence: FindingConfidence.informational,
               recommendation: 'Confirm this is expected for the target. DNS resolution alone did not connect to the returned address.',
+              category: 'DNS Security',
+              description: 'The device resolver returned at least one address in a local or non-public range.',
+              evidence: ['Non-public address range(s) observed: ${nonPublic.join(', ')}.'],
+              riskIdentity: 'dns-non-public-address',
             ),
         ],
         completedAt: DateTime.now().toUtc(),
@@ -264,6 +276,10 @@ class SecurityTools {
           title: 'Certificate expires in $daysRemaining day(s)',
           severity: FindingSeverity.medium,
           recommendation: 'Renew the certificate before it expires.',
+          category: 'TLS Certificate',
+          description: 'The peer certificate is within the configured 30-day renewal window.',
+          evidence: ['Certificate valid until ${expires.toIso8601String()}.', '$daysRemaining day(s) remain at assessment time.'],
+          riskIdentity: 'tls-certificate-expiry',
         ));
       }
       return ToolRunResult(
@@ -404,6 +420,10 @@ class SecurityTools {
           severity: FindingSeverity.info,
           confidence: FindingConfidence.informational,
           recommendation: 'Consider minimizing unnecessary implementation details in response headers.',
+          category: 'Information Disclosure',
+          description: 'The response included a Server or X-Powered-By implementation header.',
+          evidence: ['An implementation-identifying response header was present; its value is not retained.'],
+          riskIdentity: 'technology-header-disclosure',
         ));
       }
       return ToolRunResult(
@@ -612,10 +632,14 @@ class SecurityTools {
     final text = utf8.decode(body, allowMalformed: true);
     final contentTypeIsJson = contentType?.toLowerCase().contains('json') ?? false;
     if (_serverErrorDisclosurePattern.hasMatch(text)) {
-      findings.add(const SecurityFinding(
+      findings.add(SecurityFinding(
         title: 'Detailed server error information may be exposed in the API response',
         severity: FindingSeverity.medium,
         recommendation: 'Return a generic client error and keep stack traces, SQL details, and internal paths in server-side logs.',
+        category: 'API Error Disclosure',
+        description: 'A bounded local signature matched a server error disclosure pattern; this is a heuristic indicator, not a confirmed vulnerability.',
+        evidence: ['Potential stack-trace or database-error signature observed; raw text was not retained.'],
+        riskIdentity: 'api-server-error-disclosure',
       ));
       evidence.add('Potential stack-trace or database-error signature observed; raw text was not retained.');
     }
@@ -634,6 +658,10 @@ class SecurityTools {
             title: 'Response declared JSON but did not parse as JSON',
             severity: FindingSeverity.low,
             recommendation: 'Return a valid JSON document matching the declared media type, or use the correct Content-Type.',
+            category: 'API Response Format',
+            description: 'The response Content-Type declared JSON, but the bounded body could not be parsed as JSON.',
+            evidence: ['JSON parse failed; response content was not retained.'],
+            riskIdentity: 'invalid-declared-json-response',
           ));
           evidence.add('JSON parse failed; response content was not retained.');
         }
@@ -659,6 +687,10 @@ class SecurityTools {
                 title: 'Potentially sensitive API field observed: $childPath',
                 severity: FindingSeverity.low,
                 recommendation: 'Confirm this field is intended for this caller; omit secrets and enforce object- and field-level authorization.',
+                category: 'API Data Exposure',
+                description: 'A non-empty response field name matched a sensitive-name heuristic. Its value is never retained.',
+                evidence: ['Sensitive-looking field present at $childPath; value redacted.'],
+                riskIdentity: 'sensitive-api-field:$childPath',
               ));
               evidence.add('Sensitive-looking field present at $childPath; value redacted.');
             }
@@ -691,6 +723,10 @@ class SecurityTools {
         title: '$name header not observed',
         severity: FindingSeverity.low,
         recommendation: recommendation,
+        category: 'HTTP Security Headers',
+        description: 'The response did not include the $name header. Whether this is a security issue depends on the application and deployment context.',
+        evidence: ['$key header was not observed in the inspected response.'],
+        riskIdentity: 'missing-http-header:$key',
       ));
     }
   }

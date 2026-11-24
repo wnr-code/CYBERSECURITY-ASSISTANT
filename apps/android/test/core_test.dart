@@ -9,6 +9,7 @@ import 'package:cybersecurity_assistant/core/policy_engine.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/report_exporter.dart';
 import 'package:cybersecurity_assistant/core/runtime_manager.dart';
+import 'package:cybersecurity_assistant/core/security_findings.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/core/tool_registry.dart';
@@ -537,11 +538,13 @@ void main() {
 
     test('records assessment and actual tool lifecycle events without duplicate rows', () async {
       final activityStore = MemoryActivityHistoryStore();
+      final findingRepository = MemoryFindingRepository();
       final observedTransitions = <ActivityEvent>[];
       final orchestrator = ToolOrchestrator(
         tools: _ScriptedSecurityTools(),
         activityStore: activityStore,
         onActivity: observedTransitions.add,
+        findingRepository: findingRepository,
       );
       final assessment = await orchestrator.runAssessment(
         target: 'https://example.com',
@@ -564,6 +567,12 @@ void main() {
       expect(observedTransitions.any((event) => event.status == ActivityStatus.running), isTrue);
       expect(observedTransitions.any((event) => event.status == ActivityStatus.failed), isTrue);
       expect(assessment.failedCount, 1);
+      final persistedFindings = await findingRepository.loadFindings();
+      expect(persistedFindings, hasLength(1));
+      expect(persistedFindings.single.title, 'Fixture finding');
+      expect(persistedFindings.single.assessmentId, assessmentEvent.eventId);
+      expect(persistedFindings.single.sourceReportKeys, hasLength(1));
+      expect(persistedFindings.single.status, FindingStatus.open);
     });
 
     test('cancelling a running check stops the assessment before later checks and analysis', () async {

@@ -14,6 +14,10 @@ String encodeToolRunResult(ToolRunResult result) => jsonEncode({
             'severity': finding.severity.name,
             'confidence': finding.confidence.name,
             'recommendation': finding.recommendation,
+            'category': finding.category,
+            'description': finding.description,
+            'evidence': finding.evidence,
+            'riskIdentity': finding.riskIdentity,
           },
       ],
       'completedAt': result.completedAt.toUtc().toIso8601String(),
@@ -51,8 +55,16 @@ ToolRunResult decodeToolRunResult(String json) {
     final severityName = rawFinding['severity'];
     final confidenceName = rawFinding['confidence'];
     final recommendation = rawFinding['recommendation'];
+    final category = rawFinding['category'];
+    final description = rawFinding['description'];
+    final rawEvidence = rawFinding['evidence'];
+    final riskIdentity = rawFinding['riskIdentity'];
     if (title is! String || severityName is! String || recommendation is! String ||
-        (confidenceName != null && confidenceName is! String)) {
+        (confidenceName != null && confidenceName is! String) ||
+        (category != null && category is! String) ||
+        (description != null && description is! String) ||
+        (riskIdentity != null && riskIdentity is! String) ||
+        (rawEvidence != null && (rawEvidence is! List || rawEvidence.any((value) => value is! String)))) {
       throw const FormatException('Stored finding is missing required fields.');
     }
     FindingSeverity? severity;
@@ -75,6 +87,10 @@ ToolRunResult decodeToolRunResult(String json) {
       severity: severity,
       confidence: confidence ?? FindingConfidence.potential,
       recommendation: recommendation,
+      category: category as String? ?? 'General',
+      description: description as String? ?? '',
+      evidence: (rawEvidence as List?)?.cast<String>() ?? const [],
+      riskIdentity: riskIdentity as String?,
     ));
   }
 

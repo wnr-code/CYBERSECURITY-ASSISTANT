@@ -2,18 +2,29 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/activity_timeline.dart';
 import '../core/runtime_manager.dart';
+import '../core/security_findings.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
 
 class AssessmentRunner extends StatefulWidget {
-  const AssessmentRunner({super.key, required this.onResult, this.orchestrator, this.activityStore, this.onActivity});
+  const AssessmentRunner({
+    super.key,
+    required this.onResult,
+    this.orchestrator,
+    this.activityStore,
+    this.onActivity,
+    this.findingRepository,
+    this.onFindings,
+  });
 
   final ValueChanged<ToolRunResult> onResult;
   final ToolOrchestrator? orchestrator;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
+  final FindingRepository? findingRepository;
+  final void Function(List<FindingRecord> findings)? onFindings;
 
   @override
   State<AssessmentRunner> createState() => _AssessmentRunnerState();
@@ -24,6 +35,8 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   late final _orchestrator = widget.orchestrator ?? ToolOrchestrator(
         activityStore: widget.activityStore,
         onActivity: widget.onActivity,
+        findingRepository: widget.findingRepository,
+        onFindings: widget.onFindings,
       );
   final Set<String> _selected = {'dns_lookup', 'tls_inspector', 'http_headers'};
   final List<AssessmentCheckOutcome> _outcomes = [];

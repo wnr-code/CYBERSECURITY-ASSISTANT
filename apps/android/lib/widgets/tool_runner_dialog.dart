@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/activity_timeline.dart';
 import '../core/runtime_manager.dart';
+import '../core/security_findings.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
@@ -110,6 +111,8 @@ class ToolRunnerDialog extends StatefulWidget {
     this.orchestrator,
     this.activityStore,
     this.onActivity,
+    this.findingRepository,
+    this.onFindings,
   });
 
   final ToolDefinition tool;
@@ -117,6 +120,8 @@ class ToolRunnerDialog extends StatefulWidget {
   final ToolOrchestrator? orchestrator;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
+  final FindingRepository? findingRepository;
+  final void Function(List<FindingRecord> findings)? onFindings;
 
   @override
   State<ToolRunnerDialog> createState() => _ToolRunnerDialogState();
@@ -134,6 +139,8 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
   late final _orchestrator = widget.orchestrator ?? ToolOrchestrator(
         activityStore: widget.activityStore,
         onActivity: widget.onActivity,
+        findingRepository: widget.findingRepository,
+        onFindings: widget.onFindings,
       );
   bool _authorized = false;
   bool _running = false;

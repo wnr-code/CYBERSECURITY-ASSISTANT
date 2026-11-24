@@ -2,11 +2,35 @@ import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
+import 'package:cybersecurity_assistant/core/security_findings.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/tool_result_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+FindingRecord _testFindingRecord(DateTime observedAt, {required String sourceKey, String? assessmentId}) =>
+    findingRecordFromTool(
+      finding: const SecurityFinding(
+        title: 'HSTS header not observed',
+        severity: FindingSeverity.low,
+        category: 'HTTP Security Headers',
+        description: 'The response did not include HSTS.',
+        evidence: ['strict-transport-security was not observed.'],
+        riskIdentity: 'missing-hsts',
+        recommendation: 'Review the header configuration.',
+      ),
+      result: ToolRunResult(
+        toolId: 'http_headers',
+        target: 'https://findings.example/path?token=private',
+        summary: 'Fixture completed.',
+        details: const [],
+        findings: const [],
+        completedAt: observedAt,
+      ),
+      sourceReportKey: sourceKey,
+      assessmentId: assessmentId,
+    );
 
 void main() {
   setUpAll(sqfliteFfiInit);
@@ -200,6 +224,99 @@ void main() {
     ));
     expect(await upgradedStore.loadActivities(), hasLength(1));
     expect((await upgradedStore.loadRecent()).single.target, 'legacy.example');
+  });
+
+  test('version two migration preserves saved reports and activity events', () async {
+    final directory = await Directory.systemTemp.createTemp('cybersecurity-v2-migration-');
+    final databasePath = p.join(directory.path, 'legacy.sqlite');
+    final legacyResult = result('kept-report.example');
+    final legacyDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(
+        version: 2,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE scan_results (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              result_key TEXT NOT NULL UNIQUE,
+              tool_id TEXT NOT NULL,
+              target TEXT NOT NULL,
+              completed_at TEXT NOT NULL,
+              authorization_confirmed INTEGER NOT NULL,
+              payload_json TEXT NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE activity_events (
+              event_id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_event_id TEXT, tool_id TEXT,
+              target TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+              summary TEXT, finding_count INTEGER, source_result_key TEXT
+            )
+          ''');
+          await db.insert('scan_results', {
+            'result_key': 'dns_lookup|kept-report.example|${legacyResult.completedAt.toUtc().microsecondsSinceEpoch}',
+            'tool_id': legacyResult.toolId,
+            'target': legacyResult.target,
+            'completed_at': legacyResult.completedAt.toUtc().toIso8601String(),
+            'authorization_confirmed': 1,
+            'payload_json': encodeToolRunResult(legacyResult),
+          });
+          await db.insert('activity_events', {
+            'event_id': 'legacy-event',
+            'kind': 'tool',
+            'tool_id': 'dns_lookup',
+            'target': 'kept-report.example',
+            'status': 'completed',
+            'started_at': activityTimestamp(DateTime.utc(2026, 11, 23)),
+            'summary': 'Legacy event remains.',
+          });
+        },
+      ),
+    );
+    await legacyDatabase.close();
+
+    final store = LocalResultStore(databaseFactory: databaseFactoryFfi, databasePathProvider: () async => databasePath);
+    addTearDown(() async {
+      await store.close();
+      await directory.delete(recursive: true);
+    });
+    expect((await store.loadRecent()).single.target, 'kept-report.example');
+    expect((await store.loadActivities()).single.eventId, 'legacy-event');
+    expect((await store.saveObservedFindings([_testFindingRecord(DateTime.utc(2026), sourceKey: 'c' * 64)])).single.category,
+        'HTTP Security Headers');
+  });
+
+  test('findings persist, deduplicate observations and preserve a user-selected status', () async {
+    final directory = await Directory.systemTemp.createTemp('cybersecurity-findings-');
+    final databasePath = p.join(directory.path, 'findings.sqlite');
+    final firstStore = LocalResultStore(databaseFactory: databaseFactoryFfi, databasePathProvider: () async => databasePath);
+    final firstAt = DateTime.utc(2026, 11, 1);
+    final secondAt = DateTime.utc(2026, 11, 15);
+    final initial = (await firstStore.saveObservedFindings([
+      _testFindingRecord(firstAt, sourceKey: 'a' * 64, assessmentId: 'assessment-1'),
+    ])).single;
+    await firstStore.updateFindingStatus(initial.findingId, FindingStatus.falsePositive);
+    final updated = (await firstStore.saveObservedFindings([
+      _testFindingRecord(secondAt, sourceKey: 'b' * 64, assessmentId: 'assessment-2'),
+    ])).single;
+    expect(updated.status, FindingStatus.falsePositive);
+    expect(updated.firstSeen, firstAt);
+    expect(updated.lastSeen, secondAt);
+    await firstStore.close();
+
+    final reopenedStore = LocalResultStore(databaseFactory: databaseFactoryFfi, databasePathProvider: () async => databasePath);
+    addTearDown(() async {
+      await reopenedStore.close();
+      await directory.delete(recursive: true);
+    });
+    final loaded = await reopenedStore.loadFindings(status: FindingStatus.falsePositive, query: 'HSTS');
+    expect(loaded, hasLength(1));
+    expect(loaded.single.findingId, initial.findingId);
+    expect(loaded.single.fingerprint, initial.fingerprint);
+    expect(loaded.single.firstSeen, firstAt);
+    expect(loaded.single.lastSeen, secondAt);
+    expect(loaded.single.sourceReportKeys.toSet(), {'a' * 64, 'b' * 64});
+    expect(loaded.single.assessmentId, 'assessment-2');
   });
 
   test('refuses derived analyzer results', () async {

@@ -6,6 +6,7 @@ import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/runtime_manager.dart';
+import 'package:cybersecurity_assistant/core/security_findings.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
@@ -109,6 +110,38 @@ class _CancellableToolOrchestrator extends ToolOrchestrator {
     await invocation.cancellationToken!.whenCancelled;
     throw const RuntimeExecutionCancelled();
   }
+}
+
+FindingRecord _findingFixture({
+  required String id,
+  required String fingerprint,
+  required String title,
+  required String target,
+  required String category,
+  required FindingSeverity severity,
+  required FindingStatus status,
+}) {
+  final at = DateTime.utc(2026, 11, 20);
+  return FindingRecord(
+    findingId: id,
+    fingerprint: fingerprint,
+    title: title,
+    category: category,
+    target: target,
+    severity: severity,
+    confidence: FindingConfidence.potential,
+    status: status,
+    description: 'Review this potential indicator.',
+    evidence: const ['A bounded evidence marker was recorded.'],
+    sourceReportKeys: const [],
+    recommendation: 'Review the source report and configuration.',
+    firstSeen: at,
+    lastSeen: at,
+    createdAt: at,
+    updatedAt: at,
+    sourceTool: 'http_headers',
+    assessmentId: 'assessment-widget-fixture',
+  );
 }
 
 void _ignoreResult(ToolRunResult _) {}
@@ -285,7 +318,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reports and findings are separate views with deduplicated source evidence', (tester) async {
+  testWidgets('reports remain separate while findings use independent records and source references', (tester) async {
     final result = ToolRunResult(
       toolId: 'http_headers',
       target: 'owned.example',
@@ -302,6 +335,13 @@ void main() {
       completedAt: DateTime.utc(2026, 11, 23),
       authorizationConfirmed: true,
     );
+    final independentFinding = findingRecordFromTool(
+      finding: result.findings.single,
+      result: result,
+      sourceReportKey: activityResultKey(result.toolId, result.target, result.completedAt),
+      assessmentId: 'assessment-widget-test',
+    );
+    String? openedSource;
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
@@ -317,6 +357,9 @@ void main() {
           onClearResults: () {},
           onClearSavedResults: () async {},
           onSaveResult: (_) async => true,
+          findings: [independentFinding],
+          findingsLoaded: true,
+          onOpenFindingReport: (key) async => openedSource = key,
         ),
       ),
     ));
@@ -326,9 +369,110 @@ void main() {
     await tester.tap(find.text('Temuan'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('finding-card-0')), findsOneWidget);
-    expect(find.text('Buka laporan sumber'), findsOneWidget);
-    expect(find.textContaining('Jumlah indikator: 1'), findsOneWidget);
+    expect(find.byKey(ValueKey('finding-${independentFinding.findingId}')), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('finding-${independentFinding.findingId}')));
+    await tester.pumpAndSettle();
+    expect(find.text('Detail temuan'), findsOneWidget);
+    expect(find.text('Pertama terlihat'), findsOneWidget);
+    await tester.tap(find.text('Buka laporan sumber').last);
+    await tester.pumpAndSettle();
+    expect(openedSource, independentFinding.sourceReportKeys.single);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('independent findings support search, severity, status, target, category and status updates', (tester) async {
+    _useTallViewport(tester);
+    final findings = [
+      _findingFixture(
+        id: 'finding-alpha',
+        fingerprint: '1' * 64,
+        title: 'Potential header issue',
+        target: 'alpha.example',
+        category: 'HTTP Security Headers',
+        severity: FindingSeverity.high,
+        status: FindingStatus.open,
+      ),
+      _findingFixture(
+        id: 'finding-beta',
+        fingerprint: '2' * 64,
+        title: 'Sensitive response indicator',
+        target: 'beta.example',
+        category: 'API Data Exposure',
+        severity: FindingSeverity.info,
+        status: FindingStatus.falsePositive,
+      ),
+    ];
+    final updates = <(String, FindingStatus)>[];
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: ReportsScreen(
+          recentResults: const [],
+          savedResults: const [],
+          savedHistoryLoaded: true,
+          storageBusy: false,
+          storageError: null,
+          onLoadSavedResults: () async {},
+          onClearResults: () {},
+          onClearSavedResults: () async {},
+          onSaveResult: (_) async => true,
+          findings: findings,
+          findingsLoaded: true,
+          onUpdateFindingStatus: (id, status) async {
+            updates.add((id, status));
+          },
+        ),
+      ),
+    ));
+    await tester.tap(find.text('Temuan'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('finding-search-filter')), 'alpha');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsNothing);
+    await tester.enterText(find.byKey(const ValueKey('finding-search-filter')), '');
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('finding-target-filter')), 'beta');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsNothing);
+    await tester.enterText(find.byKey(const ValueKey('finding-target-filter')), '');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('finding-category-filter')), 'API');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsNothing);
+    await tester.enterText(find.byKey(const ValueKey('finding-category-filter')), '');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('finding-severity-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TINGGI').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('finding-severity-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Semua tingkat keparahan').last);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('finding-status-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Positif palsu').last);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-finding-beta')), findsOneWidget);
+    expect(find.byKey(const ValueKey('finding-finding-alpha')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('finding-status-finding-beta')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Diterima').last);
+    await tester.pumpAndSettle();
+    expect(updates, [('finding-beta', FindingStatus.accepted)]);
     expect(tester.takeException(), isNull);
   });
 
