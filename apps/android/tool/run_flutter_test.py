@@ -11,6 +11,15 @@ import sys
 ANSI_ESCAPE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 MAX_FAILURE_OUTPUT_CHARS = 50_000
 ANNOTATION_CHUNK_CHARS = 2_000
+TEST_SUMMARY = re.compile(r"(?m)^\d+:\d{2}\s+\+(\d+)(?:\s+-(\d+))?:\s+(All tests passed!|Some tests failed\.)\s*$")
+
+
+def _parse_test_summary(output: str) -> tuple[int, int] | None:
+    matches = list(TEST_SUMMARY.finditer(ANSI_ESCAPE.sub("", output)))
+    if not matches:
+        return None
+    match = matches[-1]
+    return int(match.group(1)), int(match.group(2) or 0)
 
 
 def _escape_command_value(value: str) -> str:
@@ -45,6 +54,14 @@ def main() -> int:
     )
     output = result.stdout + result.stderr
     print(output, end="" if output.endswith("\n") else "\n")
+    test_summary = _parse_test_summary(output)
+    if test_summary is not None and os.environ.get("GITHUB_ACTIONS"):
+        passed, failed = test_summary
+        summary = f"Flutter tests: {passed} passed, {failed} failed."
+        escaped = _escape_command_value(summary)
+        print(f"::notice title=Flutter test totals::{escaped}")
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as step_summary:
+            step_summary.write(f"### Flutter test totals\n\n{summary}\n")
     if result.returncode != 0:
         messages = _failure_messages(result.returncode, output)
         if os.environ.get("GITHUB_ACTIONS"):
