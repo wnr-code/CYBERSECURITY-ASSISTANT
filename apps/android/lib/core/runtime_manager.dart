@@ -638,7 +638,7 @@ class RuntimeManager extends ChangeNotifier {
       } catch (_) {
         // Cleanup is best-effort after timeout/cancellation; never mask the failure.
       }
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
       final isCancellation = error is RuntimeExecutionCancelled;
       final isTimeout = error is TimeoutException;
       final isInvalidOutput = error is RuntimeExecutionException && error.message.contains('output');
