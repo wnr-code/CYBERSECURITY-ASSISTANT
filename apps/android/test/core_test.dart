@@ -633,7 +633,7 @@ void main() {
     final client = GitHubReleaseClient();
 
     test('parses allowlisted release metadata and an optional SHA-256 digest', () {
-      final digest = 'a' * 64;
+      final digest = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
       final body = jsonEncode({
         'tag_name': 'v1.2.3',
         'name': 'Reference release',

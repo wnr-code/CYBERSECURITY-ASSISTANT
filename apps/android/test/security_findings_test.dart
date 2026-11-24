@@ -11,7 +11,7 @@ FindingRecord _observed({
   String riskIdentity = 'missing-csp',
   FindingSeverity severity = FindingSeverity.low,
   FindingConfidence confidence = FindingConfidence.potential,
-  String reportKey = 'a' * 64,
+  String reportKey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   String? assessmentId,
 }) => findingRecordFromTool(
       finding: SecurityFinding(
@@ -42,8 +42,8 @@ void main() {
     final repository = MemoryFindingRepository();
     final firstSeen = DateTime.utc(2026, 10, 1);
     final secondSeen = DateTime.utc(2026, 11, 1);
-    final first = _observed(at: firstSeen, reportKey: '1' * 64, assessmentId: 'assessment-1');
-    final second = _observed(at: secondSeen, reportKey: '2' * 64, assessmentId: 'assessment-2');
+    final first = _observed(at: firstSeen, reportKey: '1111111111111111111111111111111111111111111111111111111111111111', assessmentId: 'assessment-1');
+    final second = _observed(at: secondSeen, reportKey: '2222222222222222222222222222222222222222222222222222222222222222', assessmentId: 'assessment-2');
 
     final initial = (await repository.saveObservedFindings([first])).single;
     await repository.updateFindingStatus(initial.findingId, FindingStatus.inProgress);
@@ -58,7 +58,7 @@ void main() {
     expect(observedAgain.createdAt, firstSeen);
     expect(observedAgain.status, FindingStatus.inProgress);
     expect(observedAgain.assessmentId, 'assessment-2');
-    expect(observedAgain.sourceReportKeys.toSet(), {'1' * 64, '2' * 64});
+    expect(observedAgain.sourceReportKeys.toSet(), {'1111111111111111111111111111111111111111111111111111111111111111', '2222222222222222222222222222222222222222222222222222222222222222'});
   });
 
   test('does not collapse distinct risk identities that share a title', () async {
@@ -109,7 +109,7 @@ void main() {
       at: DateTime.utc(2026),
       target: 'https://alice:password@example.com/private?access_token=hidden',
       evidence: 'https://bob:secret@example.com/path?token=topsecret Bearer abc.def.ghi',
-      reportKey: 'f' * 64,
+      reportKey: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
     );
     final saved = (await repository.saveObservedFindings([source])).single;
 
@@ -118,7 +118,7 @@ void main() {
     expect(saved.evidence.join(' '), isNot(contains('password')));
     expect(saved.evidence.join(' '), isNot(contains('topsecret')));
     expect(saved.evidence.join(' '), isNot(contains('abc.def.ghi')));
-    expect(saved.sourceReportKeys, ['f' * 64]);
+    expect(saved.sourceReportKeys, ['ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff']);
     expect(saved.description, isNot(contains('token')));
   });
 

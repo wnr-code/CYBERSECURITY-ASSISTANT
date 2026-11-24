@@ -282,7 +282,7 @@ void main() {
     });
     expect((await store.loadRecent()).single.target, 'kept-report.example');
     expect((await store.loadActivities()).single.eventId, 'legacy-event');
-    expect((await store.saveObservedFindings([_testFindingRecord(DateTime.utc(2026), sourceKey: 'c' * 64)])).single.category,
+    expect((await store.saveObservedFindings([_testFindingRecord(DateTime.utc(2026), sourceKey: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc')])).single.category,
         'HTTP Security Headers');
   });
 
@@ -293,11 +293,11 @@ void main() {
     final firstAt = DateTime.utc(2026, 11, 1);
     final secondAt = DateTime.utc(2026, 11, 15);
     final initial = (await firstStore.saveObservedFindings([
-      _testFindingRecord(firstAt, sourceKey: 'a' * 64, assessmentId: 'assessment-1'),
+      _testFindingRecord(firstAt, sourceKey: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', assessmentId: 'assessment-1'),
     ])).single;
     await firstStore.updateFindingStatus(initial.findingId, FindingStatus.falsePositive);
     final updated = (await firstStore.saveObservedFindings([
-      _testFindingRecord(secondAt, sourceKey: 'b' * 64, assessmentId: 'assessment-2'),
+      _testFindingRecord(secondAt, sourceKey: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', assessmentId: 'assessment-2'),
     ])).single;
     expect(updated.status, FindingStatus.falsePositive);
     expect(updated.firstSeen, firstAt);
@@ -315,7 +315,7 @@ void main() {
     expect(loaded.single.fingerprint, initial.fingerprint);
     expect(loaded.single.firstSeen, firstAt);
     expect(loaded.single.lastSeen, secondAt);
-    expect(loaded.single.sourceReportKeys.toSet(), {'a' * 64, 'b' * 64});
+    expect(loaded.single.sourceReportKeys.toSet(), {'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'});
     expect(loaded.single.assessmentId, 'assessment-2');
   });
 

@@ -608,7 +608,6 @@ class AppLocalizations {
     "Reports show complete check results and evidence.": "Laporan berisi hasil lengkap setiap pemeriksaan beserta buktinya.",
     "Findings are indicators from checks, not proof that a system is vulnerable.": "Temuan adalah indikator dari pemeriksaan, bukan bukti bahwa sistem memiliki kerentanan.",
     "Total indicators": "Jumlah indikator",
-    "Source reports": "Laporan sumber",
     "Indicators are heuristic signals. Review the source report and evidence before drawing conclusions.": "Indikator bersifat heuristik. Tinjau laporan sumber dan buktinya sebelum menarik kesimpulan.",
     "Open source report": "Buka laporan sumber",
     "No findings in this view": "Tidak ada temuan di tampilan ini",

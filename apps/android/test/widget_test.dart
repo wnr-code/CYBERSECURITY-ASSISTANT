@@ -385,7 +385,7 @@ void main() {
     final findings = [
       _findingFixture(
         id: 'finding-alpha',
-        fingerprint: '1' * 64,
+        fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
         title: 'Potential header issue',
         target: 'alpha.example',
         category: 'HTTP Security Headers',
@@ -394,7 +394,7 @@ void main() {
       ),
       _findingFixture(
         id: 'finding-beta',
-        fingerprint: '2' * 64,
+        fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
         title: 'Sensitive response indicator',
         target: 'beta.example',
         category: 'API Data Exposure',
