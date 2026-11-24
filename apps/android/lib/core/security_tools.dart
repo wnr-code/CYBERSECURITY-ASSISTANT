@@ -632,7 +632,7 @@ class SecurityTools {
     final text = utf8.decode(body, allowMalformed: true);
     final contentTypeIsJson = contentType?.toLowerCase().contains('json') ?? false;
     if (_serverErrorDisclosurePattern.hasMatch(text)) {
-      findings.add(SecurityFinding(
+      findings.add(const SecurityFinding(
         title: 'Detailed server error information may be exposed in the API response',
         severity: FindingSeverity.medium,
         recommendation: 'Return a generic client error and keep stack traces, SQL details, and internal paths in server-side logs.',
