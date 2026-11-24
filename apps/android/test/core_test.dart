@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
+import 'package:cybersecurity_assistant/core/dart_security_tools_runtime.dart';
 import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
@@ -444,8 +445,11 @@ void main() {
     test('has unique IDs and adapters for the P0 set', () {
       expect(toolRegistry.map((tool) => tool.id).toSet().length, toolRegistry.length);
       expect(toolRegistry, hasLength(4));
-      expect(toolRegistry.every((tool) => tool.status == ToolStatus.available), isTrue);
+      expect(toolRegistry.every((tool) => tool.runtimeId == DartSecurityToolsRuntime.runtimeId), isTrue);
+      expect(toolRegistry.every((tool) => tool.version == null && tool.license == null), isTrue);
       expect(toolById('dns_lookup')?.name, 'DNS Lookup');
+      expect(toolById('dns_lookup')?.marketPackageId, 'tool.dns-lookup');
+      expect(toolById('tls_inspector')?.platformCompatibility, ToolPlatformCompatibility.bundledDartRuntimeCompatible);
       expect(toolById('http_headers')?.requiredPermissions, contains('INTERNET'));
       expect(toolById('response_analyzer')?.requiredPermissions, isEmpty);
       expect(toolById('missing'), isNull);

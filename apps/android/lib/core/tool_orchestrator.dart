@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:io';
 
 import 'activity_timeline.dart';
+import 'package_manager.dart';
 import 'diagnostics.dart';
 import 'dart_security_tools_runtime.dart';
 import 'runtime_manager.dart';
@@ -40,7 +41,7 @@ class ToolOrchestrationException implements Exception {
   String toString() => message;
 }
 
-enum AssessmentCheckStatus { completed, failed, cancelled }
+enum AssessmentCheckStatus { completed, failed, skipped, cancelled }
 
 class AssessmentCheckOutcome {
   const AssessmentCheckOutcome({required this.toolId, required this.status, this.result, this.error});
@@ -75,7 +76,10 @@ class ToolOrchestrator {
     ResultHistoryStore? reportStore,
     this.onReportSaved,
     this.onReportSaveFailed,
-  })  : _tools = tools ?? SecurityTools(),
+    ToolRegistry? registry,
+    this.packageManager,
+  })  : registry = registry ?? ToolRegistry(),
+        _tools = tools ?? SecurityTools(),
         reportStore = reportStore ?? (activityStore is ResultHistoryStore ? activityStore as ResultHistoryStore : null) {
     _runtimeManager = runtimeManager != null
         ? Future.value(runtimeManager)
@@ -89,6 +93,8 @@ class ToolOrchestrator {
       _sharedRuntimeManager ??= _createRuntimeManager(SecurityTools());
 
   final SecurityTools _tools;
+  final ToolRegistry registry;
+  final MarketPackageManager? packageManager;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
@@ -182,43 +188,25 @@ class ToolOrchestrator {
     }
   }
 
-  Future<ToolStatus> statusForTool(String toolId) async {
-    final definition = toolById(toolId);
-    if (definition == null) {
+  Future<ToolAvailability> availabilityForTool(String toolId) async {
+    if (registry.byId(toolId) == null) {
       DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unknown tool ID was rejected by the local registry.'), category: DiagnosticCategory.runtime);
-      return ToolStatus.unsupported;
     }
-    if (definition.status == ToolStatus.unsupported) return ToolStatus.unsupported;
-    final runtimeId = definition.runtimeId;
-    if (runtimeId == null) return ToolStatus.environmentRequired;
     final manager = await _runtimeManager;
-    final discoveries = await manager.discover();
-    final discovery = _findDiscovery(discoveries, runtimeId);
-    if (discovery == null) return ToolStatus.unsupported;
-    return switch (discovery.status) {
-      RuntimeDiscoveryStatus.available => ToolStatus.available,
-      RuntimeDiscoveryStatus.notInstalled => ToolStatus.notInstalled,
-      RuntimeDiscoveryStatus.unsupported => ToolStatus.unsupported,
-      RuntimeDiscoveryStatus.environmentRequired => ToolStatus.environmentRequired,
-    };
+    return registry.resolve(toolId, runtimeManager: manager, packageManager: packageManager);
   }
 
-  RuntimeDiscovery? _findDiscovery(List<RuntimeDiscovery> discoveries, String runtimeId) {
-    for (final discovery in discoveries) {
-      if (discovery.descriptor.id == runtimeId) return discovery;
-    }
-    return null;
-  }
+  Future<ToolStatus> statusForTool(String toolId) async => (await availabilityForTool(toolId)).status;
 
   Future<ToolRunResult> execute(ToolInvocation invocation) async {
-    final definition = toolById(invocation.toolId);
+    final definition = registry.byId(invocation.toolId);
     if (definition == null) {
       DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unknown tool ID was rejected by the local registry.'), category: DiagnosticCategory.runtime);
       throw const ToolOrchestrationException('Requested tool is not available in the local registry.');
     }
-    if (definition.status != ToolStatus.available) {
-      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unavailable tool was rejected by the local registry.'), category: DiagnosticCategory.runtime);
-      throw const ToolOrchestrationException('Requested tool is not available in the local registry.');
+    if (!definition.enabled || await statusForTool(invocation.toolId) != ToolStatus.ready) {
+      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Tool is not ready in the local registry.'), category: DiagnosticCategory.runtime);
+      throw const ToolOrchestrationException('Requested tool is not ready for execution.');
     }
     final runtimeId = definition.runtimeId;
     if (runtimeId == null) throw const ToolOrchestrationException('No runtime is registered for this tool.');
@@ -357,6 +345,18 @@ class ToolOrchestrator {
     }) async {
       late final AssessmentCheckOutcome outcome;
       try {
+        final availability = await availabilityForTool(toolId);
+        if (!availability.ready) {
+          final reason = availability.reason ?? 'tool is not ready (${availability.status.name})';
+          outcome = AssessmentCheckOutcome(
+            toolId: toolId,
+            status: AssessmentCheckStatus.skipped,
+            error: 'Skipped: $reason',
+          );
+          outcomes.add(outcome);
+          onOutcome?.call(outcome);
+          return;
+        }
         final result = await execute(ToolInvocation(
           toolId: toolId,
           target: checkTarget,
@@ -402,9 +402,10 @@ class ToolOrchestrator {
       final completedAt = DateTime.now().toUtc();
       final completedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length;
       final failedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length;
+      final skippedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.skipped).length;
       final cancelledCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length;
       final cancelled = cancellationToken?.isCancelled == true || cancelledCount > 0;
-      final activityStatus = cancelled ? ActivityStatus.cancelled : failedCount > 0 ? ActivityStatus.failed : ActivityStatus.completed;
+      final activityStatus = cancelled ? ActivityStatus.cancelled : failedCount > 0 || skippedCount > 0 ? ActivityStatus.failed : ActivityStatus.completed;
       final findingCount = results.where((result) => result.toolId != 'response_analyzer').fold<int>(
         0,
         (sum, result) => sum + result.findings.length,
@@ -412,7 +413,7 @@ class ToolOrchestrator {
       await _emitActivity(assessmentActivity.copyWith(
         status: activityStatus,
         finishedAt: completedAt,
-        summary: _boundedActivitySummary('$completedCount checks completed, $failedCount failed, $cancelledCount cancelled.'),
+        summary: _boundedActivitySummary('$completedCount checks completed, $failedCount failed, $skippedCount skipped (partial), $cancelledCount cancelled.'),
         findingCount: findingCount,
       ));
       return AssessmentExecution(

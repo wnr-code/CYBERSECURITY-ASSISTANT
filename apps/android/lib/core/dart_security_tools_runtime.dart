@@ -29,7 +29,6 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
         id: runtimeId,
         name: 'Bundled Dart Security Tools',
         version: runtimeVersion,
-        license: 'Cybersecurity Assistant application license',
         supportedPlatforms: ['Android', 'Linux'],
         supportedAbis: ['arm64-v8a', 'armeabi-v7a', 'x86_64'],
         minAndroidApi: 21,

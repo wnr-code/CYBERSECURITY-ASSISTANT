@@ -46,7 +46,7 @@ class MarketPackage {
     required this.downloadSizeBytes,
     required this.officialSource,
     required this.officialSourceUri,
-    required this.license,
+    this.license,
     required this.platforms,
     required this.architectures,
     required this.dependencies,
@@ -60,6 +60,7 @@ class MarketPackage {
     this.downloadUri,
     this.bundledAssetPath,
     this.isBundledCore = false,
+    this.toolIds = const [],
   });
 
   final String id;
@@ -70,7 +71,7 @@ class MarketPackage {
   final int? downloadSizeBytes;
   final String officialSource;
   final Uri officialSourceUri;
-  final String license;
+  final String? license;
   final List<String> platforms;
   final List<String> architectures;
   final List<String> dependencies;
@@ -86,6 +87,8 @@ class MarketPackage {
   /// Used only by the offline, bundled demo package.
   final String? bundledAssetPath;
   final bool isBundledCore;
+  /// Declarative metadata links only; package contents are never treated as executable adapters.
+  final List<String> toolIds;
 
   bool get hasArtifact => downloadUri != null || bundledAssetPath != null;
   bool get canBeInstalledAsData => payloadType == PackagePayloadType.jsonData || payloadType == PackagePayloadType.opaqueData;
@@ -624,6 +627,7 @@ class MarketPackageManager extends ChangeNotifier {
   }
 
   void updateAvailableRuntimes(Set<String> availableRuntimes) {
+    if (setEquals(_environment.availableRuntimes, availableRuntimes)) return;
     _environment = _environment.copyWith(availableRuntimes: Set.unmodifiable(availableRuntimes));
     notifyListeners();
   }
@@ -648,13 +652,16 @@ class MarketPackageManager extends ChangeNotifier {
   }
 
   bool canInstall(MarketPackage package) {
-    if (_busy.contains(package.id) || package.isBundledCore || !package.hasArtifact || !package.canBeInstalledAsData) return false;
+    if (_busy.contains(package.id) || package.isBundledCore || !package.hasArtifact || !package.canBeInstalledAsData || package.license?.trim().isNotEmpty != true) return false;
     if (compatibilityFor(package).status != PackageCompatibility.compatible) return false;
     if (package.dependencies.isNotEmpty && _registry == null) return false;
     return _registry == null || const DependencyManager().missingDependencies(package, _registry!).isEmpty;
   }
 
   Future<InstalledPackage> install(MarketPackage package, {required bool licenseAccepted}) async {
+    if (package.license?.trim().isNotEmpty != true) {
+      throw const PackageManagerException('Package installation is disabled because verified license metadata is unavailable.');
+    }
     if (!licenseAccepted) {
       DiagnosticReporter.recordGlobal(const PackageManagerException('Package installation was denied because license consent was not granted.'), category: DiagnosticCategory.package);
       throw const PackageManagerException('Accept the package license before installation.');
@@ -764,8 +771,15 @@ class MarketPackageManager extends ChangeNotifier {
       if (package.officialSourceUri.scheme != 'https' || package.officialSourceUri.userInfo.isNotEmpty) {
         throw const PackageManagerException('Market catalog entries must provide an HTTPS official source.');
       }
+      if (package.license?.trim().isEmpty == true) {
+        throw const PackageManagerException('Market catalog contains an empty license claim.');
+      }
       if (package.downloadSizeBytes != null && package.downloadSizeBytes! < 0) {
         throw const PackageManagerException('Market catalog contains a negative package size.');
+      }
+      if (package.toolIds.toSet().length != package.toolIds.length ||
+          package.toolIds.any((toolId) => !RegExp(r'^[a-z][a-z0-9_.-]{1,63}$').hasMatch(toolId))) {
+        throw const PackageManagerException('Market catalog contains an invalid or duplicate tool metadata link.');
       }
     }
     return List.unmodifiable(packages);
@@ -778,13 +792,12 @@ final bundledMarketCatalog = <MarketPackage>[
   MarketPackage(
     id: 'tool.dns-lookup',
     name: 'DNS Lookup',
-    description: 'Built-in, passive A/AAAA lookup through the Android system resolver.',
+    description: 'Built-in, passive A/AAAA lookup through the operating system resolver.',
     category: MarketCategory.securityTools,
     version: '1.0.0',
     downloadSizeBytes: 0,
     officialSource: 'Cybersecurity Assistant core',
     officialSourceUri: Uri(scheme: 'https', host: 'github.com', path: '/wnr-code/CYBERSECURITY-ASSISTANT'),
-    license: 'Project license',
     platforms: ['Android'],
     architectures: ['any'],
     dependencies: [],
@@ -794,6 +807,7 @@ final bundledMarketCatalog = <MarketPackage>[
     installationGuide: 'Bundled Dart adapter is managed by Runtime Manager; this data catalog entry cannot install executable code.',
     payloadType: PackagePayloadType.jsonData,
     isBundledCore: true,
+    toolIds: ['dns_lookup'],
   ),
   MarketPackage(
     id: 'runtime.embedded',
@@ -882,7 +896,6 @@ final bundledMarketCatalog = <MarketPackage>[
     downloadSizeBytes: null,
     officialSource: 'Cybersecurity Assistant core',
     officialSourceUri: Uri(scheme: 'https', host: 'github.com', path: '/wnr-code/CYBERSECURITY-ASSISTANT'),
-    license: 'Project license',
     platforms: ['Android'],
     architectures: ['any'],
     dependencies: [],

@@ -69,7 +69,7 @@ class _MarketScreenState extends State<MarketScreen> {
     final query = _searchController.text.trim().toLowerCase();
     final packages = widget.packageManager.catalog.where((package) {
       final categoryMatches = _selectedCategory == null || package.category == _selectedCategory;
-      final searchable = '${package.name} ${package.description} ${package.officialSource} ${package.license}'.toLowerCase();
+      final searchable = '${package.name} ${package.description} ${package.officialSource} ${package.license ?? ''}'.toLowerCase();
       return categoryMatches && (query.isEmpty || searchable.contains(query));
     }).toList(growable: false);
 
@@ -191,7 +191,7 @@ class _MarketScreenState extends State<MarketScreen> {
             children: [
               _metadataLine(context, 'Download size', _formatSize(package.downloadSizeBytes, context)),
               _metadataLine(context, 'Official source', '${package.officialSource} · ${package.officialSourceUri.host}'),
-              _metadataLine(context, 'License', package.license),
+              _metadataLine(context, 'License', package.license ?? context.tr('Not published')),
               _metadataLine(context, 'Platforms', package.platforms.join(', ')),
               _metadataLine(context, 'CPU architectures', package.architectures.join(', ')),
               _metadataLine(context, 'Dependencies', package.dependencies.isEmpty ? context.tr('None') : package.dependencies.join(', ')),
@@ -276,14 +276,17 @@ class _MarketScreenState extends State<MarketScreen> {
     }
   }
 
-  Future<bool?> _confirmLicense(MarketPackage package) => showDialog<bool>(
+  Future<bool?> _confirmLicense(MarketPackage package) {
+    final license = package.license;
+    if (license == null) return Future<bool?>.value(false);
+    return showDialog<bool>(
         context: context,
         builder: (context) {
           var accepted = false;
           return StatefulBuilder(builder: (context, setDialogState) => AlertDialog(
                 title: Text(context.tr('Review package license')),
                 content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${package.name}\n${context.tr('License')}: ${package.license}'),
+                  Text('${package.name}\n${context.tr('License')}: $license'),
                   const SizedBox(height: 8),
                   Text(package.installationGuide, style: const TextStyle(fontSize: 12)),
                   CheckboxListTile(
@@ -304,6 +307,7 @@ class _MarketScreenState extends State<MarketScreen> {
               ));
         },
       );
+  }
 
   Future<void> _uninstall(MarketPackage package) async {
     final confirmed = await showDialog<bool>(

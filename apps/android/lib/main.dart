@@ -641,6 +641,7 @@ class _MainShellState extends State<MainShell> {
       ),
       ToolsScreen(
         recentResults: recentResults,
+        marketPackageManager: _marketPackageManager,
         onResult: _rememberResult,
         onOpenMarket: _openMarket,
         activityStore: _activityStore,
@@ -971,7 +972,7 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final availableTools = toolRegistry.where((tool) => tool.status == ToolStatus.available).length;
+    final registeredTools = toolRegistry.length;
     final content = ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
       children: [
@@ -992,7 +993,7 @@ class DashboardScreen extends StatelessWidget {
         Wrap(spacing: 12, runSpacing: 12, children: [
           _DashboardMetric(
             icon: Icons.grid_view_rounded,
-            value: '$availableTools',
+            value: '$registeredTools',
             label: context.tr('Local tools'),
             onTap: onNavigateToTools,
           ),
@@ -2189,6 +2190,7 @@ class ToolsScreen extends StatefulWidget {
   const ToolsScreen({
     super.key,
     required this.recentResults,
+    required this.marketPackageManager,
     required this.onResult,
     required this.onOpenMarket,
     this.activityStore,
@@ -2200,6 +2202,7 @@ class ToolsScreen extends StatefulWidget {
   });
 
   final List<ToolRunResult> recentResults;
+  final MarketPackageManager marketPackageManager;
   final ValueChanged<ToolRunResult> onResult;
   final VoidCallback onOpenMarket;
   final ActivityHistoryStore? activityStore;
@@ -2219,11 +2222,35 @@ class _ToolsScreenState extends State<ToolsScreen> {
   final Map<String, Future<ToolStatus>> _toolStatusFutures = {};
   _ToolsView _activeView = _ToolsView.assessment;
 
-  Future<ToolStatus> _statusForTool(String id) =>
-      _toolStatusFutures.putIfAbsent(id, () => ToolOrchestrator().statusForTool(id));
+  @override
+  void initState() {
+    super.initState();
+    widget.marketPackageManager.addListener(_refreshToolStatuses);
+  }
+
+  void _refreshToolStatuses() {
+    _toolStatusFutures.clear();
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant ToolsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.marketPackageManager != widget.marketPackageManager) {
+      oldWidget.marketPackageManager.removeListener(_refreshToolStatuses);
+      widget.marketPackageManager.addListener(_refreshToolStatuses);
+      _toolStatusFutures.clear();
+    }
+  }
+
+  Future<ToolStatus> _statusForTool(String id) => _toolStatusFutures.putIfAbsent(
+        id,
+        () => ToolOrchestrator(packageManager: widget.marketPackageManager).statusForTool(id),
+      );
 
   @override
   void dispose() {
+    widget.marketPackageManager.removeListener(_refreshToolStatuses);
     _searchController.dispose();
     super.dispose();
   }
@@ -2293,6 +2320,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
             if (_activeView == _ToolsView.assessment) ...[
               const SizedBox(height: 10),
               AssessmentRunner(
+                packageManager: widget.marketPackageManager,
                 onResult: widget.onResult,
                 activityStore: widget.activityStore,
                 onActivity: widget.onActivity,
@@ -2812,11 +2840,18 @@ String _categoryLabel(ToolCategory category, BuildContext context) => switch (ca
     };
 
 String _toolStatusLabel(ToolStatus status, BuildContext context) => switch (status) {
-      ToolStatus.available => context.tr('Tersedia'),
+      ToolStatus.ready => context.tr('Siap dijalankan'),
+      ToolStatus.installed => context.tr('Terpasang'),
+      ToolStatus.downloadRequired => context.tr('Memerlukan unduhan'),
+      ToolStatus.runtimeRequired => context.tr('Memerlukan runtime'),
+      ToolStatus.dependencyRequired => context.tr('Memerlukan dependensi'),
+      ToolStatus.permissionRequired => context.tr('Memerlukan izin'),
       ToolStatus.notInstalled => context.tr('Belum terpasang'),
       ToolStatus.environmentRequired => context.tr('Memerlukan konfigurasi'),
       ToolStatus.limitedCompatibility => context.tr('Kompatibilitas terbatas'),
       ToolStatus.unsupported => context.tr('Tidak didukung'),
+      ToolStatus.disabled => context.tr('Dinonaktifkan'),
+      ToolStatus.error => context.tr('Kesalahan kesiapan'),
     };
 
 String _providerCategoryName(ProviderCategory category, BuildContext context) => context.tr(providerCategoryLabel(category));

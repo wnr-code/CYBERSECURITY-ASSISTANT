@@ -19,7 +19,7 @@ class RuntimeDescriptor {
     required this.id,
     required this.name,
     required this.version,
-    required this.license,
+    this.license,
     required this.supportedAbis,
     this.supportedPlatforms = const ['Android'],
     required this.dependencies,
@@ -34,7 +34,7 @@ class RuntimeDescriptor {
   final String id;
   final String name;
   final String version;
-  final String license;
+  final String? license;
   final List<String> supportedAbis;
   final List<String> supportedPlatforms;
   final List<String> dependencies;
@@ -48,7 +48,8 @@ class RuntimeDescriptor {
   final List<String> supportedToolIds;
 
   bool get metadataValid => RegExp(r'^[a-z][a-z0-9_.-]{1,63}$').hasMatch(id) &&
-      version.isNotEmpty && license.trim().isNotEmpty &&
+      version.isNotEmpty &&
+      (license?.trim().isNotEmpty ?? true) &&
       RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(sha256) && officialSource.isNotEmpty &&
       (minAndroidApi == null || minAndroidApi! > 0) &&
       supportedToolIds.toSet().length == supportedToolIds.length &&
@@ -293,6 +294,12 @@ class RuntimeManager extends ChangeNotifier {
   List<RuntimeState> get states => List.unmodifiable(_states.values);
   List<Map<String, Object?>> get auditEvents => List.unmodifiable(_audit.map((entry) => Map<String, Object?>.unmodifiable(entry)));
   List<RuntimeDescriptor> get registered => List.unmodifiable(_adapters.values.map((adapter) => adapter.descriptor));
+  /// Tool IDs exposed by concrete, reviewed execution adapters only. A descriptor
+  /// without an executable adapter does not authorize dispatch.
+  Set<String> get executableToolIds => {
+        for (final adapter in _adapters.values)
+          if (adapter is RuntimeExecutionAdapter) ...adapter.descriptor.supportedToolIds,
+      };
   bool get busy => _busy;
 
   String? compatibilityProblem(RuntimeDescriptor descriptor) {

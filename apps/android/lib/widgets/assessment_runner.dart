@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../core/activity_timeline.dart';
+import '../core/package_manager.dart';
 import '../core/runtime_manager.dart';
 import '../core/security_findings.dart';
 import '../core/security_tools.dart';
@@ -13,6 +14,7 @@ class AssessmentRunner extends StatefulWidget {
     super.key,
     required this.onResult,
     this.orchestrator,
+    this.packageManager,
     this.activityStore,
     this.onActivity,
     this.findingRepository,
@@ -23,6 +25,7 @@ class AssessmentRunner extends StatefulWidget {
 
   final ValueChanged<ToolRunResult> onResult;
   final ToolOrchestrator? orchestrator;
+  final MarketPackageManager? packageManager;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
@@ -37,6 +40,7 @@ class AssessmentRunner extends StatefulWidget {
 class _AssessmentRunnerState extends State<AssessmentRunner> {
   final _targetController = TextEditingController();
   late final _orchestrator = widget.orchestrator ?? ToolOrchestrator(
+        packageManager: widget.packageManager,
         activityStore: widget.activityStore,
         onActivity: widget.onActivity,
         findingRepository: widget.findingRepository,
@@ -44,7 +48,9 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
         onReportSaved: widget.onReportSaved,
         onReportSaveFailed: widget.onReportSaveFailed,
       );
-  final Set<String> _selected = {'dns_lookup', 'tls_inspector', 'http_headers'};
+  final Set<String> _selected = {};
+  final Map<String, Future<ToolAvailability>> _readinessFutures = {};
+  Future<ToolAvailability> _readinessFor(String id) => _readinessFutures.putIfAbsent(id, () => _orchestrator.availabilityForTool(id));
   final List<AssessmentCheckOutcome> _outcomes = [];
   bool _authorized = false;
   bool _allowPrivateNetwork = false;
@@ -55,14 +61,36 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   String? _assessmentTarget;
 
   @override
+  void initState() {
+    super.initState();
+    widget.packageManager?.addListener(_refreshReadiness);
+  }
+
+  void _refreshReadiness() {
+    _readinessFutures.clear();
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(covariant AssessmentRunner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.packageManager != widget.packageManager) {
+      oldWidget.packageManager?.removeListener(_refreshReadiness);
+      widget.packageManager?.addListener(_refreshReadiness);
+      _readinessFutures.clear();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.packageManager?.removeListener(_refreshReadiness);
     _targetController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final checks = toolRegistry.where((tool) => tool.id != 'response_analyzer' && tool.status == ToolStatus.available);
+    final checks = toolRegistry.where((tool) => tool.id != 'response_analyzer');
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -100,22 +128,39 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
           const SizedBox(height: 8),
           Text(context.tr('Checks to run'), style: const TextStyle(fontWeight: FontWeight.w600)),
           for (final check in checks)
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _selected.contains(check.id),
-              onChanged: _running
-                  ? null
-                  : (selected) => setState(() {
-                        if (selected == true) {
-                          _selected.add(check.id);
-                        } else {
-                          _selected.remove(check.id);
-                        }
-                      }),
-              title: Text(_selectionName(check.id, context)),
-              subtitle: Text(_toolDescription(check.id, context), style: const TextStyle(fontSize: 11)),
-              controlAffinity: ListTileControlAffinity.leading,
+            FutureBuilder<ToolAvailability>(
+              future: _readinessFor(check.id),
+              builder: (context, snapshot) {
+                final availability = snapshot.data;
+                final status = availability?.status ?? (snapshot.hasError ? ToolStatus.error : null);
+                final ready = status == ToolStatus.ready;
+                final skippedLabel = context.tr('Skipped until ready');
+                final readinessText = status == null
+                    ? context.tr('Checking readiness')
+                    : ready
+                        ? context.tr('Ready')
+                        : '$skippedLabel: ${availability?.reason ?? status.name}';
+                return CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  value: ready && _selected.contains(check.id),
+                  onChanged: _running || !ready
+                      ? null
+                      : (selected) => setState(() {
+                            if (selected == true) {
+                              _selected.add(check.id);
+                            } else {
+                              _selected.remove(check.id);
+                            }
+                          }),
+                  title: Text(_selectionName(check.id, context)),
+                  subtitle: Text(
+                    '${_toolDescription(check.id, context)} · $readinessText',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                );
+              },
             ),
           CheckboxListTile(
             dense: true,
@@ -161,7 +206,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             Text('${context.tr('Assessment target')}: ${_assessmentTarget ?? _targetController.text.trim()}', style: const TextStyle(fontWeight: FontWeight.w600)),
             if (_running) Text(context.tr('Checks are running sequentially; these are live outcomes.'), style: const TextStyle(fontSize: 11)),
             Text(
-              '${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length} ${context.tr('completed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length} ${context.tr('failed')}${_outcomes.any((outcome) => outcome.status == AssessmentCheckStatus.cancelled) ? ' · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length} ${context.tr('cancelled')}' : ''}',
+              '${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length} ${context.tr('completed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length} ${context.tr('failed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.skipped).length} ${context.tr('skipped')} (partial)${_outcomes.any((outcome) => outcome.status == AssessmentCheckStatus.cancelled) ? ' · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length} ${context.tr('cancelled')}' : ''}',
               style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 12),
             ),
             for (final outcome in _outcomes) _outcomeTile(outcome, context),
@@ -174,11 +219,12 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   Widget _outcomeTile(AssessmentCheckOutcome outcome, BuildContext context) {
     final succeeded = outcome.status == AssessmentCheckStatus.completed;
     final cancelled = outcome.status == AssessmentCheckStatus.cancelled;
+    final skipped = outcome.status == AssessmentCheckStatus.skipped;
     final result = outcome.result;
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       leading: Icon(
-        succeeded ? Icons.check_circle_outline : cancelled ? Icons.cancel_outlined : Icons.error_outline,
+        succeeded ? Icons.check_circle_outline : cancelled ? Icons.cancel_outlined : skipped ? Icons.hourglass_empty_rounded : Icons.error_outline,
         color: succeeded ? const Color(0xFF73F0C2) : cancelled ? Colors.white54 : Colors.orangeAccent,
       ),
       title: Text(_toolName(outcome.toolId, context), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
