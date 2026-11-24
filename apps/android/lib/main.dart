@@ -86,11 +86,13 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
     super.initState();
     StartupTrace.mark('flutter-root-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
-    // Render the branded Flutter handoff first; SQLite history is loaded by MainShell
-    // after its first frame and must never gate the dashboard or native splash handoff.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    // Hold the branded Flutter handoff long enough to be visible on real phones.
+    // The native Android splash covers engine startup; neither splash waits for SQLite.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       StartupTrace.mark('flutter-first-frame');
+      await Future<void>.delayed(const Duration(milliseconds: 1400));
+      if (!mounted) return;
       _storeHandedToShell = true;
       setState(() => _startupReady = true);
     });
@@ -1109,8 +1111,8 @@ class SettingsScreen extends StatelessWidget {
             Card(
               child: ListTile(
                 leading: const Icon(Icons.bug_report_outlined, color: _mint),
-                title: const Text('Developer Diagnostics'),
-                subtitle: const Text('Local error queue, device-safe details and optional relay settings.'),
+                title: Text(context.tr('Developer Diagnostics')),
+                subtitle: Text(context.tr('Local error queue, device-safe details and optional relay settings.')),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: onOpenDiagnostics,
               ),

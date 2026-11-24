@@ -13,7 +13,7 @@ Status: **manual device testing is pending**. Do not treat CI build success as a
 
 ## Compatibility and permissions review
 
-The CI workflow generates a temporary Android project and applies `apps/android/tool/configure_android.py` before building. The script enforces **minSdk >= 23**, adds `android.permission.INTERNET`, disables cleartext traffic and Android backup, and writes backup/data-extraction exclusions. The CI build proves that this generated scaffold and Gradle configuration compile; no generated native project is checked into this repository.
+The CI workflow generates a temporary Android project and applies `apps/android/tool/configure_android.py` before building. The script enforces **minSdk >= 29 (Android 10)**—Android 13 is not required—adds `android.permission.INTERNET`, disables cleartext traffic and Android backup, and writes backup/data-extraction exclusions. The CI build proves that this generated scaffold and Gradle configuration compile; no generated native project is checked into this repository. A Redmi Note 11 Pro meets the stated compatibility target if its installed Android version is 10 or newer; the actual handset and MIUI/HyperOS behavior still need physical-device verification.
 
 `INTERNET` is a normal install-time permission, so Android should not show a runtime permission dialog for it. No camera, microphone, contacts, location, or external-storage permission is intentionally requested by the app. SQLite uses app-private storage. The exact generated `targetSdk`, merged manifest, APK ABIs, install behavior on real devices, and secure-storage/Keystore behavior remain unverified here. Verify these from the downloaded APK/device before considering any release or entering real credentials. The APK is **debug-signed**, not a production release.
 
@@ -44,7 +44,7 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 ### 1. Installation, native splash, and first launch
 
 - [ ] Install APK without package/signature/parse error. On cold launch, confirm the Android native splash appears immediately with the navy background and shield/lock mark; verify the app label is **Cybersecurity Assistant**.
-- [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 6–11 (API 23–30), verify the legacy launch-window fallback uses the same navy and shield mark.
+- [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 10–11 (API 29–30), verify the legacy launch-window fallback uses the same navy and shield mark.
 - [ ] Confirm there is no white/black blank frame or visible mismatched icon between native splash, Flutter splash, and Dashboard. Check cold launch after force-stop as well as warm relaunch.
 - [ ] Confirm the Flutter splash is the first Flutter frame and fades/scales to Dashboard without waiting for SQLite. If the first frame is ready quickly, the splash may be brief; the app must not add a minimum-duration delay.
 - [ ] Simulate an unavailable/slow local history database if safely possible. Confirm the Dashboard appears while the query is pending, saved-history indicators update when available, and Reports can retry history after an error.

@@ -15,7 +15,7 @@ from configure_android import (
 
 
 class ConfigureAndroidTests(unittest.TestCase):
-    def test_kotlin_gradle_template_gets_minimum_sdk_23(self):
+    def test_kotlin_gradle_template_gets_android_10_minimum_sdk_29(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle.kts"
             gradle.write_text(
@@ -27,22 +27,22 @@ class ConfigureAndroidTests(unittest.TestCase):
             first_result = gradle.read_text(encoding="utf-8")
             configure_gradle(gradle)
 
-            self.assertIn("minSdk = 23", first_result)
+            self.assertIn("minSdk = 29", first_result)
             self.assertEqual(gradle.read_text(encoding="utf-8"), first_result)
 
-    def test_groovy_template_raises_but_does_not_lower_a_higher_minimum(self):
+    def test_groovy_template_preserves_a_higher_minimum(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle"
             gradle.write_text(
-                "android {\n    defaultConfig {\n        minSdkVersion 26\n    }\n}\n",
+                "android {\n    defaultConfig {\n        minSdkVersion 33\n    }\n}\n",
                 encoding="utf-8",
             )
 
             configure_gradle(gradle)
 
-            self.assertIn("minSdkVersion 26", gradle.read_text(encoding="utf-8"))
+            self.assertIn("minSdkVersion 33", gradle.read_text(encoding="utf-8"))
 
-    def test_configure_raises_a_numeric_minimum_below_23(self):
+    def test_configure_raises_a_numeric_minimum_below_android_10(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle"
             gradle.write_text(
@@ -52,7 +52,7 @@ class ConfigureAndroidTests(unittest.TestCase):
 
             configure_gradle(gradle)
 
-            self.assertIn("minSdkVersion 23", gradle.read_text(encoding="utf-8"))
+            self.assertIn("minSdkVersion 29", gradle.read_text(encoding="utf-8"))
 
     def test_android_splash_resources_match_brand_on_legacy_and_api_31(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -121,7 +121,7 @@ class ConfigureAndroidTests(unittest.TestCase):
                 encoding="utf-8",
             )
             gradle = app / "build.gradle.kts"
-            gradle.write_text("android {\n    defaultConfig {\n        minSdk = 23\n    }\n}\n", encoding="utf-8")
+            gradle.write_text("android {\n    defaultConfig {\n        minSdk = 29\n    }\n}\n", encoding="utf-8")
             configure_gradle(gradle)
             configure_splash_activity(android)
             configure_splash_resources(android)
@@ -245,7 +245,7 @@ class ConfigureAndroidTests(unittest.TestCase):
                     {entry.get("domain") for entry in section.findall("exclude")},
                 )
             gradle_text = (app / "build.gradle.kts").read_text(encoding="utf-8")
-            self.assertIn("minSdk = 23", gradle_text)
+            self.assertIn("minSdk = 29", gradle_text)
             self.assertIn("androidx.core:core-splashscreen:1.0.1", gradle_text)
             activity_text = main_activity.read_text(encoding="utf-8")
             self.assertIn("installSplashScreen()", activity_text)

@@ -115,6 +115,7 @@ class DiagnosticReport {
     this.attempts = 0,
     this.nextAttemptAt,
     this.lastUploadError,
+    this.isLocalTest = false,
   });
   final String id;
   final String fingerprint;
@@ -132,6 +133,7 @@ class DiagnosticReport {
   final int attempts;
   final DateTime? nextAttemptAt;
   final String? lastUploadError;
+  final bool isLocalTest;
 
   DiagnosticReport copyWith({DateTime? lastSeen, DiagnosticStatus? status, int? occurrences, int? attempts, DateTime? nextAttemptAt, bool clearNextAttemptAt = false, String? lastUploadError}) => DiagnosticReport(
         id: id,
@@ -150,6 +152,7 @@ class DiagnosticReport {
         attempts: attempts ?? this.attempts,
         nextAttemptAt: nextAttemptAt ?? (clearNextAttemptAt ? null : this.nextAttemptAt),
         lastUploadError: lastUploadError,
+        isLocalTest: isLocalTest,
       );
 
   Map<String, Object?> toJson() => {
@@ -169,6 +172,7 @@ class DiagnosticReport {
         'attempts': attempts,
         'nextAttemptAt': nextAttemptAt?.toUtc().toIso8601String(),
         'lastUploadError': lastUploadError,
+        'isLocalTest': isLocalTest,
       };
 
   factory DiagnosticReport.fromJson(Object? json) {
@@ -201,6 +205,7 @@ class DiagnosticReport {
       attempts: json['attempts'] is int ? (json['attempts'] as int).clamp(0, 100).toInt() : 0,
       nextAttemptAt: next is String ? DateTime.tryParse(next)?.toUtc() : null,
       lastUploadError: lastError is String ? sanitizeDiagnosticText(lastError) : null,
+      isLocalTest: json['isLocalTest'] == true,
     );
   }
 }
@@ -469,9 +474,38 @@ class DiagnosticReporter extends ChangeNotifier {
     return report;
   }
 
+  /// Adds a synthetic, persistent report to verify the local diagnostics UI.
+  /// This item is permanently excluded from automatic and manual uploads.
+  Future<DiagnosticReport> recordLocalTestReport({String message = 'Laporan uji lokal. Ini bukan error aplikasi yang sebenarnya.'}) async {
+    await initialize();
+    final now = _clock().toUtc();
+    final id = 'local-test-${now.microsecondsSinceEpoch}';
+    final fingerprint = sha256.convert(utf8.encode(id)).toString();
+    final report = DiagnosticReport(
+      id: id,
+      fingerprint: fingerprint,
+      category: DiagnosticCategory.dart,
+      errorType: 'DiagnosticSelfTest',
+      message: sanitizeDiagnosticText(message),
+      stack: '',
+      firstSeen: now,
+      lastSeen: now,
+      appVersion: sanitizeDiagnosticText(appVersion),
+      buildNumber: sanitizeDiagnosticText(buildNumber),
+      androidVersion: sanitizeDiagnosticText(androidVersion),
+      status: DiagnosticStatus.waitingForReview,
+      isLocalTest: true,
+    );
+    _reports.insert(0, report);
+    if (_reports.length > _queueLimit) _reports.removeRange(_queueLimit, _reports.length);
+    await _persist();
+    notifyListeners();
+    return report;
+  }
+
   Future<void> approveAndUpload(String id) async {
     final i = _reports.indexWhere((row) => row.id == id);
-    if (i < 0 || _reports[i].attempts >= maxAttempts) return;
+    if (i < 0 || _reports[i].isLocalTest || _reports[i].attempts >= maxAttempts) return;
     _reports[i] = _reports[i].copyWith(status: DiagnosticStatus.queued);
     await _persist();
     await _uploadAt(i);
@@ -483,14 +517,14 @@ class DiagnosticReporter extends ChangeNotifier {
     if (_settings.wifiOnly && !await _isWifiAvailable()) return;
     for (var i = 0; i < _reports.length; i++) {
       final report = _reports[i];
-      if (report.status == DiagnosticStatus.sent || report.status == DiagnosticStatus.waitingForReview || report.attempts >= maxAttempts) continue;
+      if (report.isLocalTest || report.status == DiagnosticStatus.sent || report.status == DiagnosticStatus.waitingForReview || report.attempts >= maxAttempts) continue;
       if (report.nextAttemptAt != null && _clock().toUtc().isBefore(report.nextAttemptAt!)) continue;
       await _uploadAt(i);
     }
   }
 
   Future<void> _uploadAt(int index) async {
-    if (index >= _reports.length || _busy || !hasRelay || !_settings.consentGranted || !_settings.autoReportingEnabled) return;
+    if (index >= _reports.length || _reports[index].isLocalTest || _busy || !hasRelay || !_settings.consentGranted || !_settings.autoReportingEnabled) return;
     if (_settings.wifiOnly && !await _isWifiAvailable()) return;
     _busy = true;
     final report = _reports[index];

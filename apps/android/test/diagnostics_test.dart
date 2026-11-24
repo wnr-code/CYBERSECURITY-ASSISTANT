@@ -147,6 +147,27 @@ void main() {
       expect(store.snapshot['reports'], isA<List>());
     });
 
+    test('local self-test persists and can never be uploaded, even when auto-reporting is enabled', () async {
+      await reporter.configure(const DiagnosticSettings(
+        consentGranted: true,
+        autoReportingEnabled: true,
+        reviewBeforeUpload: false,
+        backendEndpoint: 'https://relay.example.test/diagnostics',
+      ));
+      final row = await reporter.recordLocalTestReport();
+      expect(row.isLocalTest, isTrue);
+      expect(row.message, contains('bukan error aplikasi'));
+      await reporter.approveAndUpload(row.id);
+      await reporter.retryPending();
+      expect(uploader.uploads, 0);
+      final restored = DiagnosticReporter(store: store, uploader: uploader);
+      await restored.initialize();
+      expect(restored.reports.single.isLocalTest, isTrue);
+      await restored.retryPending();
+      expect(uploader.uploads, 0);
+      restored.dispose();
+    });
+
     test('automatic reporting OFF keeps consented reports local', () async {
       await reporter.configure(const DiagnosticSettings(consentGranted: true, autoReportingEnabled: false, reviewBeforeUpload: false, backendEndpoint: 'https://relay.example.test/diagnostics'));
       await reporter.record(Exception('local only'), category: DiagnosticCategory.network);

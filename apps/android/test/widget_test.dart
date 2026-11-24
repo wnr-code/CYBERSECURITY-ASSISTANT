@@ -179,7 +179,10 @@ void main() {
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
     expect(find.byKey(const ValueKey('animated-splash')), findsOneWidget);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1399));
+    expect(find.byKey(const ValueKey('animated-splash')), findsOneWidget);
+    expect(find.byKey(const ValueKey('main-shell')), findsNothing);
+    await tester.pump(const Duration(milliseconds: 1));
 
     expect(history.loadCalls, 1);
     expect(find.byKey(const ValueKey('main-shell')), findsOneWidget);
@@ -196,7 +199,7 @@ void main() {
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1400));
 
     expect(find.text('Beranda'), findsOneWidget);
     expect(history.loadCalls, 1);

@@ -31,7 +31,8 @@ GROOVY_MIN_SDK = re.compile(
 
 def _minimum_sdk(match: re.Match[str]) -> str:
     value = match.group(2)
-    sdk = 23 if value == "flutter.minSdkVersion" else max(23, int(value))
+    # API 29 is Android 10, the minimum supported platform for this app.
+    sdk = 29 if value == "flutter.minSdkVersion" else max(29, int(value))
     return f"{match.group(1)}{sdk}{match.group(3)}"
 
 
@@ -475,7 +476,7 @@ def main() -> int:
     except (OSError, ET.ParseError, RuntimeError) as error:
         print(f"Android hardening configuration failed: {error}", file=sys.stderr)
         return 1
-    print("Configured Android 12+ and legacy branded splash, portrait launch, HTTPS-only traffic, minSdk >= 23, and backup exclusions.")
+    print("Configured Android 12+ and legacy branded splash, portrait launch, HTTPS-only traffic, minSdk >= 29 (Android 10+), and backup exclusions.")
     return 0
 
 
