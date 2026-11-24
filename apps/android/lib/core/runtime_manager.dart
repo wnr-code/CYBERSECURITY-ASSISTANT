@@ -284,6 +284,7 @@ class RuntimeManager extends ChangeNotifier {
   final Map<String, Set<RuntimeCapability>> _grants = {};
   final List<Map<String, Object?>> _audit = [];
   bool _initialized = false;
+  Future<void>? _initialization;
   bool _busy = false;
   List<RuntimeState> get states => List.unmodifiable(_states.values);
   List<Map<String, Object?>> get auditEvents => List.unmodifiable(_audit.map((entry) => Map<String, Object?>.unmodifiable(entry)));
@@ -353,7 +354,14 @@ class RuntimeManager extends ChangeNotifier {
 
   RuntimeState? stateFor(String id) => _states[id];
 
-  Future<void> initializeRegistry() async {
+  Future<void> initializeRegistry() {
+    if (_initialized) return Future<void>.value();
+    return _initialization ??= _initializeRegistry().whenComplete(() {
+      _initialization = null;
+    });
+  }
+
+  Future<void> _initializeRegistry() async {
     if (_initialized) return;
     final snapshot = await store.load();
     final rawGrants = snapshot['grants'];

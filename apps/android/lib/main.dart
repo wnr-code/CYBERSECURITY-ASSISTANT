@@ -1325,6 +1325,10 @@ class ToolsScreen extends StatefulWidget {
 class _ToolsScreenState extends State<ToolsScreen> {
   final _searchController = TextEditingController();
   ToolCategory? _selectedCategory;
+  final Map<String, Future<ToolStatus>> _toolStatusFutures = {};
+
+  Future<ToolStatus> _statusForTool(String id) =>
+      _toolStatusFutures.putIfAbsent(id, () => ToolOrchestrator().statusForTool(id));
 
   @override
   void dispose() {
@@ -1420,7 +1424,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
                     subtitle: Padding(
                       padding: const EdgeInsets.only(top: 6),
                       child: FutureBuilder<ToolStatus>(
-                        future: ToolOrchestrator.sharedRuntimeManager.then((_) => ToolOrchestrator().statusForTool(tool.id)),
+                        future: _statusForTool(tool.id),
                         builder: (context, snapshot) => Text(
                           '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(snapshot.data ?? ToolStatus.environmentRequired, context)}\n${_toolDisplayDescription(tool.id, context)}',
                           style: const TextStyle(height: 1.4),
