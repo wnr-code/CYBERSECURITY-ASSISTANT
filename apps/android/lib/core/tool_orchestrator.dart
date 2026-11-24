@@ -178,6 +178,7 @@ class ToolOrchestrator {
       return result;
     } on Exception catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
+      if (error is RuntimeExecutionException) throw ToolExecutionException(error.message);
       rethrow;
     }
   }

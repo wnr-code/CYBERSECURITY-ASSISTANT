@@ -433,7 +433,10 @@ class RuntimeManager extends ChangeNotifier {
     final descriptor = adapter.descriptor;
     if (!userApproved || !licenseAccepted) throw StateError('Explicit install and license approval are required.');
     final reason = compatibilityProblem(descriptor);
-    if (reason != null) return _set(id, RuntimeLifecycle.incompatible, error: reason);
+    if (reason != null) {
+      if (reason.contains('runtime dependencies:')) throw StateError(reason);
+      return _set(id, RuntimeLifecycle.incompatible, error: reason);
+    }
     final existing = _states[id];
     if (existing?.lifecycle == RuntimeLifecycle.running) throw StateError('Stop the runtime before reinstalling it.');
     if (existing?.lifecycle == RuntimeLifecycle.installed && existing?.installedVersion == descriptor.version) return existing!;
