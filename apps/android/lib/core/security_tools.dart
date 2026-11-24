@@ -313,12 +313,17 @@ class SecurityTools {
     for (final address in approvedAddresses) {
       Socket? plainSocket;
       try {
-        final connection = Socket.startConnect(address, 443);
-        plainSocket = await _awaitCancellable(connection.socket.timeout(remaining()), cancellationToken, onCancel: connection.cancel);
-        final secureSocket = await _awaitCancellable(
-          SecureSocket.secure(plainSocket, host: host).timeout(remaining()),
+        final connection = await Socket.startConnect(address, 443);
+        final connectedSocket = await _awaitCancellable(
+          connection.socket.timeout(remaining()),
           cancellationToken,
-          onCancel: () => plainSocket?.destroy(),
+          onCancel: connection.cancel,
+        );
+        plainSocket = connectedSocket;
+        final secureSocket = await _awaitCancellable(
+          SecureSocket.secure(connectedSocket, host: host).timeout(remaining()),
+          cancellationToken,
+          onCancel: connectedSocket.destroy,
         );
         try {
           final certificate = secureSocket.peerCertificate;
