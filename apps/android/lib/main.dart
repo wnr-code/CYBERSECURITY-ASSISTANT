@@ -1870,11 +1870,10 @@ class SettingsScreen extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.icon, required this.title, required this.detail, this.action});
+  const _EmptyState({required this.icon, required this.title, required this.detail});
   final IconData icon;
   final String title;
   final String detail;
-  final Widget? action;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -1887,7 +1886,6 @@ class _EmptyState extends StatelessWidget {
               Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 4),
               Text(detail, style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4)),
-              if (action != null) Align(alignment: Alignment.centerLeft, child: action!),
             ])),
           ]),
         ),

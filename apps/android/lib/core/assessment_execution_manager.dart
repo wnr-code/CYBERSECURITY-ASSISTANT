@@ -7,6 +7,7 @@ import 'diagnostics.dart';
 import 'runtime_manager.dart';
 import 'security_tools.dart';
 import 'tool_orchestrator.dart';
+import 'tool_registry.dart';
 
 /// Presentation-safe state for the latest application-owned Assessment run.
 class AssessmentRunView {
@@ -58,7 +59,9 @@ class AssessmentRunView {
 }
 
 class AssessmentStartResult {
-  const AssessmentStartResult.started(this.runId) : accepted = true;
+  const AssessmentStartResult.started(this.runId)
+      : accepted = true,
+        activeRunId = null;
   const AssessmentStartResult.rejected(this.activeRunId)
       : accepted = false,
         runId = null;
@@ -75,8 +78,9 @@ class AssessmentExecutionManager extends ChangeNotifier {
   AssessmentExecutionManager({
     required ToolOrchestrator orchestrator,
     ValueChanged<ToolRunResult>? onResult,
-  })  : _orchestrator = orchestrator,
-        _onResult = onResult;
+  }) : this._(orchestrator, onResult);
+
+  AssessmentExecutionManager._(this._orchestrator, this._onResult);
 
   final ToolOrchestrator _orchestrator;
   final ValueChanged<ToolRunResult>? _onResult;

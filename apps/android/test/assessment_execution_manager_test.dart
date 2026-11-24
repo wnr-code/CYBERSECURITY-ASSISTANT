@@ -110,6 +110,7 @@ void main() {
       ..add('tls_inspector');
 
     expect(started.accepted, isTrue);
+    expect(started.activeRunId, isNull);
     expect(manager.currentRun?.runId, started.runId);
     expect(orchestrator.runs.single.toolIds, ['dns_lookup']);
     expect(orchestrator.runs.single.target, 'owned.example');
@@ -124,6 +125,7 @@ void main() {
       allowPrivateNetwork: false,
     );
     expect(rejected.accepted, isFalse);
+    expect(rejected.runId, isNull);
     expect(rejected.activeRunId, started.runId);
     expect(orchestrator.runs, hasLength(1));
 

@@ -698,7 +698,7 @@ class _AssistantModuleCard extends StatelessWidget {
       );
 }
 
-TextStyle _dashboardEyebrow() => TextStyle(
+TextStyle _dashboardEyebrow() => const TextStyle(
       color: _dashboardMint,
       fontSize: 11,
       fontWeight: FontWeight.w800,

@@ -43,7 +43,7 @@ class _DigitalEarthHeroState extends State<DigitalEarthHero> with SingleTickerPr
   }
 
   void _syncMotionPreference() {
-    final shouldAnimate = _appIsResumed && !MediaQuery.of(context).disableAnimations && TickerMode.of(context);
+    final shouldAnimate = _appIsResumed && !MediaQuery.of(context).disableAnimations && TickerMode.valuesOf(context).enabled;
     if (!shouldAnimate) {
       _rotation.stop();
     } else if (!_rotation.isAnimating) {
