@@ -12,7 +12,6 @@ import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
