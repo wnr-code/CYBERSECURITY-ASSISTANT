@@ -548,6 +548,8 @@ class MarketPackageManager extends ChangeNotifier {
     this.maxPackageBytes = maxMarketPackageBytes,
     this.timeout = const Duration(seconds: 30),
   })  : _catalog = _validateCatalog(catalog),
+        // Keep the public `environment:` named argument while storing an updated runtime snapshot.
+        // ignore: prefer_initializing_formals
         _environment = environment,
         _downloadManager = PackageDownloadManager(downloader),
         _supportDirectoryProvider = supportDirectoryProvider ?? getApplicationSupportDirectory,

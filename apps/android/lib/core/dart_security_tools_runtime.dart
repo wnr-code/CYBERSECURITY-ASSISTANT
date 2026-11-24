@@ -85,7 +85,7 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
 
   @override
   Future<void> update(Directory isolatedWorkingDirectory, String version) async {
-    if (version != runtimeVersion) throw const UnsupportedError('The bundled runtime is updated with the application, not from Market.');
+    if (version != runtimeVersion) throw UnsupportedError('The bundled runtime is updated with the application, not from Market.');
     await install(isolatedWorkingDirectory);
   }
 

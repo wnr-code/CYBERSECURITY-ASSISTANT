@@ -45,12 +45,11 @@ class _Adapter implements RuntimeAdapter {
 }
 
 class _ExecutionAdapter extends _Adapter implements RuntimeExecutionAdapter {
-  _ExecutionAdapter({this.delay = Duration.zero, this.output = const {'result': 'ok'}, this.maxExecution = const Duration(milliseconds: 200), this.maxInputBytes = 128, this.maxOutputBytes = 128});
+  _ExecutionAdapter({this.delay = Duration.zero, this.output = const {'result': 'ok'}, this.maxExecution = const Duration(milliseconds: 200), this.maxInputBytes = 128});
   final Duration delay;
   final Map<String, Object?> output;
   final Duration maxExecution;
   final int maxInputBytes;
-  final int maxOutputBytes;
   int executions = 0;
 
   @override
@@ -60,7 +59,7 @@ class _ExecutionAdapter extends _Adapter implements RuntimeExecutionAdapter {
         dependencies: const [], requiredCapabilities: const {RuntimeCapability.network},
         supportedToolIds: const ['dns_lookup'], minAndroidApi: 29,
         sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        resourceLimit: RuntimeResourceLimit(maxExecution: maxExecution, maxInputBytes: maxInputBytes, maxOutputBytes: maxOutputBytes),
+        resourceLimit: RuntimeResourceLimit(maxExecution: maxExecution, maxInputBytes: maxInputBytes, maxOutputBytes: 128),
       );
 
   @override
