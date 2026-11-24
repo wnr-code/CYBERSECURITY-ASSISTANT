@@ -455,7 +455,8 @@ class _MainShellState extends State<MainShell> {
       try {
         assessmentEvent = await _activityStore.loadActivityById(assessmentId);
         if (assessmentEvent != null && mounted) {
-          final byId = {for (final event in _activityEvents) event.eventId: event, assessmentEvent!.eventId: assessmentEvent!};
+          final loadedAssessmentEvent = assessmentEvent;
+          final byId = {for (final event in _activityEvents) event.eventId: event, loadedAssessmentEvent.eventId: loadedAssessmentEvent};
           setState(() => _activityEvents = byId.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt)));
         }
       } catch (error, stack) {

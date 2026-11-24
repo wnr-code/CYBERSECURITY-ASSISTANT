@@ -441,7 +441,7 @@ class RuntimeManager extends ChangeNotifier {
     final adapter = _requireAdapter(id);
     final descriptor = adapter.descriptor;
     if (!userApproved || !licenseAccepted) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime installation was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime installation was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit install and license approval are required.');
     }
     final reason = compatibilityProblem(descriptor);
@@ -480,7 +480,7 @@ class RuntimeManager extends ChangeNotifier {
   Future<RuntimeState> initializeRuntime(String id, {required bool userApproved}) async {
     await initializeRegistry();
     if (!userApproved) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime initialization was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime initialization was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit runtime initialization approval is required.');
     }
     final adapter = _requireAdapter(id);
@@ -502,7 +502,7 @@ class RuntimeManager extends ChangeNotifier {
   Future<RuntimeState> start(String id, {required bool userApproved, required bool policyAllowed}) async {
     await initializeRegistry();
     if (!userApproved || !policyAllowed) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime execution was denied by consent or policy.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime execution was denied by consent or policy.'), category: DiagnosticCategory.runtime);
       throw StateError('Runtime execution requires user approval and policy authorization.');
     }
     final adapter = _requireAdapter(id);
@@ -515,7 +515,7 @@ class RuntimeManager extends ChangeNotifier {
   Future<RuntimeState> stop(String id, {required bool userApproved}) async {
     await initializeRegistry();
     if (!userApproved) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime stop was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime stop was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit runtime stop approval is required.');
     }
     final adapter = _requireAdapter(id);
@@ -529,7 +529,7 @@ class RuntimeManager extends ChangeNotifier {
   Future<RuntimeState> update(String id, String version, {required bool userApproved, required bool licenseAccepted}) async {
     await initializeRegistry();
     if (!userApproved || !licenseAccepted) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime update was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime update was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit update and license approval are required.');
     }
     if (!RegExp(r'^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$').hasMatch(version)) throw const FormatException('Invalid runtime version.');
@@ -551,7 +551,7 @@ class RuntimeManager extends ChangeNotifier {
   Future<void> uninstall(String id, {required bool userApproved}) async {
     await initializeRegistry();
     if (!userApproved) {
-      DiagnosticReporter.recordGlobal(const StateError('Runtime uninstall was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(StateError('Runtime uninstall was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit uninstall approval is required.');
     }
     final adapter = _requireAdapter(id);
