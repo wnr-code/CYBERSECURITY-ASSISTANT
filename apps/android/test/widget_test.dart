@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
+import 'package:cybersecurity_assistant/core/assessment_execution_manager.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
@@ -15,6 +16,7 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
+import 'package:cybersecurity_assistant/widgets/dashboard_screen.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:cybersecurity_assistant/widgets/tool_runner_dialog.dart';
@@ -75,6 +77,17 @@ class _CancellableAssessmentOrchestrator extends ToolOrchestrator {
 
   final Completer<void> started;
   RuntimeCancellationToken? receivedToken;
+  List<String> receivedToolIds = const [];
+  int calls = 0;
+
+  @override
+  Future<ToolAvailability> availabilityForTool(String toolId) async => ToolAvailability(
+        definition: toolById(toolId)!,
+        status: ToolStatus.ready,
+        compatibility: ToolPlatformCompatibility.bundledDartRuntimeCompatible,
+        adapterRegistered: true,
+        installed: true,
+      );
 
   @override
   Future<AssessmentExecution> runAssessment({
@@ -86,6 +99,8 @@ class _CancellableAssessmentOrchestrator extends ToolOrchestrator {
     RuntimeCancellationToken? cancellationToken,
     void Function(AssessmentCheckOutcome outcome)? onOutcome,
   }) async {
+    calls++;
+    receivedToolIds = List.unmodifiable(toolIds);
     receivedToken = cancellationToken;
     if (!started.isCompleted) started.complete();
     await cancellationToken!.whenCancelled;
@@ -97,6 +112,104 @@ class _CancellableAssessmentOrchestrator extends ToolOrchestrator {
     onOutcome?.call(outcome);
     final now = DateTime.now().toUtc();
     return AssessmentExecution(target: target, startedAt: now, completedAt: now, outcomes: [outcome]);
+  }
+}
+
+class _CompletingAssessmentOrchestrator extends ToolOrchestrator {
+  int calls = 0;
+
+  @override
+  Future<ToolAvailability> availabilityForTool(String toolId) async => ToolAvailability(
+        definition: toolById(toolId)!,
+        status: ToolStatus.ready,
+        compatibility: ToolPlatformCompatibility.bundledDartRuntimeCompatible,
+        adapterRegistered: true,
+        installed: true,
+      );
+
+  @override
+  Future<AssessmentExecution> runAssessment({
+    required String target,
+    required Iterable<String> toolIds,
+    required bool authorized,
+    bool allowPrivateNetwork = false,
+    bool includeResponseAnalysis = true,
+    RuntimeCancellationToken? cancellationToken,
+    void Function(AssessmentCheckOutcome outcome)? onOutcome,
+  }) async {
+    calls++;
+    final now = DateTime.now().toUtc();
+    final result = ToolRunResult(
+      toolId: 'dns_lookup',
+      target: target,
+      summary: 'Resolved 1 address.',
+      details: const [],
+      findings: const [],
+      completedAt: now,
+      authorizationConfirmed: authorized,
+    );
+    final outcome = AssessmentCheckOutcome(toolId: 'dns_lookup', status: AssessmentCheckStatus.completed, result: result);
+    onOutcome?.call(outcome);
+    return AssessmentExecution(target: target, startedAt: now, completedAt: now, outcomes: [outcome]);
+  }
+}
+
+class _AssessmentWithGeneratedAnalysisOrchestrator extends ToolOrchestrator {
+  @override
+  Future<ToolAvailability> availabilityForTool(String toolId) async => ToolAvailability(
+        definition: toolById(toolId)!,
+        status: ToolStatus.ready,
+        compatibility: ToolPlatformCompatibility.bundledDartRuntimeCompatible,
+        adapterRegistered: true,
+        installed: true,
+      );
+
+  @override
+  Future<AssessmentExecution> runAssessment({
+    required String target,
+    required Iterable<String> toolIds,
+    required bool authorized,
+    bool allowPrivateNetwork = false,
+    bool includeResponseAnalysis = true,
+    RuntimeCancellationToken? cancellationToken,
+    void Function(AssessmentCheckOutcome outcome)? onOutcome,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final selectedResult = ToolRunResult(
+      toolId: 'dns_lookup',
+      target: target,
+      summary: 'Resolved one address.',
+      details: const [],
+      findings: const [],
+      completedAt: now,
+      authorizationConfirmed: authorized,
+    );
+    final analyzerResult = ToolRunResult(
+      toolId: 'response_analyzer',
+      target: target,
+      summary: 'Response analysis completed.',
+      details: const [],
+      findings: const [],
+      completedAt: now,
+      authorizationConfirmed: false,
+    );
+    final selected = AssessmentCheckOutcome(
+      toolId: 'dns_lookup',
+      status: AssessmentCheckStatus.completed,
+      result: selectedResult,
+    );
+    final generated = AssessmentCheckOutcome(
+      toolId: 'response_analyzer',
+      status: AssessmentCheckStatus.completed,
+      result: analyzerResult,
+    );
+    onOutcome?.call(selected);
+    return AssessmentExecution(
+      target: target,
+      startedAt: now,
+      completedAt: now,
+      outcomes: [selected, if (includeResponseAnalysis) generated],
+    );
   }
 }
 
@@ -147,8 +260,6 @@ FindingRecord _findingFixture({
   );
 }
 
-void _ignoreResult(ToolRunResult _) {}
-
 void _useTallViewport(WidgetTester tester) {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(800, 1400);
@@ -159,6 +270,10 @@ void _useTallViewport(WidgetTester tester) {
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
 Future<void> _pumpApp(WidgetTester tester) async {
+  // The repeating Digital Earth motion honors this reduced-motion setting;
+  // pumpAndSettle can then settle deterministically like an accessibility user.
+  tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
   await tester.pumpWidget(_testApp());
   await tester.pumpAndSettle();
 }
@@ -240,14 +355,16 @@ void main() {
   });
 
   testWidgets('assessment presents multi-check target entry and explicit permission gate', (tester) async {
-    await tester.pumpWidget(const MaterialApp(
-      locale: Locale('id'),
+    final manager = AssessmentExecutionManager(orchestrator: ToolOrchestrator());
+    addTearDown(manager.dispose);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: [
+      localizationsDelegates: const [
         AppLocalizationsDelegate(),
         ...GlobalMaterialLocalizations.delegates,
       ],
-      home: Scaffold(body: SingleChildScrollView(child: AssessmentRunner(onResult: _ignoreResult))),
+      home: Scaffold(body: SingleChildScrollView(child: AssessmentRunner(executionManager: manager))),
     ));
 
     expect(find.text('Assessment keamanan'), findsOneWidget);
@@ -260,21 +377,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('AssessmentRunner receives an Orchestrator-generated response analyzer outcome', (tester) async {
+    final manager = AssessmentExecutionManager(orchestrator: _AssessmentWithGeneratedAnalysisOrchestrator());
+    addTearDown(manager.dispose);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(body: SingleChildScrollView(child: AssessmentRunner(executionManager: manager))),
+    ));
+
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan assessment'));
+    await tester.pumpAndSettle();
+
+    expect(manager.currentRun?.selectedToolIds, ['dns_lookup']);
+    expect(manager.currentRun?.outcomes.map((outcome) => outcome.toolId), ['dns_lookup', 'response_analyzer']);
+    expect(manager.currentRun?.progress.selectedCount, 1);
+    expect(manager.currentRun?.progress.processedCount, 1);
+    expect(find.text('Penganalisis Respons Keamanan'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('assessment displays a cancel action and reports a cancelled outcome', (tester) async {
     final started = Completer<void>();
     final orchestrator = _CancellableAssessmentOrchestrator(started);
+    final manager = AssessmentExecutionManager(orchestrator: orchestrator);
+    addTearDown(manager.dispose);
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
       home: Scaffold(
-        body: SingleChildScrollView(
-          child: AssessmentRunner(onResult: _ignoreResult, orchestrator: orchestrator),
-        ),
+        body: SingleChildScrollView(child: AssessmentRunner(executionManager: manager)),
       ),
     ));
 
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.byType(CheckboxListTile).first);
     await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
     await tester.pump();
     await tester.tap(find.text('Jalankan assessment'));
@@ -282,12 +427,162 @@ void main() {
     await started.future;
 
     expect(orchestrator.receivedToken, isNotNull);
+    expect(manager.progress?.selectedCount, 1);
+    expect(manager.progress?.processedCount, 0);
+    final runId = manager.activeRun?.runId;
+    expect(runId, isNotNull);
     expect(find.text('Batalkan pemeriksaan'), findsOneWidget);
     await tester.tap(find.text('Batalkan pemeriksaan'));
     await tester.pumpAndSettle();
 
     expect(orchestrator.receivedToken!.isCancelled, isTrue);
     expect(find.text('Pemeriksaan dibatalkan.'), findsOneWidget);
+    expect(manager.currentRun?.runId, runId);
+    expect(manager.currentRun?.isRunning, isFalse);
+    expect(manager.currentRun?.wasCancelled, isTrue);
+    expect(manager.currentRun?.progress.cancelledCount, 1);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('result callback exceptions do not interrupt normal assessment completion or cleanup', (tester) async {
+    final orchestrator = _CompletingAssessmentOrchestrator();
+    final manager = AssessmentExecutionManager(
+      orchestrator: orchestrator,
+      onResult: (_) => throw StateError('Simulated result callback failure.'),
+    );
+    addTearDown(manager.dispose);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: SingleChildScrollView(child: AssessmentRunner(executionManager: manager)),
+      ),
+    ));
+
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan assessment'));
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.calls, 1);
+    expect(manager.currentRun?.isRunning, isFalse);
+    expect(manager.currentRun?.outcomes.single.status, AssessmentCheckStatus.completed);
+    expect(find.text('Jalankan assessment'), findsOneWidget, reason: 'Runner state must be cleaned up after callback failures.');
+    expect(find.text('Batalkan pemeriksaan'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('MainShell keeps one Assessment running across tabs and a recreated Runner can cancel it', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    _useTallViewport(tester);
+
+    final started = Completer<void>();
+    final orchestrator = _CancellableAssessmentOrchestrator(started);
+    final manager = AssessmentExecutionManager(orchestrator: orchestrator);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: MainShell(
+        resultStore: _MemoryResultHistory(),
+        initialSavedResults: const [],
+        assessmentExecutionManager: manager,
+        locale: const Locale('id'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan assessment'));
+    await tester.pump();
+    await started.future;
+
+    final originalRunId = manager.activeRun?.runId;
+    expect(orchestrator.calls, 1);
+    expect(orchestrator.receivedToolIds, ['dns_lookup']);
+    expect(manager.progress?.processedCount, 0);
+
+    final rejected = manager.startAssessment(
+      target: 'second.example',
+      toolIds: const ['tls_inspector'],
+      authorized: true,
+      allowPrivateNetwork: false,
+    );
+    expect(rejected.accepted, isFalse);
+    expect(orchestrator.calls, 1, reason: 'A second active Assessment must not create another Orchestrator run.');
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-0')));
+    await tester.pumpAndSettle();
+    expect(manager.activeRun?.runId, originalRunId);
+    expect(find.textContaining('0 / 1'), findsOneWidget, reason: 'Dashboard observes progress from the same application-owned run.');
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(manager.activeRun?.runId, originalRunId);
+    expect(find.text('Assessment sedang berjalan'), findsOneWidget);
+    expect(find.text('Batalkan pemeriksaan'), findsOneWidget, reason: 'The recreated Runner controls the existing run.');
+    expect(orchestrator.calls, 1, reason: 'Rebuilding the Runner must not start another assessment.');
+
+    await tester.tap(find.text('Batalkan pemeriksaan'));
+    await tester.pumpAndSettle();
+    expect(orchestrator.receivedToken?.isCancelled, isTrue);
+    expect(manager.currentRun?.runId, originalRunId);
+    expect(manager.currentRun?.wasCancelled, isTrue);
+    expect(manager.currentRun?.progress.cancelledCount, 1);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('MainShell teardown requests cancellation before releasing the application manager', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    _useTallViewport(tester);
+
+    final started = Completer<void>();
+    final orchestrator = _CancellableAssessmentOrchestrator(started);
+    final manager = AssessmentExecutionManager(orchestrator: orchestrator);
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: MainShell(
+        resultStore: _MemoryResultHistory(),
+        initialSavedResults: const [],
+        assessmentExecutionManager: manager,
+        locale: const Locale('id'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'owned.example');
+    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.tap(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'));
+    await tester.pump();
+    await tester.tap(find.text('Jalankan assessment'));
+    await tester.pump();
+    await started.future;
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    expect(orchestrator.receivedToken?.isCancelled, isTrue);
+    expect(manager.currentRun?.isRunning, isFalse);
+    expect(manager.currentRun?.wasCancelled, isTrue);
+    expect(manager.currentRun?.progress.cancelledCount, 1);
     expect(tester.takeException(), isNull);
   });
 
@@ -616,6 +911,143 @@ void main() {
       expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
     }
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
+    expect(find.text('DIGITAL EARTH'), findsOneWidget);
+    expect(find.text('DIAM'), findsOneWidget);
+    expect(find.text('Skor Keamanan'), findsOneWidget);
+    expect(find.text('Belum dihitung'), findsOneWidget);
+    expect(find.text('Tidak ada assessment yang berjalan'), findsOneWidget);
+  });
+
+  testWidgets('dashboard Session checks excludes response analysis while keeping its result visible', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    _useTallViewport(tester);
+
+    final packageManager = MarketPackageManager.bundled();
+    addTearDown(packageManager.dispose);
+    final completedAt = DateTime.utc(2026, 11, 23);
+    final recentResults = [
+      ToolRunResult(
+        toolId: 'dns_lookup',
+        target: 'owned.example',
+        summary: 'Resolved one address.',
+        details: const ['A records: 192.0.2.10'],
+        findings: const [],
+        completedAt: completedAt,
+      ),
+      ToolRunResult(
+        toolId: 'response_analyzer',
+        target: 'owned.example',
+        summary: 'Analysis completed.',
+        details: const ['dns_lookup: Resolved one address.'],
+        findings: const [],
+        completedAt: completedAt,
+      ),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: DashboardScreen(
+          recentResults: recentResults,
+          savedResultCount: 0,
+          savedHistoryLoaded: true,
+          findings: const [],
+          findingsLoaded: true,
+          findingsBusy: false,
+          findingsError: null,
+          activityEvents: const [],
+          activityLoaded: true,
+          activityBusy: false,
+          activityError: null,
+          marketPackageManager: packageManager,
+          assessmentProgress: null,
+          onNavigateToTools: () {},
+          onNavigateToReports: () {},
+          onOpenAssistant: () {},
+          onOpenActivity: (_) {},
+          onOpenResult: (_) {},
+          onSaveResult: (_) async => true,
+        ),
+      ),
+    ));
+
+    final dashboardScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.text('Penganalisis Respons Keamanan'), 240, scrollable: dashboardScroll);
+    expect(find.text('Penganalisis Respons Keamanan'), findsOneWidget,
+        reason: 'Analyzer remains available as a result; only the metric excludes it.');
+    await tester.scrollUntilVisible(find.text('Pemeriksaan sesi'), 240, scrollable: dashboardScroll);
+    final sessionMetric = find.ancestor(of: find.text('Pemeriksaan sesi'), matching: find.byType(Card)).first;
+    expect(find.descendant(of: sessionMetric, matching: find.text('1')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('dashboard analytics and recent activity use local repository records', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    _useTallViewport(tester);
+
+    final activityStore = MemoryActivityHistoryStore();
+    final startedAt = DateTime.utc(2026, 11, 22, 10);
+    await activityStore.upsertActivity(ActivityEvent(
+      eventId: 'assessment-dashboard-test',
+      kind: ActivityKind.assessment,
+      target: 'owned.example',
+      status: ActivityStatus.completed,
+      startedAt: startedAt,
+      finishedAt: startedAt.add(const Duration(minutes: 1)),
+      summary: '1 checks completed.',
+      findingCount: 1,
+    ));
+    await activityStore.upsertActivity(ActivityEvent(
+      eventId: 'tool-dashboard-test',
+      kind: ActivityKind.tool,
+      toolId: 'dns_lookup',
+      parentEventId: 'assessment-dashboard-test',
+      target: 'owned.example',
+      status: ActivityStatus.completed,
+      startedAt: startedAt.add(const Duration(seconds: 2)),
+      finishedAt: startedAt.add(const Duration(seconds: 20)),
+      summary: 'Resolved 1 address.',
+    ));
+    final findings = MemoryFindingRepository();
+    await findings.saveObservedFindings([
+      _findingFixture(
+        id: 'finding-dashboard',
+        fingerprint: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        title: 'Dashboard fixture finding',
+        target: 'owned.example',
+        category: 'HTTP Security Headers',
+        severity: FindingSeverity.high,
+        status: FindingStatus.open,
+      ),
+    ]);
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: MainShell(
+        resultStore: _MemoryResultHistory(),
+        activityStore: activityStore,
+        findingRepository: findings,
+        initialSavedResults: const [],
+        locale: const Locale('id'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    final dashboardScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.textContaining('1 sesi assessment dalam data yang dimuat'), 280, scrollable: dashboardScroll);
+    expect(find.textContaining('1 sesi assessment dalam data yang dimuat'), findsOneWidget);
+    await tester.scrollUntilVisible(find.textContaining('1 temuan dalam data yang dimuat'), 280, scrollable: dashboardScroll);
+    expect(find.textContaining('1 temuan dalam data yang dimuat'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Pencarian DNS'), 280, scrollable: dashboardScroll);
+    expect(find.text('Pencarian DNS'), findsOneWidget);
+    expect(find.text('owned.example'), findsWidgets);
+    expect(find.text('Aktivitas terbaru'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('floating navigation stays within a narrow phone viewport', (tester) async {

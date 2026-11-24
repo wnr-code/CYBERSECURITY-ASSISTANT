@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'core/activity_timeline.dart';
+import 'core/assessment_execution_manager.dart';
 import 'core/diagnostics.dart';
 import 'core/local_result_store.dart';
 import 'core/package_manager.dart';
@@ -22,6 +23,7 @@ import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
 import 'widgets/diagnostics_screen.dart';
 import 'widgets/assessment_runner.dart';
+import 'widgets/dashboard_screen.dart';
 import 'widgets/market_screen.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
@@ -181,6 +183,7 @@ class MainShell extends StatefulWidget {
     this.resultStore,
     this.activityStore,
     this.findingRepository,
+    this.assessmentExecutionManager,
     this.initialSavedResults,
     this.initialStorageError,
     this.locale = const Locale('id'),
@@ -190,6 +193,7 @@ class MainShell extends StatefulWidget {
   final ResultHistoryStore? resultStore;
   final ActivityHistoryStore? activityStore;
   final FindingRepository? findingRepository;
+  final AssessmentExecutionManager? assessmentExecutionManager;
   final List<ToolRunResult>? initialSavedResults;
   final String? initialStorageError;
   final Locale locale;
@@ -206,6 +210,7 @@ class _MainShellState extends State<MainShell> {
   late final ActivityHistoryStore _activityStore;
   late final FindingRepository _findingRepository;
   late final MarketPackageManager _marketPackageManager;
+  late final AssessmentExecutionManager _assessmentExecutionManager;
   List<FindingRecord> _findings = [];
   bool _findingsLoaded = false;
   bool _findingsBusy = false;
@@ -229,6 +234,21 @@ class _MainShellState extends State<MainShell> {
     _findingRepository = widget.findingRepository ??
         (_resultStore is FindingRepository ? _resultStore as FindingRepository : MemoryFindingRepository());
     _marketPackageManager = MarketPackageManager.bundled();
+    _assessmentExecutionManager = widget.assessmentExecutionManager ?? AssessmentExecutionManager(
+      orchestrator: ToolOrchestrator(
+        packageManager: _marketPackageManager,
+        activityStore: _activityStore,
+        onActivity: _acceptActivity,
+        findingRepository: _findingRepository,
+        onFindings: _acceptFindings,
+        onReportSaved: _acceptSavedReport,
+        onReportSaveFailed: _reportSaveFailed,
+      ),
+      onResult: (result) {
+        if (mounted) _rememberResult(result);
+      },
+    );
+    _assessmentExecutionManager.addListener(_assessmentExecutionChanged);
     unawaited(_synchronizeMarketRuntimeAvailability());
     final startupResults = widget.initialSavedResults;
     if (startupResults != null) {
@@ -246,6 +266,10 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _selectDestination(int index) => setState(() => _selectedIndex = index);
+
+  void _assessmentExecutionChanged() {
+    if (mounted) setState(() {});
+  }
 
   void _openConnections() {
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
@@ -611,10 +635,26 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+  Future<void> _shutdownOwnedServices() async {
+    try {
+      await _assessmentExecutionManager.shutdown();
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+    } finally {
+      try {
+        await _resultStore.close();
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      } finally {
+        _marketPackageManager.dispose();
+      }
+    }
+  }
+
   @override
   void dispose() {
-    unawaited(_resultStore.close());
-    _marketPackageManager.dispose();
+    _assessmentExecutionManager.removeListener(_assessmentExecutionChanged);
+    unawaited(_shutdownOwnedServices());
     super.dispose();
   }
 
@@ -634,9 +674,21 @@ class _MainShellState extends State<MainShell> {
         recentResults: recentResults,
         savedResultCount: _savedResults.length,
         savedHistoryLoaded: _savedHistoryLoaded,
+        findings: List.unmodifiable(_findings),
+        findingsLoaded: _findingsLoaded,
+        findingsBusy: _findingsBusy,
+        findingsError: _findingsError,
+        activityEvents: List.unmodifiable(_activityEvents),
+        activityLoaded: _activityHistoryLoaded,
+        activityBusy: _activityBusy,
+        activityError: _activityError,
+        marketPackageManager: _marketPackageManager,
+        assessmentProgress: _assessmentExecutionManager.progress,
         onNavigateToTools: () => _selectDestination(1),
         onNavigateToReports: () => _selectDestination(2),
         onOpenAssistant: _openAssistantModule,
+        onOpenActivity: (event) => unawaited(_openActivitySource(event)),
+        onOpenResult: (result) => _showResultDetails(context, result, onSaveResult: _saveResultLocally),
         onSaveResult: _saveResultLocally,
       ),
       ToolsScreen(
@@ -650,6 +702,7 @@ class _MainShellState extends State<MainShell> {
         onFindings: _acceptFindings,
         onReportSaved: _acceptSavedReport,
         onReportSaveFailed: _reportSaveFailed,
+        assessmentExecutionManager: _assessmentExecutionManager,
       ),
       ReportsScreen(
         recentResults: recentResults,
@@ -946,213 +999,6 @@ class _ModeBadge extends StatelessWidget {
         child: Text(
           context.tr('STANDALONE'),
           style: const TextStyle(color: _mint, fontSize: 10, fontWeight: FontWeight.w700),
-        ),
-      );
-}
-
-class DashboardScreen extends StatelessWidget {
-  const DashboardScreen({
-    super.key,
-    required this.recentResults,
-    required this.savedResultCount,
-    required this.savedHistoryLoaded,
-    required this.onNavigateToTools,
-    required this.onNavigateToReports,
-    required this.onOpenAssistant,
-    required this.onSaveResult,
-  });
-
-  final List<ToolRunResult> recentResults;
-  final int savedResultCount;
-  final bool savedHistoryLoaded;
-  final VoidCallback onNavigateToTools;
-  final VoidCallback onNavigateToReports;
-  final VoidCallback onOpenAssistant;
-  final Future<bool> Function(ToolRunResult) onSaveResult;
-
-  @override
-  Widget build(BuildContext context) {
-    final registeredTools = toolRegistry.length;
-    final content = ListView(
-      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-      children: [
-        Text(context.tr('Your security workspace'), style: _eyebrow(context)),
-        const SizedBox(height: 8),
-        Text(
-          context.tr('Security, with control in your hands.'),
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.12),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          context.tr('Checks run on your device. AI and cloud connections are optional.'),
-          style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5),
-        ),
-        const SizedBox(height: 20),
-        _LocalFirstHero(onNavigateToTools: onNavigateToTools),
-        const SizedBox(height: 18),
-        Wrap(spacing: 12, runSpacing: 12, children: [
-          _DashboardMetric(
-            icon: Icons.grid_view_rounded,
-            value: '$registeredTools',
-            label: context.tr('Local tools'),
-            onTap: onNavigateToTools,
-          ),
-          _DashboardMetric(
-            icon: Icons.bolt_rounded,
-            value: '${recentResults.length}',
-            label: context.tr('Session checks'),
-            onTap: onNavigateToReports,
-          ),
-          _DashboardMetric(
-            icon: Icons.inventory_2_outlined,
-            value: savedHistoryLoaded ? '$savedResultCount' : '…',
-            label: context.tr('Saved locally'),
-            onTap: onNavigateToReports,
-          ),
-        ]),
-        const SizedBox(height: 24),
-        _DashboardSectionHeader(
-          title: context.tr('Recent activity'),
-          icon: Icons.history_rounded,
-          action: recentResults.isEmpty
-              ? null
-              : TextButton(onPressed: onNavigateToReports, child: Text(context.tr('View reports'))),
-        ),
-        const SizedBox(height: 10),
-        if (recentResults.isEmpty)
-          _EmptyState(
-            icon: Icons.manage_search_rounded,
-            title: context.tr('No checks yet'),
-            detail: context.tr('Start an authorized check from the tool catalog. Results will appear here.'),
-            action: TextButton.icon(
-              onPressed: onNavigateToTools,
-              icon: const Icon(Icons.arrow_forward_rounded),
-              label: Text(context.tr('Browse local tools')),
-            ),
-          )
-        else ...[
-          for (final result in recentResults.take(3)) ...[
-            _ResultCard(
-              result: result,
-              saved: false,
-              onTap: () => _showResultDetails(context, result, onSaveResult: onSaveResult),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ],
-        const SizedBox(height: 18),
-        _AssistantModuleCard(onOpen: onOpenAssistant),
-        const SizedBox(height: 18),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.privacy_tip_outlined, color: _mint),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
-                  style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12, height: 1.45),
-                ),
-              ),
-            ]),
-          ),
-        ),
-      ],
-    );
-    return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 960), child: content));
-  }
-}
-
-class _LocalFirstHero extends StatelessWidget {
-  const _LocalFirstHero({required this.onNavigateToTools});
-  final VoidCallback onNavigateToTools;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF1D3157), Color(0xFF17233A), Color(0xFF142238)],
-          ),
-          border: Border.all(color: _mint.withValues(alpha: .18)),
-        ),
-        child: Stack(children: [
-          Positioned(
-            right: -12,
-            top: -18,
-            child: Icon(Icons.shield_outlined, size: 170, color: Colors.white.withValues(alpha: .035)),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(color: _mint.withValues(alpha: .12), borderRadius: BorderRadius.circular(30)),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.check_circle_outline, size: 16, color: _mint),
-                    const SizedBox(width: 6),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .6),
-                      child: Text(
-                        context.tr('Local mode · Works offline'),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: _mint, fontSize: 11, fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ]),
-                ),
-              ]),
-              const SizedBox(height: 14),
-              Text(context.tr('Your data. Your infrastructure.'),
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              Text(context.tr('DNS lookup, TLS inspection, and HTTP security headers run locally on this device.'),
-                  style: TextStyle(color: Colors.white.withValues(alpha: .76), height: 1.45)),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: onNavigateToTools,
-                icon: const Icon(Icons.arrow_forward_rounded),
-                label: Text(context.tr('Start a security check')),
-              ),
-            ]),
-          ),
-        ]),
-      );
-}
-
-class _AssistantModuleCard extends StatelessWidget {
-  const _AssistantModuleCard({required this.onOpen});
-  final VoidCallback onOpen;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(18),
-          onTap: onOpen,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(color: const Color(0xFF8066FF).withValues(alpha: .16), borderRadius: BorderRadius.circular(14)),
-                child: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFAA9AFF)),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(context.tr('AI assistant module'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 3),
-                Text(context.tr('Not connected · local security tools remain available'),
-                    style: TextStyle(color: Colors.white.withValues(alpha: .65), fontSize: 12)),
-              ])),
-              const Icon(Icons.arrow_forward_rounded),
-            ]),
-          ),
         ),
       );
 }
@@ -2023,61 +1869,6 @@ class SettingsScreen extends StatelessWidget {
       );
 }
 
-class _DashboardMetric extends StatelessWidget {
-  const _DashboardMetric({required this.icon, required this.value, required this.label, required this.onTap});
-  final IconData icon;
-  final String value;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-        width: 150,
-        child: Card(
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(children: [
-                Icon(icon, color: _mint),
-                const SizedBox(width: 12),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    transitionBuilder: (child, animation) => FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(begin: const Offset(0, .12), end: Offset.zero).animate(animation),
-                        child: child,
-                      ),
-                    ),
-                    child: Text(value, key: ValueKey(value), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                  ),
-                  Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
-                ])),
-              ]),
-            ),
-          ),
-        ),
-      );
-}
-
-class _DashboardSectionHeader extends StatelessWidget {
-  const _DashboardSectionHeader({required this.title, required this.icon, this.action});
-  final String title;
-  final IconData icon;
-  final Widget? action;
-
-  @override
-  Widget build(BuildContext context) => Row(children: [
-        Icon(icon, size: 19, color: _mint),
-        const SizedBox(width: 8),
-        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700))),
-        if (action != null) action!,
-      ]);
-}
-
 class _EmptyState extends StatelessWidget {
   const _EmptyState({required this.icon, required this.title, required this.detail, this.action});
   final IconData icon;
@@ -2199,6 +1990,7 @@ class ToolsScreen extends StatefulWidget {
     this.onFindings,
     this.onReportSaved,
     this.onReportSaveFailed,
+    required this.assessmentExecutionManager,
   });
 
   final List<ToolRunResult> recentResults;
@@ -2211,6 +2003,7 @@ class ToolsScreen extends StatefulWidget {
   final void Function(List<FindingRecord> findings)? onFindings;
   final void Function(ToolRunResult result)? onReportSaved;
   final void Function(Object error, StackTrace stack)? onReportSaveFailed;
+  final AssessmentExecutionManager assessmentExecutionManager;
 
   @override
   State<ToolsScreen> createState() => _ToolsScreenState();
@@ -2321,13 +2114,7 @@ class _ToolsScreenState extends State<ToolsScreen> {
               const SizedBox(height: 10),
               AssessmentRunner(
                 packageManager: widget.marketPackageManager,
-                onResult: widget.onResult,
-                activityStore: widget.activityStore,
-                onActivity: widget.onActivity,
-                findingRepository: widget.findingRepository,
-                onFindings: widget.onFindings,
-                onReportSaved: widget.onReportSaved,
-                onReportSaveFailed: widget.onReportSaveFailed,
+                executionManager: widget.assessmentExecutionManager,
               ),
             ] else ...[
               const SizedBox(height: 18),

@@ -1,10 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../core/activity_timeline.dart';
+import '../core/assessment_execution_manager.dart';
 import '../core/package_manager.dart';
-import '../core/runtime_manager.dart';
-import '../core/security_findings.dart';
-import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
@@ -12,26 +9,12 @@ import '../l10n/app_localizations.dart';
 class AssessmentRunner extends StatefulWidget {
   const AssessmentRunner({
     super.key,
-    required this.onResult,
-    this.orchestrator,
+    required this.executionManager,
     this.packageManager,
-    this.activityStore,
-    this.onActivity,
-    this.findingRepository,
-    this.onFindings,
-    this.onReportSaved,
-    this.onReportSaveFailed,
   });
 
-  final ValueChanged<ToolRunResult> onResult;
-  final ToolOrchestrator? orchestrator;
+  final AssessmentExecutionManager executionManager;
   final MarketPackageManager? packageManager;
-  final ActivityHistoryStore? activityStore;
-  final void Function(ActivityEvent event)? onActivity;
-  final FindingRepository? findingRepository;
-  final void Function(List<FindingRecord> findings)? onFindings;
-  final void Function(ToolRunResult result)? onReportSaved;
-  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
 
   @override
   State<AssessmentRunner> createState() => _AssessmentRunnerState();
@@ -39,31 +22,53 @@ class AssessmentRunner extends StatefulWidget {
 
 class _AssessmentRunnerState extends State<AssessmentRunner> {
   final _targetController = TextEditingController();
-  late final _orchestrator = widget.orchestrator ?? ToolOrchestrator(
-        packageManager: widget.packageManager,
-        activityStore: widget.activityStore,
-        onActivity: widget.onActivity,
-        findingRepository: widget.findingRepository,
-        onFindings: widget.onFindings,
-        onReportSaved: widget.onReportSaved,
-        onReportSaveFailed: widget.onReportSaveFailed,
-      );
   final Set<String> _selected = {};
   final Map<String, Future<ToolAvailability>> _readinessFutures = {};
-  Future<ToolAvailability> _readinessFor(String id) => _readinessFutures.putIfAbsent(id, () => _orchestrator.availabilityForTool(id));
-  final List<AssessmentCheckOutcome> _outcomes = [];
   bool _authorized = false;
   bool _allowPrivateNetwork = false;
-  bool _running = false;
-  bool _cancelRequested = false;
-  RuntimeCancellationToken? _cancellationToken;
-  String? _error;
-  String? _assessmentTarget;
+  bool _hideStoredOutcomes = false;
+  String? _startError;
+  String? _syncedRunId;
+
+  AssessmentRunView? get _runView => widget.executionManager.currentRun;
+  AssessmentRunView? get _activeRun => widget.executionManager.activeRun;
+  List<AssessmentCheckOutcome> get _outcomes => _hideStoredOutcomes ? const [] : (_runView?.outcomes ?? const []);
+  bool get _running => widget.executionManager.isRunning;
+  bool get _cancelRequested => _activeRun?.cancellationRequested ?? false;
+  String? get _error => _startError ?? (_hideStoredOutcomes ? null : _runView?.error);
+  String? get _assessmentTarget => _hideStoredOutcomes ? null : _runView?.target;
+
+  Future<ToolAvailability> _readinessFor(String id) =>
+      _readinessFutures.putIfAbsent(id, () => widget.executionManager.availabilityForTool(id));
 
   @override
   void initState() {
     super.initState();
+    final previousRun = widget.executionManager.currentRun;
+    if (previousRun != null) {
+      _syncedRunId = previousRun.runId;
+      _targetController.text = previousRun.target;
+      _selected.addAll(previousRun.selectedToolIds);
+      _authorized = previousRun.authorized;
+      _allowPrivateNetwork = previousRun.allowPrivateNetwork;
+    }
+    widget.executionManager.addListener(_executionChanged);
     widget.packageManager?.addListener(_refreshReadiness);
+  }
+
+  void _executionChanged() {
+    final run = widget.executionManager.currentRun;
+    if (run != null && run.runId != _syncedRunId) {
+      _syncedRunId = run.runId;
+      _targetController.text = run.target;
+      _selected
+        ..clear()
+        ..addAll(run.selectedToolIds);
+      _authorized = run.authorized;
+      _allowPrivateNetwork = run.allowPrivateNetwork;
+      _hideStoredOutcomes = false;
+    }
+    if (mounted) setState(() {});
   }
 
   void _refreshReadiness() {
@@ -74,6 +79,21 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   @override
   void didUpdateWidget(covariant AssessmentRunner oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.executionManager != widget.executionManager) {
+      oldWidget.executionManager.removeListener(_executionChanged);
+      widget.executionManager.addListener(_executionChanged);
+      _readinessFutures.clear();
+      final run = widget.executionManager.currentRun;
+      if (run != null) {
+        _syncedRunId = run.runId;
+        _targetController.text = run.target;
+        _selected
+          ..clear()
+          ..addAll(run.selectedToolIds);
+        _authorized = run.authorized;
+        _allowPrivateNetwork = run.allowPrivateNetwork;
+      }
+    }
     if (oldWidget.packageManager != widget.packageManager) {
       oldWidget.packageManager?.removeListener(_refreshReadiness);
       widget.packageManager?.addListener(_refreshReadiness);
@@ -83,6 +103,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
 
   @override
   void dispose() {
+    widget.executionManager.removeListener(_executionChanged);
     widget.packageManager?.removeListener(_refreshReadiness);
     _targetController.dispose();
     super.dispose();
@@ -115,9 +136,8 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             onChanged: (_) => setState(() {
               _authorized = false;
               _allowPrivateNetwork = false;
-              _error = null;
-              _outcomes.clear();
-              _assessmentTarget = null;
+              _startError = null;
+              _hideStoredOutcomes = true;
             }),
             decoration: InputDecoration(
               labelText: context.tr('Target domain or HTTPS URL'),
@@ -185,7 +205,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
               icon: _running
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.play_arrow_rounded),
-              label: Text(_running ? context.tr('Running selected checks…') : context.tr('Run assessment')),
+              label: Text(_running ? context.tr('Assessment already running') : context.tr('Run assessment')),
             ),
             if (_running)
               OutlinedButton.icon(
@@ -244,47 +264,26 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     );
   }
 
-  Future<void> _run() async {
-    final cancellationToken = RuntimeCancellationToken();
+  void _run() {
     setState(() {
-      _running = true;
-      _cancelRequested = false;
-      _cancellationToken = cancellationToken;
-      _error = null;
-      _outcomes.clear();
-      _assessmentTarget = null;
+      _startError = null;
+      _hideStoredOutcomes = false;
     });
-    try {
-      final execution = await _orchestrator.runAssessment(
-        target: _targetController.text,
-        toolIds: _selected,
-        authorized: _authorized,
-        allowPrivateNetwork: _allowPrivateNetwork,
-        cancellationToken: cancellationToken,
-        onOutcome: (outcome) {
-          if (!mounted) return;
-          setState(() => _outcomes.add(outcome));
-          if (outcome.result != null) widget.onResult(outcome.result!);
-        },
-      );
-      if (mounted) setState(() => _assessmentTarget = execution.target);
-    } on Exception catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      if (mounted) {
-        setState(() {
-          _running = false;
-          _cancelRequested = false;
-          _cancellationToken = null;
-        });
-      }
+    final result = widget.executionManager.startAssessment(
+      target: _targetController.text,
+      toolIds: List<String>.of(_selected),
+      authorized: _authorized,
+      allowPrivateNetwork: _allowPrivateNetwork,
+    );
+    if (!result.accepted && mounted) {
+      setState(() => _startError = context.tr('Another assessment is already running.'));
     }
   }
 
   void _cancel() {
-    if (_cancelRequested) return;
-    setState(() => _cancelRequested = true);
-    _cancellationToken?.cancel();
+    final run = _activeRun;
+    if (run == null) return;
+    widget.executionManager.cancelRun(run.runId);
   }
 
   String _selectionName(String id, BuildContext context) => switch (id) {

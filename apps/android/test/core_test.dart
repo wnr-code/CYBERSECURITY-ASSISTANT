@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
+import 'package:cybersecurity_assistant/core/assessment_execution_manager.dart';
 import 'package:cybersecurity_assistant/core/dart_security_tools_runtime.dart';
 import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
@@ -73,6 +74,30 @@ class _FailingActivityHistoryStore extends MemoryActivityHistoryStore {
   Future<void> upsertActivity(ActivityEvent event) async => throw StateError('Activity write failed.');
 }
 
+class _FailingDnsSecurityTools extends SecurityTools {
+  @override
+  Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async {
+    throw const ToolExecutionException('DNS fixture failed.');
+  }
+}
+
+class _CancelDuringAnalysisSecurityTools extends SecurityTools {
+  _CancelDuringAnalysisSecurityTools({required this.onAnalysis, required HostResolver hostResolver})
+      : super(hostResolver: hostResolver);
+
+  final void Function() onAnalysis;
+
+  @override
+  ToolRunResult analyze(List<ToolRunResult> results, {required String target}) {
+    final result = super.analyze(results, target: target);
+    // The built-in analyzer is synchronous. Request cancellation after its
+    // work returns but before the runtime accepts the result, exercising the
+    // adapter's cooperative post-execution cancellation check.
+    onAnalysis();
+    return result;
+  }
+}
+
 class _ScriptedSecurityTools extends SecurityTools {
   @override
   Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async => ToolRunResult(
@@ -106,6 +131,24 @@ class _ScriptedSecurityTools extends SecurityTools {
         completedAt: DateTime.utc(2026, 11, 23),
         authorizationConfirmed: authorized,
       );
+}
+
+Future<void> _waitForAssessmentTerminal(AssessmentExecutionManager manager) async {
+  if (manager.currentRun?.isRunning == false) return;
+  final completed = Completer<void>();
+  void listener() {
+    if (manager.currentRun?.isRunning == false && !completed.isCompleted) completed.complete();
+  }
+
+  manager.addListener(listener);
+  try {
+    if (manager.currentRun?.isRunning == false) {
+      completed.complete();
+    }
+    await completed.future.timeout(const Duration(seconds: 5));
+  } finally {
+    manager.removeListener(listener);
+  }
 }
 
 void main() {
@@ -569,6 +612,136 @@ void main() {
       expect(assessment.outcomes[1].error, contains('TLS fixture failed'));
       expect(assessment.outcomes.last.result?.findings.single.title, 'Fixture finding');
       expect(callbacks, hasLength(4));
+    });
+
+    test('real Orchestrator output reaches Manager in order without counting generated analysis', () async {
+      final tools = SecurityTools(hostResolver: (_) async => [InternetAddress('8.8.8.8')]);
+      final reported = <ToolRunResult>[];
+      final manager = AssessmentExecutionManager(
+        orchestrator: ToolOrchestrator(tools: tools),
+        onResult: reported.add,
+      );
+      addTearDown(manager.dispose);
+
+      final started = manager.startAssessment(
+        target: 'owned.example',
+        toolIds: const ['dns_lookup'],
+        authorized: true,
+        allowPrivateNetwork: false,
+      );
+      await _waitForAssessmentTerminal(manager);
+
+      final terminal = manager.currentRun!;
+      expect(terminal.runId, started.runId);
+      expect(terminal.outcomes.map((outcome) => outcome.toolId), ['dns_lookup', 'response_analyzer']);
+      expect(terminal.outcomes.map((outcome) => outcome.status), [
+        AssessmentCheckStatus.completed,
+        AssessmentCheckStatus.completed,
+      ]);
+      expect(terminal.outcomes.every((outcome) => outcome.result?.toolId == outcome.toolId), isTrue);
+      expect(terminal.outcomes.last.result!.details, contains(startsWith('dns_lookup:')));
+      expect(terminal.outcomes.where((outcome) => outcome.toolId == 'response_analyzer'), hasLength(1));
+      expect(terminal.outcomes.any((outcome) => outcome.toolId == 'tls_inspector'), isFalse);
+      expect(terminal.outcomes.any((outcome) => outcome.toolId == 'unregistered_plugin_tool'), isFalse);
+      expect(terminal.selectedToolIds, ['dns_lookup']);
+      expect(terminal.progress.selectedCount, 1);
+      expect(terminal.progress.completedCount, 1);
+      expect(terminal.progress.processedCount, 1);
+      expect(terminal.progress.fraction, 1);
+      expect(terminal.progress.fraction, lessThanOrEqualTo(1));
+      expect(reported.map((result) => result.toolId), ['dns_lookup', 'response_analyzer']);
+    });
+
+    test('real Orchestrator returns technical failure without fabricating analyzer success', () async {
+      final manager = AssessmentExecutionManager(orchestrator: ToolOrchestrator(tools: _FailingDnsSecurityTools()));
+      addTearDown(manager.dispose);
+
+      manager.startAssessment(
+        target: 'owned.example',
+        toolIds: const ['dns_lookup'],
+        authorized: true,
+        allowPrivateNetwork: false,
+      );
+      await _waitForAssessmentTerminal(manager);
+
+      final terminal = manager.currentRun!;
+      expect(terminal.outcomes.map((outcome) => outcome.toolId), ['dns_lookup']);
+      expect(terminal.outcomes.single.status, AssessmentCheckStatus.failed);
+      expect(terminal.outcomes.single.result, isNull);
+      expect(terminal.progress.selectedCount, 1);
+      expect(terminal.progress.failedCount, 1);
+      expect(terminal.progress.processedCount, 1);
+    });
+
+    test('real Orchestrator omits analyzer when cancellation arrives before its invocation', () async {
+      final manager = AssessmentExecutionManager(
+        orchestrator: ToolOrchestrator(tools: SecurityTools(hostResolver: (_) async => [InternetAddress('8.8.8.8')])),
+      );
+      addTearDown(manager.dispose);
+      var cancellationAttempted = false;
+      var cancellationSent = false;
+      void cancelAfterTechnicalOutcome() {
+        final active = manager.activeRun;
+        if (cancellationAttempted || active == null ||
+            !active.outcomes.any((outcome) => outcome.toolId == 'dns_lookup' && outcome.status == AssessmentCheckStatus.completed)) {
+          return;
+        }
+        cancellationAttempted = true;
+        cancellationSent = manager.cancelRun(active.runId);
+      }
+
+      manager.addListener(cancelAfterTechnicalOutcome);
+      addTearDown(() => manager.removeListener(cancelAfterTechnicalOutcome));
+      manager.startAssessment(
+        target: 'owned.example',
+        toolIds: const ['dns_lookup'],
+        authorized: true,
+        allowPrivateNetwork: false,
+      );
+      await _waitForAssessmentTerminal(manager);
+
+      expect(cancellationSent, isTrue);
+      expect(manager.currentRun?.outcomes.map((outcome) => outcome.toolId), ['dns_lookup']);
+      expect(manager.currentRun?.wasCancelled, isTrue);
+      expect(manager.currentRun?.progress.selectedCount, 1);
+      expect(manager.currentRun?.progress.processedCount, 1);
+    });
+
+    test('real Orchestrator reports analyzer cancellation if cancellation arrives during analysis', () async {
+      late final AssessmentExecutionManager manager;
+      var cancellationAccepted = false;
+      var analyzerStarted = false;
+      final tools = _CancelDuringAnalysisSecurityTools(
+        hostResolver: (_) async => [InternetAddress('8.8.8.8')],
+        onAnalysis: () {
+          analyzerStarted = true;
+          final runId = manager.activeRun?.runId;
+          if (runId != null) cancellationAccepted = manager.cancelRun(runId);
+        },
+      );
+      manager = AssessmentExecutionManager(orchestrator: ToolOrchestrator(tools: tools));
+      addTearDown(manager.dispose);
+
+      manager.startAssessment(
+        target: 'owned.example',
+        toolIds: const ['dns_lookup'],
+        authorized: true,
+        allowPrivateNetwork: false,
+      );
+      await _waitForAssessmentTerminal(manager);
+
+      final outcomes = manager.currentRun!.outcomes;
+      expect(analyzerStarted, isTrue, reason: 'The real analyzer implementation must be entered before cancellation.');
+      expect(cancellationAccepted, isTrue);
+      expect(outcomes.map((outcome) => outcome.toolId), ['dns_lookup', 'response_analyzer']);
+      expect(outcomes.first.status, AssessmentCheckStatus.completed);
+      expect(outcomes.first.result?.toolId, 'dns_lookup');
+      expect(outcomes.last.status, AssessmentCheckStatus.cancelled);
+      expect(outcomes.last.result, isNull);
+      expect(manager.currentRun?.wasCancelled, isTrue);
+      expect(manager.currentRun?.progress.selectedCount, 1);
+      expect(manager.currentRun?.progress.processedCount, 1);
+      expect(manager.currentRun?.progress.fraction, lessThanOrEqualTo(1));
     });
 
     test('records assessment and actual tool lifecycle events without duplicate rows', () async {
