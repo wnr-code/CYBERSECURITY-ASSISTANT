@@ -62,6 +62,8 @@ MarketPackage _fixturePackage({
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Market catalog', () {
     test('blocks untrusted hosts and private DNS answers before package HTTP requests', () async {
       var resolutions = 0;
