@@ -14,6 +14,7 @@ import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
 import 'core/security_tools.dart';
 import 'core/startup_trace.dart';
+import 'core/tool_orchestrator.dart';
 import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
@@ -208,6 +209,7 @@ class _MainShellState extends State<MainShell> {
     StartupTrace.mark('dashboard-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
     _marketPackageManager = MarketPackageManager.bundled();
+    unawaited(_synchronizeMarketRuntimeAvailability());
     final startupResults = widget.initialSavedResults;
     if (startupResults != null) {
       _savedResults = List.unmodifiable(startupResults);
@@ -280,6 +282,16 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _clearResults() => setState(_recentResults.clear);
+
+  Future<void> _synchronizeMarketRuntimeAvailability() async {
+    try {
+      final runtimeManager = await ToolOrchestrator.sharedRuntimeManager;
+      await runtimeManager.discover();
+      _marketPackageManager.updateAvailableRuntimes(runtimeManager.availableRuntimeIds);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+    }
+  }
 
   Future<void> _loadSavedResults() async {
     StartupTrace.mark('sqlite-history-start');
@@ -1407,9 +1419,12 @@ class _ToolsScreenState extends State<ToolsScreen> {
                     title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
                     subtitle: Padding(
                       padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(tool.status, context)}\n${_toolDisplayDescription(tool.id, context)}',
-                        style: const TextStyle(height: 1.4),
+                      child: FutureBuilder<ToolStatus>(
+                        future: ToolOrchestrator.sharedRuntimeManager.then((_) => ToolOrchestrator().statusForTool(tool.id)),
+                        builder: (context, snapshot) => Text(
+                          '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(snapshot.data ?? ToolStatus.environmentRequired, context)}\n${_toolDisplayDescription(tool.id, context)}',
+                          style: const TextStyle(height: 1.4),
+                        ),
                       ),
                     ),
                     trailing: const Icon(Icons.chevron_right),

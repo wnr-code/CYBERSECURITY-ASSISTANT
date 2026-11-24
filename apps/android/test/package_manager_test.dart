@@ -64,6 +64,20 @@ MarketPackage _fixturePackage({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('Market runtime integration', () {
+    test('bundled tool metadata follows registered runtime availability and executable Market runtimes stay unsupported', () {
+      final manager = MarketPackageManager.bundled();
+      final tool = bundledMarketCatalog.firstWhere((package) => package.id == 'tool.dns-lookup');
+      final external = bundledMarketCatalog.firstWhere((package) => package.id == 'runtime.embedded');
+      expect(manager.statusFor(tool), PackageStatus.incompatible);
+      expect(manager.canInstall(external), isFalse);
+      manager.updateAvailableRuntimes(const {'runtime.dart.security-tools'});
+      expect(manager.statusFor(tool), PackageStatus.installed);
+      expect(manager.statusFor(external), PackageStatus.incompatible);
+      manager.dispose();
+    });
+  });
+
   group('Market catalog', () {
     test('blocks untrusted hosts and private DNS answers before package HTTP requests', () async {
       var resolutions = 0;

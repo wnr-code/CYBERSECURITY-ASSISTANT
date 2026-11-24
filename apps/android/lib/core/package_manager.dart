@@ -102,6 +102,12 @@ class CompatibilityEnvironment {
   /// Null means the ABI could not be established; ABI-specific packages are limited, not declared ready.
   final String? architecture;
   final Set<String> availableRuntimes;
+
+  CompatibilityEnvironment copyWith({Set<String>? availableRuntimes}) => CompatibilityEnvironment(
+        platform: platform,
+        architecture: architecture,
+        availableRuntimes: availableRuntimes ?? this.availableRuntimes,
+      );
 }
 
 class PackageCompatibilityResult {
@@ -535,13 +541,14 @@ const maxMarketPackageBytes = 50 * 1024 * 1024;
 class MarketPackageManager extends ChangeNotifier {
   MarketPackageManager({
     required List<MarketPackage> catalog,
-    required this.environment,
+    required CompatibilityEnvironment environment,
     required PackageDownloader downloader,
     Future<Directory> Function()? supportDirectoryProvider,
     PackageSignatureVerifier? signatureVerifier,
     this.maxPackageBytes = maxMarketPackageBytes,
     this.timeout = const Duration(seconds: 30),
   })  : _catalog = _validateCatalog(catalog),
+        _environment = environment,
         _downloadManager = PackageDownloadManager(downloader),
         _supportDirectoryProvider = supportDirectoryProvider ?? getApplicationSupportDirectory,
         _verifier = PackageVerifier(signatureVerifier: signatureVerifier);
@@ -552,7 +559,8 @@ class MarketPackageManager extends ChangeNotifier {
         downloader: BundledAndHttpPackageDownloader(trustedDownloadHosts: trustedDownloadHosts),
       );
 
-  final CompatibilityEnvironment environment;
+  CompatibilityEnvironment _environment;
+  CompatibilityEnvironment get environment => _environment;
   final PackageDownloadManager _downloadManager;
   final Future<Directory> Function() _supportDirectoryProvider;
   final PackageVerifier _verifier;
@@ -613,16 +621,21 @@ class MarketPackageManager extends ChangeNotifier {
     return result;
   }
 
+  void updateAvailableRuntimes(Set<String> availableRuntimes) {
+    _environment = _environment.copyWith(availableRuntimes: Set.unmodifiable(availableRuntimes));
+    notifyListeners();
+  }
+
   PackageStatus statusFor(MarketPackage package) {
     if (_busy.contains(package.id)) return _transientStatus[package.id] ?? PackageStatus.downloading;
     final explicit = _transientStatus[package.id];
     if (explicit == PackageStatus.failed) return PackageStatus.failed;
-    if (package.isBundledCore) return PackageStatus.installed;
     final compatibility = compatibilityFor(package).status;
     if (compatibility != PackageCompatibility.compatible ||
         (package.downloadSizeBytes != null && package.downloadSizeBytes! > maxPackageBytes)) {
       return PackageStatus.incompatible;
     }
+    if (package.isBundledCore) return PackageStatus.installed;
     if (explicit == PackageStatus.incompatible) {
       _transientStatus.remove(package.id);
       _errors.remove(package.id);
@@ -767,17 +780,17 @@ final bundledMarketCatalog = <MarketPackage>[
     platforms: ['Android'],
     architectures: ['any'],
     dependencies: [],
-    runtimeRequirements: [],
+    runtimeRequirements: ['runtime.dart.security-tools'],
     permissions: [],
     compatibility: PackageCompatibility.compatible,
-    installationGuide: 'Already included in the core app and registered in Tool Registry.',
+    installationGuide: 'Bundled Dart adapter is managed by Runtime Manager; this data catalog entry cannot install executable code.',
     payloadType: PackagePayloadType.jsonData,
     isBundledCore: true,
   ),
   MarketPackage(
     id: 'runtime.embedded',
-    name: 'Embedded Runtime (planned)',
-    description: 'Catalog metadata only. Runtime execution is not implemented or bundled.',
+    name: 'External Runtime Package (unsupported)',
+    description: 'Executable Market runtimes are unsupported. The app only runs reviewed Dart adapters bundled in the APK.',
     category: MarketCategory.runtime,
     version: '0.0.0',
     downloadSizeBytes: null,
@@ -790,7 +803,7 @@ final bundledMarketCatalog = <MarketPackage>[
     runtimeRequirements: [],
     permissions: [],
     compatibility: PackageCompatibility.unsupported,
-    installationGuide: 'Runtime package is a roadmap placeholder. No runtime or downloaded code can be executed.',
+    installationGuide: 'This external executable package cannot be installed or executed. Use the app-bundled Dart adapter instead.',
     payloadType: PackagePayloadType.nativeExecutable,
   ),
   MarketPackage(

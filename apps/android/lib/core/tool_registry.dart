@@ -31,6 +31,8 @@ class ToolDefinition {
     this.installationMethod = 'Built into the app',
     this.executionMethod = 'Registered Flutter adapter',
     this.requiredPermissions = const ['INTERNET'],
+    this.runtimeId = 'runtime.dart.security-tools',
+    this.requiredCapabilities = const {'network'},
   });
 
   final String id;
@@ -48,6 +50,8 @@ class ToolDefinition {
   final String installationMethod;
   final String executionMethod;
   final List<String> requiredPermissions;
+  final String? runtimeId;
+  final Set<String> requiredCapabilities;
 }
 
 /// Small, app-owned registry. Entries describe adapters implemented in this app;
@@ -85,6 +89,7 @@ const toolRegistry = <ToolDefinition>[
     status: ToolStatus.available,
     activeCheck: false,
     requiredPermissions: [],
+    requiredCapabilities: {},
   ),
 ];
 

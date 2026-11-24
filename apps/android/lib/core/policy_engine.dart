@@ -66,6 +66,34 @@ class PolicyEngine {
     return normalized == 'fd00:ec2::254' || normalized == 'fd20:ce::254';
   }
 
+  static const _runtimeToolCapabilities = <String, Set<String>>{
+    'dns_lookup': {'network'},
+    'tls_inspector': {'network'},
+    'http_headers': {'network'},
+    'response_analyzer': {},
+  };
+
+  /// Policy gate for the only built-in runtime operations. It is intentionally
+  /// a closed allowlist: no command strings or dynamically loaded tool IDs pass.
+  void authorizeRuntimeTool({
+    required String toolId,
+    required bool networkAuthorized,
+    required Set<String> requiredCapabilities,
+    required Set<String> grantedCapabilities,
+  }) {
+    final expected = _runtimeToolCapabilities[toolId];
+    if (expected == null) throw const PolicyException('Tool is not authorized by the runtime policy.');
+    if (requiredCapabilities.length != expected.length || !requiredCapabilities.containsAll(expected)) {
+      throw const PolicyException('Tool requested capabilities outside its least-privilege policy.');
+    }
+    if (!grantedCapabilities.containsAll(expected)) {
+      throw const PolicyException('Required runtime capabilities were not granted.');
+    }
+    if (expected.contains('network') && !networkAuthorized) {
+      throw const PolicyException('Confirm that you own or are authorized to assess this target.');
+    }
+  }
+
   /// Returns true for loopback, private, link-local, metadata, multicast,
   /// documentation, benchmark, unspecified, and other non-global IP ranges.
   static bool isRestrictedAddress(InternetAddress address) {

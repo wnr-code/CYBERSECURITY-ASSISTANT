@@ -683,7 +683,7 @@ class AppLocalizations {
     'Info ponsel (tanpa ID unik)': 'Device information (no unique ID)',
     'Belum tersedia': 'Not available yet',
     'Runtime tertanam': 'Embedded runtime',
-    'Belum ada runtime yang dapat dijalankan di versi aplikasi ini.': 'This app version does not include a runnable runtime.',
+    'Pemeriksaan bawaan berjalan melalui adapter Dart yang ada di aplikasi. Program executable dari Market tidak dijalankan.': 'Built-in checks run through a Dart adapter bundled in the app. Executable programs from Market are not run.',
     'Paket Market': 'Market packages',
     'Belum ada paket yang dipasang pengguna.': 'No user-installed packages.',
     'paket terpasang': 'installed packages',

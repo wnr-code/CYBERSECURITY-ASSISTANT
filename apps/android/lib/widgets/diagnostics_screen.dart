@@ -175,7 +175,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           _section(context, 'Info aplikasi dan ponsel', [
             ListTile(leading: const Icon(Icons.info_outline), title: Text(context.tr('Versi aplikasi')), subtitle: Text(_version.isEmpty ? context.tr('Sedang memuat…') : _version)),
             ListTile(leading: const Icon(Icons.phone_android), title: Text(context.tr('Info ponsel (tanpa ID unik)')), subtitle: Text(_device.isEmpty ? context.tr('Belum tersedia') : _device)),
-            ListTile(leading: const Icon(Icons.memory), title: Text(context.tr('Runtime tertanam')), subtitle: Text(context.tr('Belum ada runtime yang dapat dijalankan di versi aplikasi ini.'))),
+            ListTile(leading: const Icon(Icons.memory), title: Text(context.tr('Runtime tertanam')), subtitle: Text(context.tr('Pemeriksaan bawaan berjalan melalui adapter Dart yang ada di aplikasi. Program executable dari Market tidak dijalankan.'))),
             ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
               title: Text(context.tr('Paket Market')),
