@@ -9,8 +9,9 @@ import 'security_tools.dart';
 import 'tool_result_codec.dart';
 
 abstract interface class ResultHistoryStore {
-  Future<int> save(ToolRunResult result);
+  Future<int> save(ToolRunResult result, {String? assessmentId});
   Future<List<ToolRunResult>> loadRecent({int limit = 30});
+  Future<ToolRunResult?> loadReportById(String reportId);
   Future<void> clear();
   Future<void> close();
 }
@@ -30,7 +31,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
   static const tableName = 'scan_results';
   static const activityTableName = 'activity_events';
   static const findingTableName = 'security_findings';
-  static const _databaseVersion = 3;
+  static const _databaseVersion = 4;
   final sqflite.DatabaseFactory? _databaseFactoryOverride;
   sqflite.DatabaseFactory get _databaseFactory => _databaseFactoryOverride ?? sqflite.databaseFactory;
   final Future<String> Function() _databasePathProvider;
@@ -68,6 +69,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
           await _migrate(db, 1);
           await _migrate(db, 2);
           await _migrate(db, 3);
+          await _migrate(db, 4);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           for (var version = oldVersion + 1; version <= newVersion; version++) {
@@ -140,32 +142,74 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
         await db.execute('CREATE INDEX security_findings_severity ON $findingTableName(severity)');
         await db.execute('CREATE INDEX security_findings_status ON $findingTableName(status)');
         await db.execute('CREATE INDEX security_findings_category ON $findingTableName(category)');
+      case 4:
+        await db.execute('ALTER TABLE $tableName ADD COLUMN assessment_id TEXT');
+        final existingReports = await db.query(tableName, columns: ['id', 'result_key', 'tool_id', 'target', 'completed_at']);
+        final migratedIds = <String, String>{};
+        for (final row in existingReports) {
+          final completedAt = DateTime.tryParse(row['completed_at'] as String? ?? '');
+          final toolId = row['tool_id'];
+          final target = row['target'];
+          final legacyId = row['result_key'];
+          if (completedAt == null || toolId is! String || target is! String || legacyId is! String) continue;
+          final stableReportId = activityResultKey(toolId, target, completedAt);
+          await db.update(tableName, {'result_key': stableReportId}, where: 'id = ?', whereArgs: [row['id']]);
+          migratedIds[legacyId] = stableReportId;
+        }
+        for (final entry in migratedIds.entries) {
+          await db.update(activityTableName, {'source_result_key': entry.value},
+              where: 'source_result_key = ?', whereArgs: [entry.key]);
+        }
+        final findingRows = await db.query(findingTableName, columns: ['finding_id', 'source_report_keys_json']);
+        for (final finding in findingRows) {
+          final findingId = finding['finding_id'];
+          final rawKeys = finding['source_report_keys_json'];
+          if (findingId is! String || rawKeys is! String) continue;
+          try {
+            final decoded = jsonDecode(rawKeys);
+            if (decoded is! List) continue;
+            final updated = decoded.map((key) => key is String ? migratedIds[key] ?? key : key).toList();
+            if (updated.toString() != decoded.toString()) {
+              await db.update(findingTableName, {'source_report_keys_json': jsonEncode(updated)},
+                  where: 'finding_id = ?', whereArgs: [findingId]);
+            }
+          } on FormatException {
+            // Preserve malformed legacy metadata rather than risking data loss during upgrade.
+          }
+        }
       default:
         throw StateError('No safe SQLite migration is registered for schema version $version.');
     }
   }
 
   @override
-  Future<int> save(ToolRunResult result) async {
+  Future<int> save(ToolRunResult result, {String? assessmentId}) async {
     if (result.toolId == 'response_analyzer') {
       throw ArgumentError.value(result.toolId, 'result.toolId', 'Derived analyzer summaries are not stored.');
     }
     if (maxRecords < 1) throw StateError('maxRecords must be at least 1.');
     final db = await _open();
+    final persistedResult = assessmentId == null ? result : result.copyWith(assessmentId: assessmentId);
+    final reportId = activityResultKey(persistedResult.toolId, persistedResult.target, persistedResult.completedAt);
     return db.transaction((transaction) async {
-      final id = await transaction.insert(tableName, {
-        'result_key': '${result.toolId}|${result.target}|${result.completedAt.toUtc().microsecondsSinceEpoch}',
-        'tool_id': result.toolId,
-        'target': result.target,
-        'completed_at': result.completedAt.toUtc().toIso8601String(),
-        'authorization_confirmed': result.authorizationConfirmed ? 1 : 0,
-        'payload_json': encodeToolRunResult(result),
+      await transaction.insert(tableName, {
+        'result_key': reportId,
+        'tool_id': persistedResult.toolId,
+        'target': persistedResult.target,
+        'completed_at': persistedResult.completedAt.toUtc().toIso8601String(),
+        'authorization_confirmed': persistedResult.authorizationConfirmed ? 1 : 0,
+        'payload_json': encodeToolRunResult(persistedResult),
+        'assessment_id': persistedResult.assessmentId,
       }, conflictAlgorithm: sqflite.ConflictAlgorithm.ignore);
-      await transaction.rawDelete(
-        'DELETE FROM $tableName WHERE id NOT IN (SELECT id FROM $tableName ORDER BY id DESC LIMIT ?)',
-        [maxRecords],
-      );
-      return id;
+      if (persistedResult.assessmentId != null) {
+        await transaction.rawUpdate(
+          'UPDATE $tableName SET assessment_id = COALESCE(assessment_id, ?), payload_json = CASE WHEN assessment_id IS NULL THEN ? ELSE payload_json END WHERE result_key = ?',
+          [persistedResult.assessmentId, encodeToolRunResult(persistedResult), reportId],
+        );
+      }
+      final rows = await transaction.query(tableName, columns: ['id'], where: 'result_key = ?', whereArgs: [reportId], limit: 1);
+      if (rows.isEmpty) throw StateError('Saved report was not readable after its transaction.');
+      return rows.single['id'] as int;
     });
   }
 
@@ -177,6 +221,15 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
     return [
       for (final row in rows) decodeToolRunResult(row['payload_json'] as String),
     ];
+  }
+
+  @override
+  Future<ToolRunResult?> loadReportById(String reportId) async {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(reportId)) return null;
+    final db = await _open();
+    final rows = await db.query(tableName, where: 'result_key = ?', whereArgs: [reportId], limit: 1);
+    if (rows.isEmpty) return null;
+    return decodeToolRunResult(rows.single['payload_json'] as String);
   }
 
   @override
@@ -206,10 +259,14 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
       },
       conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
     );
-    await db.rawDelete(
-      'DELETE FROM $activityTableName WHERE event_id NOT IN (SELECT event_id FROM $activityTableName ORDER BY started_at DESC LIMIT ?)',
-      [500],
-    );
+  }
+
+  @override
+  Future<ActivityEvent?> loadActivityById(String eventId) async {
+    final db = await _open();
+    final rows = await db.query(activityTableName, where: 'event_id = ?', whereArgs: [eventId], limit: 1);
+    if (rows.isEmpty) return null;
+    return _activityFromRow(rows.single);
   }
 
   @override
@@ -258,23 +315,22 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
       orderBy: 'started_at DESC, event_id ASC',
       limit: safeLimit,
     );
-    return List.unmodifiable([
-      for (final row in rows)
-        ActivityEvent(
-          eventId: row['event_id'] as String,
-          kind: ActivityKind.values.byName(row['kind'] as String),
-          parentEventId: row['parent_event_id'] as String?,
-          toolId: row['tool_id'] as String?,
-          target: row['target'] as String,
-          status: ActivityStatus.values.byName(row['status'] as String),
-          startedAt: DateTime.parse(row['started_at'] as String).toUtc(),
-          finishedAt: row['finished_at'] == null ? null : DateTime.parse(row['finished_at'] as String).toUtc(),
-          summary: row['summary'] as String?,
-          findingCount: row['finding_count'] as int?,
-          sourceResultKey: row['source_result_key'] as String?,
-        ).validated(),
-    ]);
+    return List.unmodifiable(rows.map(_activityFromRow));
   }
+
+  ActivityEvent _activityFromRow(Map<String, Object?> row) => ActivityEvent(
+        eventId: row['event_id'] as String,
+        kind: ActivityKind.values.byName(row['kind'] as String),
+        parentEventId: row['parent_event_id'] as String?,
+        toolId: row['tool_id'] as String?,
+        target: row['target'] as String,
+        status: ActivityStatus.values.byName(row['status'] as String),
+        startedAt: DateTime.parse(row['started_at'] as String).toUtc(),
+        finishedAt: row['finished_at'] == null ? null : DateTime.parse(row['finished_at'] as String).toUtc(),
+        summary: row['summary'] as String?,
+        findingCount: row['finding_count'] as int?,
+        sourceResultKey: row['source_result_key'] as String?,
+      ).validated();
 
   @override
   Future<void> clearActivities() async {

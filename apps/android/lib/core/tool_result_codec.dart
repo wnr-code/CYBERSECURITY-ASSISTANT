@@ -22,6 +22,7 @@ String encodeToolRunResult(ToolRunResult result) => jsonEncode({
       ],
       'completedAt': result.completedAt.toUtc().toIso8601String(),
       'authorizationConfirmed': result.authorizationConfirmed,
+      if (result.assessmentId != null) 'assessmentId': result.assessmentId,
     });
 
 ToolRunResult decodeToolRunResult(String json) {
@@ -39,6 +40,10 @@ ToolRunResult decodeToolRunResult(String json) {
   final rawDetails = decoded['details'];
   final rawFindings = decoded['findings'];
   final rawAuthorization = decoded['authorizationConfirmed'];
+  final rawAssessmentId = decoded['assessmentId'];
+  if (rawAssessmentId != null && (rawAssessmentId is! String || rawAssessmentId.length > 128)) {
+    throw const FormatException('Stored assessment linkage is invalid.');
+  }
   if (rawDetails is! List || rawDetails.any((value) => value is! String)) {
     throw const FormatException('Stored tool result details are invalid.');
   }
@@ -104,5 +109,6 @@ ToolRunResult decodeToolRunResult(String json) {
     findings: findings,
     completedAt: completedAt.toUtc(),
     authorizationConfirmed: rawAuthorization,
+    assessmentId: rawAssessmentId as String?,
   );
 }

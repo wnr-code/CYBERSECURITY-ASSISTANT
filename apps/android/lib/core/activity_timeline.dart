@@ -81,6 +81,7 @@ class ActivityEvent {
 
 abstract interface class ActivityHistoryStore {
   Future<void> upsertActivity(ActivityEvent event);
+  Future<ActivityEvent?> loadActivityById(String eventId);
   Future<List<ActivityEvent>> loadActivities({
     int limit = 500,
     DateTime? from,
@@ -112,6 +113,9 @@ class MemoryActivityHistoryStore implements ActivityHistoryStore {
         ..addEntries(ordered.take(maxRecords).map((entry) => MapEntry(entry.eventId, entry)));
     }
   }
+
+  @override
+  Future<ActivityEvent?> loadActivityById(String eventId) async => _events[eventId];
 
   @override
   Future<List<ActivityEvent>> loadActivities({

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
@@ -89,28 +90,47 @@ void main() {
     expect(loaded.single.target, 'restart-persist.example');
   });
 
-  test('re-saving the same check does not create a duplicate record', () async {
+  test('re-saving the same check does not create a duplicate and retains assessment linkage', () async {
     final store = createStore();
     addTearDown(store.close);
     final saved = result('example.com');
 
     await store.save(saved);
-    await store.save(saved);
+    final id = activityResultKey(saved.toolId, saved.target, saved.completedAt);
+    await store.save(saved, assessmentId: 'assessment-event-1');
+    await store.save(saved, assessmentId: 'assessment-event-2');
 
     expect(await store.loadRecent(), hasLength(1));
+    expect((await store.loadReportById(id))?.assessmentId, 'assessment-event-1');
+    expect(await store.loadReportById('not-a-report-id'), isNull);
   });
 
-  test('limits recent history and clear removes stored results', () async {
-    final store = createStore(maxRecords: 2);
-    addTearDown(store.close);
+  test('keeps older reports when recent results are capped and clears only on explicit request', () async {
+    final directory = await Directory.systemTemp.createTemp('cybersecurity-report-retention-');
+    final databasePath = p.join(directory.path, 'history.sqlite');
+    final firstStore = LocalResultStore(
+      databaseFactory: databaseFactoryFfi,
+      databasePathProvider: () async => databasePath,
+      maxRecords: 2,
+    );
+    await firstStore.save(result('one.example'));
+    await firstStore.save(result('two.example'));
+    await firstStore.save(result('three.example'));
+    expect((await firstStore.loadRecent()).map((entry) => entry.target), ['three.example', 'two.example']);
+    await firstStore.close();
 
-    await store.save(result('one.example'));
-    await store.save(result('two.example'));
-    await store.save(result('three.example'));
-
-    expect((await store.loadRecent()).map((entry) => entry.target), ['three.example', 'two.example']);
-    await store.clear();
-    expect(await store.loadRecent(), isEmpty);
+    final reopenedStore = LocalResultStore(
+      databaseFactory: databaseFactoryFfi,
+      databasePathProvider: () async => databasePath,
+      maxRecords: 10,
+    );
+    addTearDown(() async {
+      await reopenedStore.close();
+      await directory.delete(recursive: true);
+    });
+    expect((await reopenedStore.loadRecent(limit: 10)).map((entry) => entry.target), ['three.example', 'two.example', 'one.example']);
+    await reopenedStore.clear();
+    expect(await reopenedStore.loadRecent(), isEmpty);
   });
 
   test('activity timeline persists across store reopen, deduplicates updates and supports filters', () async {
@@ -162,6 +182,62 @@ void main() {
     expect(loaded.single.finishedAt, startedAt.add(const Duration(seconds: 4)));
     expect(loaded.single.findingCount, 1);
     expect(loaded.single.summary, 'TLS completed.');
+    expect((await reopenedStore.loadActivityById('tool-persisted-1'))?.status, ActivityStatus.completed);
+  });
+
+  test('version three migration replaces legacy report keys without losing data', () async {
+    final directory = await Directory.systemTemp.createTemp('cybersecurity-v3-migration-');
+    final databasePath = p.join(directory.path, 'legacy-v3.sqlite');
+    final legacyResult = result('legacy-v3.example');
+    final legacyDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(
+        version: 3,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE scan_results (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              result_key TEXT NOT NULL UNIQUE,
+              tool_id TEXT NOT NULL,
+              target TEXT NOT NULL,
+              completed_at TEXT NOT NULL,
+              authorization_confirmed INTEGER NOT NULL,
+              payload_json TEXT NOT NULL
+            )
+          ''');
+          await db.execute('CREATE TABLE activity_events (event_id TEXT PRIMARY KEY, source_result_key TEXT)');
+          await db.execute('CREATE TABLE security_findings (finding_id TEXT PRIMARY KEY, source_report_keys_json TEXT NOT NULL)');
+          final legacyReportId = 'dns_lookup|legacy-v3.example|${legacyResult.completedAt.toUtc().microsecondsSinceEpoch}';
+          await db.insert('scan_results', {
+            'result_key': legacyReportId,
+            'tool_id': legacyResult.toolId,
+            'target': legacyResult.target,
+            'completed_at': legacyResult.completedAt.toUtc().toIso8601String(),
+            'authorization_confirmed': 1,
+            'payload_json': encodeToolRunResult(legacyResult),
+          });
+          await db.insert('activity_events', {'event_id': 'legacy-activity', 'source_result_key': legacyReportId});
+          await db.insert('security_findings', {'finding_id': 'legacy-finding', 'source_report_keys_json': jsonEncode([legacyReportId])});
+        },
+      ),
+    );
+    await legacyDatabase.close();
+
+    final upgradedStore = LocalResultStore(
+      databaseFactory: databaseFactoryFfi,
+      databasePathProvider: () async => databasePath,
+    );
+    addTearDown(() async {
+      await upgradedStore.close();
+      await directory.delete(recursive: true);
+    });
+    final stableId = activityResultKey(legacyResult.toolId, legacyResult.target, legacyResult.completedAt);
+    expect((await upgradedStore.loadReportById(stableId))?.target, 'legacy-v3.example');
+    expect(await upgradedStore.loadRecent(), hasLength(1));
+    final db = await databaseFactoryFfi.openDatabase(databasePath, options: OpenDatabaseOptions(version: 4));
+    expect((await db.query('activity_events')).single['source_result_key'], stableId);
+    expect(jsonDecode((await db.query('security_findings')).single['source_report_keys_json'] as String), [stableId]);
+    await db.close();
   });
 
   test('version one database migrates without losing saved reports', () async {

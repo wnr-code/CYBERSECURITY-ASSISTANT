@@ -17,6 +17,8 @@ class AssessmentRunner extends StatefulWidget {
     this.onActivity,
     this.findingRepository,
     this.onFindings,
+    this.onReportSaved,
+    this.onReportSaveFailed,
   });
 
   final ValueChanged<ToolRunResult> onResult;
@@ -25,6 +27,8 @@ class AssessmentRunner extends StatefulWidget {
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
   final void Function(List<FindingRecord> findings)? onFindings;
+  final void Function(ToolRunResult result)? onReportSaved;
+  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
 
   @override
   State<AssessmentRunner> createState() => _AssessmentRunnerState();
@@ -37,6 +41,8 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
         onActivity: widget.onActivity,
         findingRepository: widget.findingRepository,
         onFindings: widget.onFindings,
+        onReportSaved: widget.onReportSaved,
+        onReportSaveFailed: widget.onReportSaveFailed,
       );
   final Set<String> _selected = {'dns_lookup', 'tls_inspector', 'http_headers'};
   final List<AssessmentCheckOutcome> _outcomes = [];

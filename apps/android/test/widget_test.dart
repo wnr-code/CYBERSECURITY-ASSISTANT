@@ -52,7 +52,10 @@ class _MemoryResultHistory implements ResultHistoryStore {
   int loadCalls = 0;
 
   @override
-  Future<int> save(ToolRunResult result) async => 1;
+  Future<int> save(ToolRunResult result, {String? assessmentId}) async => 1;
+
+  @override
+  Future<ToolRunResult?> loadReportById(String reportId) async => null;
 
   @override
   Future<List<ToolRunResult>> loadRecent({int limit = 30}) {

@@ -46,6 +46,7 @@ class ToolRunResult {
     required this.findings,
     required this.completedAt,
     this.authorizationConfirmed = false,
+    this.assessmentId,
   });
 
   final String toolId;
@@ -56,6 +57,19 @@ class ToolRunResult {
   final DateTime completedAt;
   /// Records that the in-app confirmation gate was accepted; it is not proof of authorization.
   final bool authorizationConfirmed;
+  /// Parent assessment event ID when this result was produced as part of an assessment.
+  final String? assessmentId;
+
+  ToolRunResult copyWith({String? assessmentId}) => ToolRunResult(
+        toolId: toolId,
+        target: target,
+        summary: summary,
+        details: details,
+        findings: findings,
+        completedAt: completedAt,
+        authorizationConfirmed: authorizationConfirmed,
+        assessmentId: assessmentId ?? this.assessmentId,
+      );
 }
 
 class ToolExecutionException implements Exception {

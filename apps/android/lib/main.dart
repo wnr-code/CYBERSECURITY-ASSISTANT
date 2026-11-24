@@ -298,9 +298,28 @@ class _MainShellState extends State<MainShell> {
 
   void _rememberResult(ToolRunResult result) {
     setState(() {
+      final reportId = activityResultKey(result.toolId, result.target, result.completedAt);
+      _recentResults.removeWhere((item) => activityResultKey(item.toolId, item.target, item.completedAt) == reportId);
       _recentResults.insert(0, result);
       if (_recentResults.length > 30) _recentResults.removeLast();
     });
+  }
+
+  void _acceptSavedReport(ToolRunResult result) {
+    if (!mounted) return;
+    final reportId = activityResultKey(result.toolId, result.target, result.completedAt);
+    setState(() {
+      _savedResults.removeWhere((item) => activityResultKey(item.toolId, item.target, item.completedAt) == reportId);
+      _savedResults.insert(0, result);
+      if (_savedResults.length > 500) _savedResults.removeRange(500, _savedResults.length);
+      _storageError = null;
+    });
+  }
+
+  void _reportSaveFailed(Object _, StackTrace __) {
+    if (!mounted) return;
+    setState(() => _storageError = 'Could not save the result to local history.');
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Could not save the result locally.'))));
   }
 
   Future<void> _openActivitySource(ActivityEvent event) async {
@@ -316,13 +335,7 @@ class _MainShellState extends State<MainShell> {
       }
       if (sourceResult == null) {
         try {
-          final persisted = await _resultStore.loadRecent(limit: 500);
-          for (final result in persisted) {
-            if (activityResultKey(result.toolId, result.target, result.completedAt) == sourceKey) {
-              sourceResult = result;
-              break;
-            }
-          }
+          sourceResult = await _resultStore.loadReportById(sourceKey);
         } catch (error, stack) {
           DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
         }
@@ -440,15 +453,9 @@ class _MainShellState extends State<MainShell> {
     }
     if (assessmentEvent == null) {
       try {
-        final loaded = await _activityStore.loadActivities(limit: 500);
-        for (final event in loaded) {
-          if (event.eventId == assessmentId) {
-            assessmentEvent = event;
-            break;
-          }
-        }
-        if (mounted) {
-          final byId = {for (final event in _activityEvents) event.eventId: event, for (final event in loaded) event.eventId: event};
+        assessmentEvent = await _activityStore.loadActivityById(assessmentId);
+        if (assessmentEvent != null && mounted) {
+          final byId = {for (final event in _activityEvents) event.eventId: event, assessmentEvent!.eventId: assessmentEvent!};
           setState(() => _activityEvents = byId.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt)));
         }
       } catch (error, stack) {
@@ -468,12 +475,7 @@ class _MainShellState extends State<MainShell> {
     }
     if (result == null) {
       try {
-        for (final candidate in await _resultStore.loadRecent(limit: 500)) {
-          if (activityResultKey(candidate.toolId, candidate.target, candidate.completedAt) == sourceReportKey) {
-            result = candidate;
-            break;
-          }
-        }
+        result = await _resultStore.loadReportById(sourceReportKey);
       } catch (error, stack) {
         DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       }
@@ -644,6 +646,8 @@ class _MainShellState extends State<MainShell> {
         onActivity: _acceptActivity,
         findingRepository: _findingRepository,
         onFindings: _acceptFindings,
+        onReportSaved: _acceptSavedReport,
+        onReportSaveFailed: _reportSaveFailed,
       ),
       ReportsScreen(
         recentResults: recentResults,
@@ -1303,10 +1307,19 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = <_ReportEntry>[
-      if (_filter != _ReportFilter.saved) for (final result in widget.recentResults) _ReportEntry(result: result, saved: false),
-      if (_filter != _ReportFilter.session) for (final result in widget.savedResults) _ReportEntry(result: result, saved: true),
-    ];
+    final rowsByReportId = <String, _ReportEntry>{};
+    if (_filter != _ReportFilter.saved) {
+      for (final result in widget.recentResults) {
+        rowsByReportId[activityResultKey(result.toolId, result.target, result.completedAt)] = _ReportEntry(result: result, saved: false);
+      }
+    }
+    if (_filter != _ReportFilter.session) {
+      for (final result in widget.savedResults) {
+        rowsByReportId[activityResultKey(result.toolId, result.target, result.completedAt)] = _ReportEntry(result: result, saved: true);
+      }
+    }
+    final rows = rowsByReportId.values.toList()
+      ..sort((a, b) => b.result.completedAt.compareTo(a.result.completedAt));
     final findingQuery = _findingQueryController.text.trim().toLowerCase();
     final findingTarget = _findingTargetController.text.trim().toLowerCase();
     final findingCategory = _findingCategoryController.text.trim().toLowerCase();
@@ -2181,6 +2194,8 @@ class ToolsScreen extends StatefulWidget {
     this.onActivity,
     this.findingRepository,
     this.onFindings,
+    this.onReportSaved,
+    this.onReportSaveFailed,
   });
 
   final List<ToolRunResult> recentResults;
@@ -2190,6 +2205,8 @@ class ToolsScreen extends StatefulWidget {
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
   final void Function(List<FindingRecord> findings)? onFindings;
+  final void Function(ToolRunResult result)? onReportSaved;
+  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
 
   @override
   State<ToolsScreen> createState() => _ToolsScreenState();
@@ -2280,6 +2297,8 @@ class _ToolsScreenState extends State<ToolsScreen> {
                 onActivity: widget.onActivity,
                 findingRepository: widget.findingRepository,
                 onFindings: widget.onFindings,
+                onReportSaved: widget.onReportSaved,
+                onReportSaveFailed: widget.onReportSaveFailed,
               ),
             ] else ...[
               const SizedBox(height: 18),
@@ -2358,6 +2377,8 @@ class _ToolsScreenState extends State<ToolsScreen> {
                         onActivity: widget.onActivity,
                         findingRepository: widget.findingRepository,
                         onFindings: widget.onFindings,
+                        onReportSaved: widget.onReportSaved,
+                        onReportSaveFailed: widget.onReportSaveFailed,
                       ),
                     ),
                   ),
@@ -2936,6 +2957,8 @@ Future<void> _showToolRunner(
   void Function(ActivityEvent event)? onActivity,
   FindingRepository? findingRepository,
   void Function(List<FindingRecord> findings)? onFindings,
+  void Function(ToolRunResult result)? onReportSaved,
+  void Function(Object error, StackTrace stack)? onReportSaveFailed,
 }) async {
   final result = await showDialog<ToolRunResult>(
     context: context,
@@ -2947,6 +2970,8 @@ Future<void> _showToolRunner(
       onActivity: onActivity,
       findingRepository: findingRepository,
       onFindings: onFindings,
+      onReportSaved: onReportSaved,
+      onReportSaveFailed: onReportSaveFailed,
     ),
   );
   if (result != null) onResult(result);

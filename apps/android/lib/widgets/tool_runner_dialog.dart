@@ -113,6 +113,8 @@ class ToolRunnerDialog extends StatefulWidget {
     this.onActivity,
     this.findingRepository,
     this.onFindings,
+    this.onReportSaved,
+    this.onReportSaveFailed,
   });
 
   final ToolDefinition tool;
@@ -122,6 +124,8 @@ class ToolRunnerDialog extends StatefulWidget {
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
   final void Function(List<FindingRecord> findings)? onFindings;
+  final void Function(ToolRunResult result)? onReportSaved;
+  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
 
   @override
   State<ToolRunnerDialog> createState() => _ToolRunnerDialogState();
@@ -141,6 +145,8 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
         onActivity: widget.onActivity,
         findingRepository: widget.findingRepository,
         onFindings: widget.onFindings,
+        onReportSaved: widget.onReportSaved,
+        onReportSaveFailed: widget.onReportSaveFailed,
       );
   bool _authorized = false;
   bool _running = false;

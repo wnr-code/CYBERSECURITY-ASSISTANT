@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/github_releases.dart';
+import 'package:cybersecurity_assistant/core/local_result_store.dart';
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
 import 'package:cybersecurity_assistant/core/provider_registry.dart';
 import 'package:cybersecurity_assistant/core/report_exporter.dart';
@@ -41,6 +42,33 @@ class _PendingDnsSecurityTools extends SecurityTools {
     httpCalls++;
     throw StateError('HTTP should not run after cancellation.');
   }
+}
+
+class _FailingReportHistoryStore implements ResultHistoryStore {
+  int saveCalls = 0;
+
+  @override
+  Future<int> save(ToolRunResult result, {String? assessmentId}) async {
+    saveCalls++;
+    throw StateError('SQLite write failed.');
+  }
+
+  @override
+  Future<List<ToolRunResult>> loadRecent({int limit = 30}) async => const [];
+
+  @override
+  Future<ToolRunResult?> loadReportById(String reportId) async => null;
+
+  @override
+  Future<void> clear() async {}
+
+  @override
+  Future<void> close() async {}
+}
+
+class _FailingActivityHistoryStore extends MemoryActivityHistoryStore {
+  @override
+  Future<void> upsertActivity(ActivityEvent event) async => throw StateError('Activity write failed.');
 }
 
 class _ScriptedSecurityTools extends SecurityTools {
@@ -573,6 +601,47 @@ void main() {
       expect(persistedFindings.single.assessmentId, assessmentEvent.eventId);
       expect(persistedFindings.single.sourceReportKeys, hasLength(1));
       expect(persistedFindings.single.status, FindingStatus.open);
+    });
+
+    test('reports a local report-save failure without claiming a report reference', () async {
+      final activityStore = MemoryActivityHistoryStore();
+      final reportStore = _FailingReportHistoryStore();
+      var surfacedSaveFailure = false;
+      final orchestrator = ToolOrchestrator(
+        tools: _ScriptedSecurityTools(),
+        activityStore: activityStore,
+        reportStore: reportStore,
+        onReportSaveFailed: (_, __) => surfacedSaveFailure = true,
+      );
+
+      final result = await orchestrator.execute(const ToolInvocation(
+        toolId: 'dns_lookup',
+        target: 'example.com',
+        authorized: true,
+      ));
+      final activity = (await activityStore.loadActivities()).single;
+
+      expect(result.toolId, 'dns_lookup');
+      expect(reportStore.saveCalls, 1);
+      expect(surfacedSaveFailure, isTrue);
+      expect(activity.status, ActivityStatus.completed);
+      expect(activity.summary, startsWith('Report persistence failed.'));
+      expect(activity.sourceResultKey, isNull);
+    });
+
+    test('does not return a completed result when activity persistence fails', () async {
+      final orchestrator = ToolOrchestrator(
+        tools: _ScriptedSecurityTools(),
+        activityStore: _FailingActivityHistoryStore(),
+      );
+      await expectLater(
+        orchestrator.execute(const ToolInvocation(
+          toolId: 'dns_lookup',
+          target: 'example.com',
+          authorized: true,
+        )),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('cancelling a running check stops the assessment before later checks and analysis', () async {

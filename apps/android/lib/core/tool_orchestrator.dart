@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:io';
 
 import 'activity_timeline.dart';
 import 'diagnostics.dart';
 import 'dart_security_tools_runtime.dart';
 import 'runtime_manager.dart';
+import 'local_result_store.dart';
 import 'security_findings.dart';
 import 'security_tools.dart';
 import 'tool_registry.dart';
@@ -70,7 +72,11 @@ class ToolOrchestrator {
     this.onActivity,
     this.findingRepository,
     this.onFindings,
-  })  : _tools = tools ?? SecurityTools() {
+    ResultHistoryStore? reportStore,
+    this.onReportSaved,
+    this.onReportSaveFailed,
+  })  : _tools = tools ?? SecurityTools(),
+        reportStore = reportStore ?? (activityStore is ResultHistoryStore ? activityStore as ResultHistoryStore : null) {
     _runtimeManager = runtimeManager != null
         ? Future.value(runtimeManager)
         : tools == null
@@ -87,7 +93,11 @@ class ToolOrchestrator {
   final void Function(ActivityEvent event)? onActivity;
   final FindingRepository? findingRepository;
   final void Function(List<FindingRecord> findings)? onFindings;
+  final ResultHistoryStore? reportStore;
+  final void Function(ToolRunResult result)? onReportSaved;
+  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
   static int _activitySequence = 0;
+  static final Random _activityRandom = Random.secure();
   late final Future<RuntimeManager> _runtimeManager;
 
   static Future<RuntimeManager> _createRuntimeManager(SecurityTools tools) async {
@@ -104,7 +114,7 @@ class ToolOrchestrator {
   Future<RuntimeManager> get runtimeManager async => _runtimeManager;
 
   static String _newActivityId(String prefix) =>
-      '$prefix-${DateTime.now().toUtc().microsecondsSinceEpoch}-${++_activitySequence}';
+      '$prefix-${DateTime.now().toUtc().microsecondsSinceEpoch}-${++_activitySequence}-${_activityRandom.nextInt(1 << 32).toRadixString(16)}';
 
   static String _boundedActivitySummary(String value) => sanitizeActivitySummary(value);
 
@@ -114,11 +124,35 @@ class ToolOrchestrator {
       await activityStore?.upsertActivity(validated);
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      rethrow;
     }
     try {
       onActivity?.call(validated);
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+    }
+  }
+
+  Future<bool> _saveReport(ToolRunResult result, {String? assessmentId}) async {
+    if (result.toolId == 'response_analyzer') return false;
+    final repository = reportStore;
+    if (repository == null) return false;
+    try {
+      await repository.save(result, assessmentId: assessmentId);
+      try {
+        onReportSaved?.call(result);
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      }
+      return true;
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      try {
+        onReportSaveFailed?.call(error, stack);
+      } catch (callbackError, callbackStack) {
+        DiagnosticReporter.recordGlobal(callbackError, stackTrace: callbackStack, category: DiagnosticCategory.runtime);
+      }
+      return false;
     }
   }
 
@@ -150,7 +184,10 @@ class ToolOrchestrator {
 
   Future<ToolStatus> statusForTool(String toolId) async {
     final definition = toolById(toolId);
-    if (definition == null) return ToolStatus.unsupported;
+    if (definition == null) {
+      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unknown tool ID was rejected by the local registry.'), category: DiagnosticCategory.runtime);
+      return ToolStatus.unsupported;
+    }
     if (definition.status == ToolStatus.unsupported) return ToolStatus.unsupported;
     final runtimeId = definition.runtimeId;
     if (runtimeId == null) return ToolStatus.environmentRequired;
@@ -175,7 +212,12 @@ class ToolOrchestrator {
 
   Future<ToolRunResult> execute(ToolInvocation invocation) async {
     final definition = toolById(invocation.toolId);
-    if (definition == null || definition.status != ToolStatus.available) {
+    if (definition == null) {
+      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unknown tool ID was rejected by the local registry.'), category: DiagnosticCategory.runtime);
+      throw const ToolOrchestrationException('Requested tool is not available in the local registry.');
+    }
+    if (definition.status != ToolStatus.available) {
+      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Unavailable tool was rejected by the local registry.'), category: DiagnosticCategory.runtime);
       throw const ToolOrchestrationException('Requested tool is not available in the local registry.');
     }
     final runtimeId = definition.runtimeId;
@@ -221,8 +263,8 @@ class ToolOrchestrator {
       status: ActivityStatus.started,
       startedAt: activityStartedAt,
     );
-    await _emitActivity(activity);
     try {
+      await _emitActivity(activity);
       final manager = await _runtimeManager;
       final discovery = _findDiscovery(await manager.discover(), runtimeId);
       if (discovery == null || discovery.status != RuntimeDiscoveryStatus.available) {
@@ -242,20 +284,29 @@ class ToolOrchestrator {
       if (execution.output.keys.toSet().length != resultFields.length || !execution.output.keys.toSet().containsAll(resultFields)) {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result shape.');
       }
-      final result = decodeToolRunResult(jsonEncode(execution.output));
+      final decodedResult = decodeToolRunResult(jsonEncode(execution.output));
+      final result = invocation.parentActivityId == null
+          ? decodedResult
+          : decodedResult.copyWith(assessmentId: invocation.parentActivityId);
       if (result.toolId != definition.id || result.target.length > 2048 || result.summary.length > 4096 ||
           result.details.length > 128 || result.findings.length > 128 ||
           result.details.any((detail) => detail.length > 8192) ||
           result.findings.any((finding) => finding.title.length > 512 || finding.recommendation.length > 2048)) {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result.');
       }
+      final reportSaved = await _saveReport(result, assessmentId: invocation.parentActivityId);
       await _recordFindings(result, assessmentId: invocation.parentActivityId);
+      final reportStatus = reportStore == null || result.toolId == 'response_analyzer'
+          ? ''
+          : reportSaved
+              ? 'Report saved locally. '
+              : 'Report persistence failed. ';
       await _emitActivity(activity.copyWith(
         status: ActivityStatus.completed,
         finishedAt: DateTime.now().toUtc(),
-        summary: _boundedActivitySummary(result.summary),
+        summary: _boundedActivitySummary('$reportStatus${result.summary}'),
         findingCount: result.findings.length,
-        sourceResultKey: activityResultKey(result.toolId, result.target, result.completedAt),
+        sourceResultKey: reportSaved ? activityResultKey(result.toolId, result.target, result.completedAt) : null,
       ));
       return result;
     } on Exception catch (error, stack) {
@@ -266,7 +317,8 @@ class ToolOrchestrator {
         summary: cancelled ? 'Check cancelled.' : 'The check failed before producing a report.',
       ));
       if (cancelled) throw const RuntimeExecutionCancelled();
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
+      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Tool execution failed safely; response content was excluded.'),
+          stackTrace: stack, category: DiagnosticCategory.network);
       if (error is RuntimeExecutionException) throw ToolExecutionException(error.message);
       rethrow;
     }

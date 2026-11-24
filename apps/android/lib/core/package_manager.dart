@@ -655,7 +655,10 @@ class MarketPackageManager extends ChangeNotifier {
   }
 
   Future<InstalledPackage> install(MarketPackage package, {required bool licenseAccepted}) async {
-    if (!licenseAccepted) throw const PackageManagerException('Accept the package license before installation.');
+    if (!licenseAccepted) {
+      DiagnosticReporter.recordGlobal(const PackageManagerException('Package installation was denied because license consent was not granted.'), category: DiagnosticCategory.package);
+      throw const PackageManagerException('Accept the package license before installation.');
+    }
     if (_busy.contains(package.id)) throw const PackageManagerException('This package already has an active operation.');
     await initialize();
     if (!_catalog.any((entry) => identical(entry, package))) {
@@ -699,10 +702,10 @@ class MarketPackageManager extends ChangeNotifier {
       final installed = await installer.install(verified);
       _setStatus(package.id, PackageStatus.installed, null);
       return installed;
-    } on Exception catch (error, stack) {
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.package);
-      final message = error is PackageManagerException ? error.message : 'Package operation failed safely.';
-      _setStatus(package.id, PackageStatus.failed, message);
+    } on Exception catch (_, stack) {
+      DiagnosticReporter.recordGlobal(const PackageManagerException('Package operation failed safely; response content was excluded.'),
+          stackTrace: stack, category: DiagnosticCategory.package);
+      _setStatus(package.id, PackageStatus.failed, 'Package operation failed safely.');
       rethrow;
     } finally {
       _busy.remove(package.id);
@@ -719,7 +722,8 @@ class MarketPackageManager extends ChangeNotifier {
     try {
       await _uninstallManager!.uninstall(installed);
       _setStatus(id, PackageStatus.available, null);
-    } on Exception {
+    } on Exception catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.package);
       _setStatus(id, PackageStatus.failed, 'Package uninstall failed safely.');
       rethrow;
     } finally {

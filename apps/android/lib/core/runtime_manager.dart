@@ -286,6 +286,7 @@ class RuntimeManager extends ChangeNotifier {
   final Map<String, RuntimeState> _states = {};
   final Map<String, Set<RuntimeCapability>> _grants = {};
   final List<Map<String, Object?>> _audit = [];
+  int _auditSequence = 0;
   bool _initialized = false;
   Future<void>? _initialization;
   bool _busy = false;
@@ -397,8 +398,12 @@ class RuntimeManager extends ChangeNotifier {
     }
     final audit = snapshot['audit'];
     if (audit is List) {
-      for (final item in audit.whereType<Map<String, dynamic>>().take(100)) {
+      for (final item in audit.whereType<Map<String, dynamic>>()) {
         _audit.add(Map<String, Object?>.from(item));
+        final eventId = item['eventId'];
+        final match = eventId is String ? RegExp(r'^runtime-\d+-(\d+)$').firstMatch(eventId) : null;
+        final sequence = int.tryParse(match?.group(1) ?? '');
+        if (sequence != null && sequence > _auditSequence) _auditSequence = sequence;
       }
     }
     for (final adapter in _adapters.values.where((item) => item.descriptor.bundled)) {
@@ -414,7 +419,8 @@ class RuntimeManager extends ChangeNotifier {
           updatedAt: _clock().toUtc(),
         );
         await _record('bundled-adapter-installed', descriptor.id);
-      } catch (error) {
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
         _states[descriptor.id] = RuntimeState(
           id: descriptor.id,
           lifecycle: RuntimeLifecycle.failed,
@@ -434,7 +440,10 @@ class RuntimeManager extends ChangeNotifier {
     await initializeRegistry();
     final adapter = _requireAdapter(id);
     final descriptor = adapter.descriptor;
-    if (!userApproved || !licenseAccepted) throw StateError('Explicit install and license approval are required.');
+    if (!userApproved || !licenseAccepted) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime installation was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      throw StateError('Explicit install and license approval are required.');
+    }
     final reason = compatibilityProblem(descriptor);
     if (reason != null) {
       if (reason.contains('runtime dependencies:')) throw StateError(reason);
@@ -455,7 +464,14 @@ class RuntimeManager extends ChangeNotifier {
     }
     final directory = await _workingDirectory(id);
     return _withLifecycle(id, RuntimeLifecycle.installed, () async {
-      await adapter.install(directory);
+      await _record('install-start', id);
+      try {
+        await adapter.install(directory);
+      } catch (error, stack) {
+        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+        await _record('install-failed', id);
+        rethrow;
+      }
       _grants[id] = Set.unmodifiable(grantedCapabilities);
       return _set(id, RuntimeLifecycle.installed, version: descriptor.version);
     });
@@ -463,19 +479,32 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<RuntimeState> initializeRuntime(String id, {required bool userApproved}) async {
     await initializeRegistry();
-    if (!userApproved) throw StateError('Explicit runtime initialization approval is required.');
+    if (!userApproved) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime initialization was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      throw StateError('Explicit runtime initialization approval is required.');
+    }
     final adapter = _requireAdapter(id);
     final existing = _states[id];
     if (existing?.lifecycle != RuntimeLifecycle.installed && existing?.lifecycle != RuntimeLifecycle.stopped) throw StateError('Runtime must be installed or stopped before initialization.');
     final reason = compatibilityProblem(adapter.descriptor);
     if (reason != null) return _set(id, RuntimeLifecycle.incompatible, error: reason);
-    await adapter.initialize(await _workingDirectory(id));
+    await _record('initialize-start', id);
+    try {
+      await adapter.initialize(await _workingDirectory(id));
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      await _record('initialize-failed', id);
+      rethrow;
+    }
     return _set(id, RuntimeLifecycle.initialized, version: adapter.descriptor.version);
   }
 
   Future<RuntimeState> start(String id, {required bool userApproved, required bool policyAllowed}) async {
     await initializeRegistry();
-    if (!userApproved || !policyAllowed) throw StateError('Runtime execution requires user approval and policy authorization.');
+    if (!userApproved || !policyAllowed) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime execution was denied by consent or policy.'), category: DiagnosticCategory.runtime);
+      throw StateError('Runtime execution requires user approval and policy authorization.');
+    }
     final adapter = _requireAdapter(id);
     if (_states[id]?.lifecycle != RuntimeLifecycle.initialized && _states[id]?.lifecycle != RuntimeLifecycle.stopped) throw StateError('Runtime must be initialized before start.');
     if (adapter.descriptor.requiredCapabilities.difference(_grants[id] ?? const <RuntimeCapability>{}).isNotEmpty) throw StateError('Required runtime capabilities are not granted.');
@@ -485,7 +514,10 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<RuntimeState> stop(String id, {required bool userApproved}) async {
     await initializeRegistry();
-    if (!userApproved) throw StateError('Explicit runtime stop approval is required.');
+    if (!userApproved) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime stop was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      throw StateError('Explicit runtime stop approval is required.');
+    }
     final adapter = _requireAdapter(id);
     await adapter.stop();
     final healthy = await adapter.healthCheck();
@@ -496,7 +528,10 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<RuntimeState> update(String id, String version, {required bool userApproved, required bool licenseAccepted}) async {
     await initializeRegistry();
-    if (!userApproved || !licenseAccepted) throw StateError('Explicit update and license approval are required.');
+    if (!userApproved || !licenseAccepted) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime update was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      throw StateError('Explicit update and license approval are required.');
+    }
     if (!RegExp(r'^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$').hasMatch(version)) throw const FormatException('Invalid runtime version.');
     final adapter = _requireAdapter(id);
     final previous = _states[id];
@@ -505,7 +540,8 @@ class RuntimeManager extends ChangeNotifier {
     try {
       await adapter.update(directory, version);
       return await _set(id, RuntimeLifecycle.stopped, version: version);
-    } catch (error) {
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
       await _record('update-rollback', id);
       if (previous.installedVersion != null) await adapter.update(directory, previous.installedVersion!);
       rethrow;
@@ -514,16 +550,25 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<void> uninstall(String id, {required bool userApproved}) async {
     await initializeRegistry();
-    if (!userApproved) throw StateError('Explicit uninstall approval is required.');
+    if (!userApproved) {
+      DiagnosticReporter.recordGlobal(const StateError('Runtime uninstall was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
+      throw StateError('Explicit uninstall approval is required.');
+    }
     final adapter = _requireAdapter(id);
     if (_states[id]?.lifecycle == RuntimeLifecycle.running) throw StateError('Stop the runtime before uninstalling.');
     final directory = await _workingDirectory(id);
-    await adapter.uninstall(directory);
-    if (await directory.exists()) await directory.delete(recursive: true);
+    await _record('uninstall-start', id);
+    try {
+      await adapter.uninstall(directory);
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      await _record('uninstall-failed', id);
+      rethrow;
+    }
     _states.remove(id);
     _grants.remove(id);
     await _record('uninstall', id);
-    await _persist();
     notifyListeners();
   }
 
@@ -547,6 +592,7 @@ class RuntimeManager extends ChangeNotifier {
     final adapter = _requireAdapter(runtimeId);
     if (adapter is! RuntimeExecutionAdapter || !adapter.descriptor.supportedToolIds.contains(toolId)) {
       await _record('tool-rejected', runtimeId, toolId: toolId);
+      DiagnosticReporter.recordGlobal(const RuntimeExecutionException('Tool was rejected by the runtime registry.'), category: DiagnosticCategory.runtime);
       throw const RuntimeExecutionException('No executable adapter is registered for this tool.');
     }
     if (_busy) {
@@ -567,6 +613,7 @@ class RuntimeManager extends ChangeNotifier {
     if (!descriptor.requiredCapabilities.containsAll(requiredCapabilities) ||
         !(_grants[runtimeId] ?? const <RuntimeCapability>{}).containsAll(requiredCapabilities)) {
       await _record('tool-rejected-capability', runtimeId, toolId: toolId);
+      DiagnosticReporter.recordGlobal(const RuntimeExecutionException('Required runtime capability was denied.'), category: DiagnosticCategory.runtime);
       throw const RuntimeExecutionException('Runtime capabilities were not granted.');
     }
     try {
@@ -576,8 +623,9 @@ class RuntimeManager extends ChangeNotifier {
         requiredCapabilities: requiredCapabilities.map((capability) => capability.name).toSet(),
         grantedCapabilities: (_grants[runtimeId] ?? const <RuntimeCapability>{}).map((capability) => capability.name).toSet(),
       );
-    } on PolicyException {
+    } on PolicyException catch (error, stack) {
       await _record('tool-rejected-policy', runtimeId, toolId: toolId);
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
       rethrow;
     }
     final inputJson = jsonEncode(input);
@@ -641,15 +689,30 @@ class RuntimeManager extends ChangeNotifier {
       } catch (_) {
         // Cleanup is best-effort after timeout/cancellation; never mask the failure.
       }
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
+      DiagnosticReporter.recordGlobal(const RuntimeExecutionException('Runtime adapter execution failed safely; response content was excluded.'),
+          stackTrace: stack, category: DiagnosticCategory.runtime);
       final isCancellation = error is RuntimeExecutionCancelled;
       final isTimeout = error is TimeoutException;
       final isInvalidOutput = error is RuntimeExecutionException && error.message.contains('output');
       final detail = isCancellation ? 'cancelled' : isTimeout ? 'timeout' : isInvalidOutput ? 'invalid-output' : sanitizeDiagnosticText(error.runtimeType.toString());
-      await _record('tool-$detail', runtimeId, toolId: toolId);
+      Object? auditPersistenceError;
+      try {
+        await _record('tool-$detail', runtimeId, toolId: toolId);
+      } catch (auditError, auditStack) {
+        auditPersistenceError = auditError;
+        DiagnosticReporter.recordGlobal(auditError, stackTrace: auditStack, category: DiagnosticCategory.database);
+      }
       final healthy = await adapter.healthCheck().catchError((_) => false);
-      await _set(runtimeId, healthy ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
-          version: descriptor.version, error: sanitizeDiagnosticText(detail), health: _clock().toUtc());
+      try {
+        await _set(runtimeId, healthy ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
+            version: descriptor.version, error: sanitizeDiagnosticText(detail), health: _clock().toUtc());
+      } catch (stateError, stateStack) {
+        auditPersistenceError ??= stateError;
+        DiagnosticReporter.recordGlobal(stateError, stackTrace: stateStack, category: DiagnosticCategory.database);
+      }
+      if (auditPersistenceError != null) {
+        throw const RuntimeExecutionException('Runtime audit persistence failed; the operation result was not accepted.');
+      }
       if (error is RuntimeExecutionException || error is RuntimeExecutionCancelled || error is TimeoutException) rethrow;
       throw RuntimeExecutionException(sanitizeDiagnosticText(error.toString()));
     } finally {
@@ -657,7 +720,13 @@ class RuntimeManager extends ChangeNotifier {
     }
   }
 
-  RuntimeAdapter _requireAdapter(String id) => _adapters[id] ?? (throw StateError('No approved runtime adapter is registered for $id.'));
+  RuntimeAdapter _requireAdapter(String id) {
+    final adapter = _adapters[id];
+    if (adapter != null) return adapter;
+    final error = StateError('No approved runtime adapter is registered.');
+    DiagnosticReporter.recordGlobal(error, category: DiagnosticCategory.runtime);
+    throw error;
+  }
   Future<Directory> _workingDirectory(String id) async {
     if (!RegExp(r'^[a-z][a-z0-9_.-]{1,63}$').hasMatch(id)) throw const FormatException('Invalid runtime ID.');
     final root = await _supportDirectoryProvider();
@@ -684,25 +753,48 @@ class RuntimeManager extends ChangeNotifier {
     final next = RuntimeState(id: id, lifecycle: lifecycle, installedVersion: version ?? prior?.installedVersion,
         updatedAt: _clock().toUtc(), lastHealthCheck: health ?? prior?.lastHealthCheck, lastError: error);
     _states[id] = next;
-    await _record(lifecycle.name, id);
-    await _persist();
+    try {
+      await _record(lifecycle.name, id);
+    } catch (_) {
+      if (prior == null) {
+        _states.remove(id);
+      } else {
+        _states[id] = prior;
+      }
+      rethrow;
+    }
     notifyListeners();
     return next;
   }
 
   Future<void> _record(String action, String id, {String? toolId}) async {
-    _audit.insert(0, {
-      'at': _clock().toUtc().toIso8601String(),
+    final at = _clock().toUtc();
+    final event = <String, Object?>{
+      'eventId': 'runtime-${at.microsecondsSinceEpoch}-${++_auditSequence}',
+      'at': at.toIso8601String(),
       'action': sanitizeDiagnosticText(action),
       'runtimeId': sanitizeDiagnosticText(id),
       if (toolId != null) 'toolId': sanitizeDiagnosticText(toolId),
-    });
-    if (_audit.length > 100) _audit.removeRange(100, _audit.length);
+    };
+    _audit.insert(0, event);
+    try {
+      await _persist();
+    } catch (_) {
+      _audit.remove(event);
+      rethrow;
+    }
   }
 
-  Future<void> _persist() => store.save({
+  Future<void> _persist() async {
+    try {
+      await store.save({
         'states': _states.values.map((state) => state.toJson()).toList(),
         'grants': _grants.map((id, capabilities) => MapEntry(id, capabilities.map((capability) => capability.name).toList())),
         'audit': _audit,
       });
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
+      rethrow;
+    }
+  }
 }

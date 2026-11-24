@@ -201,8 +201,13 @@ void main() {
     await manager.uninstall('runtime.fixture', userApproved: true);
     expect(manager.stateFor('runtime.fixture'), isNull);
     expect(Directory('${root.path}/runtime_workspaces/runtime.fixture').existsSync(), isFalse);
-    expect(manager.auditEvents, isNotEmpty);
-    expect(manager.auditEvents.length, lessThanOrEqualTo(100));
+    for (var index = 0; index < 55; index++) {
+      await manager.healthCheck('runtime.fixture');
+    }
+    expect(manager.auditEvents.length, greaterThan(100));
+    final eventIds = manager.auditEvents.map((event) => event['eventId']).whereType<String>().toList();
+    expect(eventIds.toSet(), hasLength(eventIds.length));
+    expect(manager.auditEvents.map((event) => event['action']), containsAll(['install-start', 'uninstall-start']));
   });
 
   test('rejects unknown ABI and missing capabilities and persists lifecycle state', () async {
@@ -232,6 +237,9 @@ void main() {
     final restored = RuntimeManager(environment: const RuntimeEnvironment(platform: 'Android', abi: 'arm64-v8a'), store: store,
         adapters: [adapter], supportDirectoryProvider: () async => root);
     await restored.initializeRegistry();
+    expect(restored.auditEvents.length, manager.auditEvents.length);
+    final restoredIds = restored.auditEvents.map((event) => event['eventId']).whereType<String>().toList();
+    expect(restoredIds.toSet(), hasLength(restoredIds.length));
     expect(restored.stateFor('runtime.fixture')?.lifecycle, RuntimeLifecycle.installed);
     await restored.initializeRuntime('runtime.fixture', userApproved: true);
     expect((await restored.start('runtime.fixture', userApproved: true, policyAllowed: true)).lifecycle, RuntimeLifecycle.running);
