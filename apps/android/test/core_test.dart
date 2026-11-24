@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
@@ -7,6 +10,7 @@ import 'package:cybersecurity_assistant/core/report_exporter.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/core/tool_registry.dart';
+import 'package:cybersecurity_assistant/core/tool_result_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _ScriptedSecurityTools extends SecurityTools {
@@ -22,12 +26,12 @@ class _ScriptedSecurityTools extends SecurityTools {
       );
 
   @override
-  Future<ToolRunResult> inspectTls(String input, {required bool authorized}) async {
+  Future<ToolRunResult> inspectTls(String input, {required bool authorized, bool allowPrivateNetwork = false}) async {
     throw const ToolExecutionException('TLS fixture failed.');
   }
 
   @override
-  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized}) async => ToolRunResult(
+  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized, bool allowPrivateNetwork = false}) async => ToolRunResult(
         toolId: 'http_headers',
         target: 'example.com',
         summary: 'HTTP fixture completed.',
@@ -109,6 +113,210 @@ void main() {
           throwsA(isA<PolicyException>()),
         );
       }
+    });
+  });
+
+  group('Security assessment destination policy', () {
+    final policy = PolicyEngine();
+
+    test('blocks local, private, link-local, metadata, and reserved literal targets by default', () {
+      for (final input in [
+        'https://localhost/',
+        'https://service.local/',
+        'https://metadata.google.internal/',
+        'https://127.0.0.1/',
+        'https://10.12.0.5/',
+        'https://172.20.1.2/',
+        'https://192.168.1.2/',
+        'https://169.254.169.254/',
+        'https://100.64.0.1/',
+        'https://[::1]/',
+      ]) {
+        expect(
+          () => policy.validateTarget(input, authorized: true),
+          throwsA(isA<PolicyException>()),
+          reason: '$input should be blocked by default',
+        );
+      }
+    });
+
+    test('allows explicitly authorized private targets and blocks numeric IP shorthand', () {
+      expect(
+        policy.validateTarget('https://127.0.0.1/', authorized: true, allowPrivateNetwork: true).host,
+        '127.0.0.1',
+      );
+      for (final metadataTarget in ['https://metadata.google.internal/', 'https://169.254.169.254/']) {
+        expect(
+          () => policy.validateTarget(metadataTarget, authorized: true, allowPrivateNetwork: true),
+          throwsA(isA<PolicyException>()),
+          reason: '$metadataTarget remains blocked even in local/private mode',
+        );
+      }
+      for (final input in ['https://2130706433/', 'https://0x7f000001/']) {
+        expect(
+          () => policy.validateTarget(input, authorized: true, allowPrivateNetwork: true),
+          throwsA(isA<PolicyException>()),
+        );
+      }
+    });
+  });
+
+  group('Network adapter fixtures', () {
+    final publicFixtureAddress = InternetAddress('8.8.8.8');
+
+    test('records DNS non-public ranges as informational without connecting', () async {
+      var httpCalls = 0;
+      final tools = SecurityTools(
+        hostResolver: (_) async => [InternetAddress('127.0.0.1')],
+        httpGet: (_, __, ___) async {
+          httpCalls++;
+          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+        },
+      );
+
+      final result = await tools.runDnsLookup('owned.example', authorized: true);
+      expect(result.findings.single.confidence, FindingConfidence.informational);
+      expect(result.details.join('\n'), contains('127.0.0.1'));
+      expect(httpCalls, 0);
+      await expectLater(
+        tools.checkHttpHeaders('owned.example', authorized: true),
+        throwsA(isA<ToolExecutionException>()),
+      );
+      expect(httpCalls, 0, reason: 'A private DNS answer must be blocked before the HTTP transport is called.');
+
+      final mixedAddressTools = SecurityTools(
+        hostResolver: (_) async => [publicFixtureAddress, InternetAddress('169.254.169.254')],
+        httpGet: (_, __, ___) async {
+          httpCalls++;
+          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+        },
+      );
+      await expectLater(
+        mixedAddressTools.checkHttpHeaders('owned.example', authorized: true),
+        throwsA(isA<ToolExecutionException>()),
+      );
+      expect(httpCalls, 0, reason: 'A mixed public/private DNS answer must be blocked as a whole.');
+    });
+
+    test('explicit local-target option reaches the approved fixture address', () async {
+      List<InternetAddress>? addressesUsed;
+      final tools = SecurityTools(
+        hostResolver: (_) async => [InternetAddress('127.0.0.1')],
+        httpGet: (_, addresses, __) async {
+          addressesUsed = addresses;
+          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+        },
+      );
+      final result = await tools.checkHttpHeaders(
+        'https://local-lab.example/api/health',
+        authorized: true,
+        allowPrivateNetwork: true,
+      );
+      expect(addressesUsed?.single.address, '127.0.0.1');
+      expect(result.details.first, contains('user explicitly allowed'));
+    });
+
+    test('runs DNS, TLS, exact HTTPS path, HTTP analysis, and response analysis through an injected fixture', () async {
+      final requestedUris = <Uri>[];
+      final tlsFixtures = <String>[];
+      final resolvedHosts = <String>[];
+      final body = utf8.encode('{"access_token":"fixture-secret-value","ok":true}');
+      final tools = SecurityTools(
+        hostResolver: (host) async {
+          resolvedHosts.add(host);
+          return [publicFixtureAddress];
+        },
+        tlsHandshake: (host, addresses, _) async {
+          tlsFixtures.add('$host:${addresses.map((address) => address.address).join(',')}');
+          final now = DateTime.now().toUtc();
+          return TlsPeerEvidence(
+            subject: 'CN=$host (fixture)',
+            issuer: 'Fixture CA',
+            validFrom: now.subtract(const Duration(days: 1)),
+            validUntil: now.add(const Duration(days: 90)),
+          );
+        },
+        httpGet: (uri, addresses, _) async {
+          requestedUris.add(uri);
+          expect(addresses.map((address) => address.address), ['8.8.8.8']);
+          return BoundedHttpResponse(
+            statusCode: 302,
+            headers: const {
+              'content-type': 'application/json',
+              'location': 'https://other.example/?token=fixture-secret-value',
+              'set-cookie': 'session=fixture-secret-value',
+              'server': 'fixture-server',
+            },
+            body: Uint8List.fromList(body),
+            truncated: false,
+          );
+        },
+      );
+
+      final assessment = await ToolOrchestrator(tools: tools).runAssessment(
+        target: 'https://api.owned.example/v1/surat/1',
+        toolIds: const ['dns_lookup', 'tls_inspector', 'http_headers'],
+        authorized: true,
+      );
+
+      expect(assessment.failedCount, 0);
+      expect(assessment.outcomes.map((outcome) => outcome.toolId), [
+        'dns_lookup', 'tls_inspector', 'http_headers', 'response_analyzer',
+      ]);
+      expect(resolvedHosts, ['api.owned.example', 'api.owned.example', 'api.owned.example']);
+      expect(tlsFixtures.single, 'api.owned.example:8.8.8.8');
+      expect(requestedUris.single.toString(), 'https://api.owned.example/v1/surat/1');
+
+      final tls = assessment.outcomes[1].result!;
+      expect(tls.details.join('\n'), contains('CN=api.owned.example (fixture)'));
+      expect(tls.summary, contains('TLS handshake succeeded'));
+
+      final http = assessment.outcomes[2].result!;
+      final httpEvidence = http.details.join('\n');
+      expect(httpEvidence, contains('GET /v1/surat/1'));
+      expect(httpEvidence, contains('Redirect returned; it was not followed.'));
+      expect(httpEvidence, contains('$.access_token'));
+      expect(httpEvidence, isNot(contains('fixture-secret-value')));
+      expect(http.findings.any((finding) => finding.confidence == FindingConfidence.potential), isTrue);
+      expect(http.findings.any((finding) => finding.confidence == FindingConfidence.informational), isTrue);
+
+      final analyzed = assessment.outcomes.last.result!;
+      expect(analyzed.toolId, 'response_analyzer');
+      expect(analyzed.details, contains(startsWith('tls_inspector:')));
+      expect(analyzed.details, contains(startsWith('http_headers:')));
+      expect(analyzed.findings.map((finding) => finding.confidence), contains(FindingConfidence.potential));
+      expect(analyzed.details.join('\n'), isNot(contains('fixture-secret-value')));
+    });
+
+    test('bounds captured response bytes and times out a stalled fixture', () async {
+      final capture = await SecurityTools.captureBoundedBody(
+        Stream<List<int>>.value(List<int>.filled(SecurityTools.maxApiResponseBytes + 100, 65)),
+        contentLength: SecurityTools.maxApiResponseBytes + 100,
+        timeout: const Duration(seconds: 1),
+      );
+      expect(capture.bytes, hasLength(SecurityTools.maxApiResponseBytes));
+      expect(capture.truncated, isTrue);
+      await expectLater(
+        SecurityTools.captureBoundedBody(
+          Stream<List<int>>.periodic(const Duration(milliseconds: 80), (_) => [65]).take(1),
+          contentLength: -1,
+          timeout: const Duration(milliseconds: 5),
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final tools = SecurityTools(
+        timeout: const Duration(milliseconds: 5),
+        hostResolver: (_) async => [publicFixtureAddress],
+        httpGet: (_, __, ___) async {
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+        },
+      );
+      await expectLater(
+        tools.checkHttpHeaders('https://slow.owned.example/api', authorized: true),
+        throwsA(isA<ToolExecutionException>()),
+      );
     });
   });
 
@@ -344,6 +552,48 @@ void main() {
       expect((decoded['checks'] as List), hasLength(1));
       expect((decoded['checks'] as List).single['authorizationConfirmed'], isTrue);
       expect((decoded['checks'] as List).single['details'], ['set-cookie: [redacted]']);
+      expect(
+        ((decoded['checks'] as List).single['findings'] as List).single['confidence'],
+        'potential',
+      );
+    });
+  });
+
+  group('Tool result confidence persistence', () {
+    test('round-trips confidence labels and reads older records without them', () {
+      final result = ToolRunResult(
+        toolId: 'http_headers',
+        target: 'owned.example/api',
+        summary: 'Fixture result',
+        details: const ['Only redacted evidence'],
+        findings: const [
+          SecurityFinding(
+            title: 'Potential header issue',
+            severity: FindingSeverity.low,
+            confidence: FindingConfidence.potential,
+            recommendation: 'Review context.',
+          ),
+          SecurityFinding(
+            title: 'Informational observation',
+            severity: FindingSeverity.info,
+            confidence: FindingConfidence.informational,
+            recommendation: 'No action required.',
+          ),
+        ],
+        completedAt: DateTime.utc(2026, 11, 23),
+      );
+      final roundTrip = decodeToolRunResult(encodeToolRunResult(result));
+      expect(roundTrip.findings.map((finding) => finding.confidence), [
+        FindingConfidence.potential,
+        FindingConfidence.informational,
+      ]);
+
+      final oldJson = encodeToolRunResult(result).replaceAll(RegExp(r',\s*"confidence":"[^"]+"'), '');
+      final legacy = decodeToolRunResult(oldJson);
+      expect(legacy.findings.map((finding) => finding.confidence), [
+        FindingConfidence.potential,
+        FindingConfidence.informational,
+      ]);
     });
   });
 

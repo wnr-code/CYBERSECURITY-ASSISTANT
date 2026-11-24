@@ -6,11 +6,19 @@ import 'dart:typed_data';
 import 'policy_engine.dart';
 
 enum FindingSeverity { high, medium, low, info }
+enum FindingConfidence { confirmed, potential, informational }
 
 class SecurityFinding {
-  const SecurityFinding({required this.title, required this.severity, required this.recommendation});
+  const SecurityFinding({
+    required this.title,
+    required this.severity,
+    required this.recommendation,
+    FindingConfidence? confidence,
+  }) : confidence = confidence ??
+            (severity == FindingSeverity.info ? FindingConfidence.informational : FindingConfidence.potential);
   final String title;
   final FindingSeverity severity;
+  final FindingConfidence confidence;
   final String recommendation;
 }
 
@@ -52,16 +60,71 @@ class ToolExecutionException implements Exception {
 
 /// Built-in, narrowly scoped P0 adapters. No shell commands or downloaded code
 /// are executed. Every target is validated immediately before the network call.
-class _BodyCapture {
-  const _BodyCapture(this.bytes, this.truncated);
+class BoundedHttpResponse {
+  const BoundedHttpResponse({
+    required this.statusCode,
+    required this.headers,
+    required this.body,
+    required this.truncated,
+  });
+  final int statusCode;
+  final Map<String, String> headers;
+  final Uint8List body;
+  final bool truncated;
+}
+
+typedef HostResolver = Future<List<InternetAddress>> Function(String host);
+
+class TlsPeerEvidence {
+  const TlsPeerEvidence({
+    required this.subject,
+    required this.issuer,
+    required this.validFrom,
+    required this.validUntil,
+  });
+  final String subject;
+  final String issuer;
+  final DateTime validFrom;
+  final DateTime validUntil;
+}
+
+typedef TlsHandshake = Future<TlsPeerEvidence> Function(
+  String host,
+  List<InternetAddress> approvedAddresses,
+  Duration timeout,
+);
+
+/// The transport receives only preflight-approved socket addresses. Implementations
+/// must connect to one of these addresses, not resolve [uri.host] again.
+typedef HttpGet = Future<BoundedHttpResponse> Function(
+  Uri uri,
+  List<InternetAddress> approvedAddresses,
+  Duration timeout,
+);
+
+class BoundedBodyCapture {
+  const BoundedBodyCapture(this.bytes, this.truncated);
   final Uint8List bytes;
   final bool truncated;
 }
 
 class SecurityTools {
-  SecurityTools({PolicyEngine? policy}) : _policy = policy ?? PolicyEngine();
+  SecurityTools({
+    PolicyEngine? policy,
+    HostResolver? hostResolver,
+    HttpGet? httpGet,
+    TlsHandshake? tlsHandshake,
+    Duration timeout = const Duration(seconds: 8),
+  })  : _policy = policy ?? PolicyEngine(),
+        _hostResolver = hostResolver ?? InternetAddress.lookup,
+        _httpGet = httpGet ?? _requestHttp,
+        _tlsHandshake = tlsHandshake ?? _performTlsHandshake,
+        _timeout = timeout;
   final PolicyEngine _policy;
-  static const _timeout = Duration(seconds: 8);
+  final Duration _timeout;
+  final HostResolver _hostResolver;
+  final HttpGet _httpGet;
+  final TlsHandshake _tlsHandshake;
   static const maxApiResponseBytes = 32 * 1024;
   static final _sensitiveJsonKeyPattern = RegExp(
     r'(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|credential|private[_-]?key)',
@@ -109,9 +172,9 @@ class SecurityTools {
   }
 
   Future<ToolRunResult> runDnsLookup(String input, {required bool authorized}) async {
-    final target = _policy.validateTarget(input, authorized: authorized);
+    final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: true);
     try {
-      final addresses = await InternetAddress.lookup(target.host).timeout(_timeout);
+      final addresses = await _hostResolver(target.host).timeout(_timeout);
       final ipv4 = addresses
           .where((address) => address.type == InternetAddressType.IPv4)
           .map((address) => address.address)
@@ -126,6 +189,7 @@ class SecurityTools {
         ..sort();
       final unique = {...ipv4, ...ipv6}.toList()..sort();
       if (unique.isEmpty) throw const ToolExecutionException('The device resolver returned no addresses.');
+      final nonPublic = addresses.where(PolicyEngine.isRestrictedAddress).map((address) => address.address).toSet().toList()..sort();
       return ToolRunResult(
         toolId: 'dns_lookup',
         target: target.scope,
@@ -134,9 +198,18 @@ class SecurityTools {
           'A records: ${ipv4.isEmpty ? 'none returned' : ipv4.join(', ')}',
           'AAAA records: ${ipv6.isEmpty ? 'none returned' : ipv6.join(', ')}',
           'Resolver: Android device system resolver.',
+          if (nonPublic.isNotEmpty) 'Non-public address range(s) observed: ${nonPublic.join(', ')}.',
           'Record-type limitation: CNAME, MX, TXT, NS, and SOA are not exposed by the system hostname lookup used here.',
         ],
-        findings: const [],
+        findings: [
+          if (nonPublic.isNotEmpty)
+            const SecurityFinding(
+              title: 'DNS returned a local or non-public address range',
+              severity: FindingSeverity.info,
+              confidence: FindingConfidence.informational,
+              recommendation: 'Confirm this is expected for the target. DNS resolution alone did not connect to the returned address.',
+            ),
+        ],
         completedAt: DateTime.now().toUtc(),
         authorizationConfirmed: true,
       );
@@ -147,15 +220,26 @@ class SecurityTools {
     }
   }
 
-  Future<ToolRunResult> inspectTls(String input, {required bool authorized}) async {
-    final target = _policy.validateTarget(input, authorized: authorized);
-    SecureSocket? socket;
+  Future<ToolRunResult> inspectTls(
+    String input, {
+    required bool authorized,
+    bool allowPrivateNetwork = false,
+  }) async {
+    final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: allowPrivateNetwork);
+    final deadline = Stopwatch()..start();
+    Duration remaining() {
+      final value = _timeout - deadline.elapsed;
+      if (value <= Duration.zero) throw TimeoutException('TLS assessment exceeded its time limit.');
+      return value;
+    }
     try {
-      socket = await SecureSocket.connect(target.host, 443, timeout: _timeout);
-      final certificate = socket.peerCertificate;
-      if (certificate == null) throw const ToolExecutionException('The server did not present a peer certificate.');
+      final addresses = await _resolveNetworkDestination(
+        target,
+        allowPrivateNetwork: allowPrivateNetwork,
+      ).timeout(remaining());
+      final certificate = await _tlsHandshake(target.host, addresses, remaining()).timeout(remaining());
       final now = DateTime.now().toUtc();
-      final expires = certificate.endValidity.toUtc();
+      final expires = certificate.validUntil.toUtc();
       final daysRemaining = expires.difference(now).inDays;
       final findings = <SecurityFinding>[];
       if (daysRemaining < 30) {
@@ -171,10 +255,14 @@ class SecurityTools {
         summary: 'TLS handshake succeeded; certificate expires ${expires.toIso8601String()}.',
         details: [
           'Requested hostname: ${target.host}',
+          if (allowPrivateNetwork)
+            'Destination safety: user explicitly allowed a local/private target.'
+          else
+            'Destination safety: no local/private address observed during DNS preflight.',
           'Hostname and trust validation: passed by the platform TLS handshake for ${target.host}.',
           'Subject: ${certificate.subject}',
           'Issuer: ${certificate.issuer}',
-          'Valid from: ${certificate.startValidity.toUtc().toIso8601String()}',
+          'Valid from: ${certificate.validFrom.toUtc().toIso8601String()}',
           'Valid until: ${expires.toIso8601String()}',
           'Days remaining: $daysRemaining',
           'Trust validation: passed by the device TLS stack',
@@ -189,26 +277,76 @@ class SecurityTools {
       throw ToolExecutionException('Could not connect to HTTPS service: ${_safeError(error.message)}');
     } on TimeoutException {
       throw const ToolExecutionException('TLS inspection timed out after 8 seconds.');
-    } finally {
-      socket?.destroy();
     }
   }
 
-  Future<ToolRunResult> checkHttpHeaders(String input, {required bool authorized}) async {
-    final target = _policy.validateTarget(input, authorized: authorized);
-    final client = HttpClient()..connectionTimeout = _timeout;
+  static Future<TlsPeerEvidence> _performTlsHandshake(
+    String host,
+    List<InternetAddress> approvedAddresses,
+    Duration timeout,
+  ) async {
+    final deadline = Stopwatch()..start();
+    Duration remaining() {
+      final value = timeout - deadline.elapsed;
+      if (value <= Duration.zero) throw TimeoutException('TLS handshake exceeded its time limit.');
+      return value;
+    }
+    Object? lastError;
+    for (final address in approvedAddresses) {
+      Socket? plainSocket;
+      try {
+        plainSocket = await Socket.connect(address, 443, timeout: remaining());
+        final secureSocket = await SecureSocket.secure(plainSocket, host: host).timeout(remaining());
+        try {
+          final certificate = secureSocket.peerCertificate;
+          if (certificate == null) throw const ToolExecutionException('The server did not present a peer certificate.');
+          return TlsPeerEvidence(
+            subject: certificate.subject,
+            issuer: certificate.issuer,
+            validFrom: certificate.startValidity,
+            validUntil: certificate.endValidity,
+          );
+        } finally {
+          secureSocket.destroy();
+        }
+      } on HandshakeException {
+        rethrow;
+      } on SocketException catch (error) {
+        lastError = error;
+      } on TimeoutException catch (error) {
+        lastError = error;
+      } finally {
+        plainSocket?.destroy();
+      }
+    }
+    if (lastError is SocketException) throw lastError;
+    if (lastError is TimeoutException) throw lastError;
+    throw const ToolExecutionException('Could not connect to any preflight-approved address.');
+  }
+
+  Future<ToolRunResult> checkHttpHeaders(
+    String input, {
+    required bool authorized,
+    bool allowPrivateNetwork = false,
+  }) async {
+    final target = _policy.validateTarget(input, authorized: authorized, allowPrivateNetwork: allowPrivateNetwork);
+    final deadline = Stopwatch()..start();
+    Duration remaining() {
+      final value = _timeout - deadline.elapsed;
+      if (value <= Duration.zero) throw TimeoutException('HTTP assessment exceeded its time limit.');
+      return value;
+    }
     try {
-      final request = await client.getUrl(target.uri).timeout(_timeout);
-      request.followRedirects = false;
-      request.maxRedirects = 0;
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json, text/plain;q=0.9, */*;q=0.5');
-      final response = await request.close().timeout(_timeout);
+      final addresses = await _resolveNetworkDestination(
+        target,
+        allowPrivateNetwork: allowPrivateNetwork,
+      ).timeout(remaining());
+      final response = await _httpGet(target.uri, addresses, remaining()).timeout(remaining());
       final statusCode = response.statusCode;
-      final headers = <String, String>{};
-      response.headers.forEach((name, values) {
-        headers[name.toLowerCase()] = values.join(', ');
-      });
-      final bodyCapture = await _readBoundedBody(response);
+      final headers = <String, String>{
+        for (final entry in response.headers.entries) entry.key.toLowerCase(): entry.value,
+      };
+      final bodyCapture = BoundedBodyCapture(response.body, response.truncated);
       final contentType = headers[HttpHeaders.contentTypeHeader];
       final bodyAnalysis = analyzeApiResponse(
         body: bodyCapture.bytes,
@@ -231,6 +369,7 @@ class SecurityTools {
         findings.add(const SecurityFinding(
           title: 'Server technology header is exposed',
           severity: FindingSeverity.info,
+          confidence: FindingConfidence.informational,
           recommendation: 'Consider minimizing unnecessary implementation details in response headers.',
         ));
       }
@@ -239,6 +378,10 @@ class SecurityTools {
         target: target.scope,
         summary: 'Received HTTP $statusCode and inspected ${headers.length} response headers.',
         details: [
+          if (allowPrivateNetwork)
+            'Destination safety: user explicitly allowed a local/private target.'
+          else
+            'Destination safety: no local/private address observed during DNS preflight.',
           'Request: GET ${target.uri.path} (redirects not followed).',
           'Response body: ${bodyCapture.bytes.length} byte(s) inspected${bodyCapture.truncated ? ' (truncated at $maxApiResponseBytes bytes)' : ''}.',
           'Content-Type: ${contentType == null ? 'not provided' : redactResponseHeader(HttpHeaders.contentTypeHeader, contentType)}',
@@ -260,8 +403,6 @@ class SecurityTools {
       throw const ToolExecutionException('HTTP header check timed out after 8 seconds.');
     } on HttpException {
       throw const ToolExecutionException('The HTTPS request failed.');
-    } finally {
-      client.close(force: true);
     }
   }
 
@@ -287,14 +428,97 @@ class SecurityTools {
     );
   }
 
-  static Future<_BodyCapture> _readBoundedBody(HttpClientResponse response) async {
-    final iterator = StreamIterator<List<int>>(response);
+  Future<List<InternetAddress>> _resolveNetworkDestination(
+    AuthorizedTarget target, {
+    required bool allowPrivateNetwork,
+  }) async {
+    final literal = InternetAddress.tryParse(target.host);
+    final addresses = literal == null
+        ? await _hostResolver(target.host).timeout(_timeout)
+        : <InternetAddress>[literal];
+    if (addresses.isEmpty) throw const ToolExecutionException('DNS preflight returned no destination addresses.');
+    final unique = <String, InternetAddress>{for (final address in addresses) address.address: address}.values.toList();
+    final metadata = unique.where(PolicyEngine.isCloudMetadataAddress).map((address) => address.address).toSet();
+    if (metadata.isNotEmpty) {
+      throw ToolExecutionException('Cloud metadata destination blocked: ${metadata.join(', ')}. This block cannot be overridden.');
+    }
+    final restricted = unique.where(PolicyEngine.isRestrictedAddress).map((address) => address.address).toSet();
+    if (!allowPrivateNetwork && restricted.isNotEmpty) {
+      throw ToolExecutionException(
+        'DNS preflight resolved to a local/private or reserved address (${restricted.join(', ')}). The connection was blocked; explicitly allow local/private targets only when authorized.',
+      );
+    }
+    return List.unmodifiable(unique);
+  }
+
+  static Future<BoundedHttpResponse> _requestHttp(
+    Uri uri,
+    List<InternetAddress> approvedAddresses,
+    Duration timeout,
+  ) async {
+    final expectedHost = uri.host.toLowerCase();
+    final deadline = Stopwatch()..start();
+    Duration remaining() {
+      final value = timeout - deadline.elapsed;
+      if (value <= Duration.zero) throw TimeoutException('HTTPS request exceeded its time limit.');
+      return value;
+    }
+    final client = HttpClient()
+      ..connectionTimeout = timeout
+      ..findProxy = (_) => 'DIRECT'
+      ..connectionFactory = (requestUri, proxyHost, proxyPort) async {
+        if (proxyHost != null || requestUri.host.toLowerCase() != expectedHost || requestUri.port != 443) {
+          throw const HttpException('Request escaped the preflight-approved HTTPS destination.');
+        }
+        Object? lastError;
+        for (final address in approvedAddresses) {
+          try {
+            final socket = await Socket.connect(address, 443, timeout: remaining());
+            return ConnectionTask<Socket>.fromSocket(socket, socket.destroy);
+          } on SocketException catch (error) {
+            lastError = error;
+          }
+        }
+        if (lastError is SocketException) throw lastError;
+        throw const HttpException('No approved HTTPS destination could be reached.');
+      };
+    try {
+      final request = await client.getUrl(uri).timeout(remaining());
+      request.followRedirects = false;
+      request.maxRedirects = 0;
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json, text/plain;q=0.9, */*;q=0.5');
+      final response = await request.close().timeout(remaining());
+      final headers = <String, String>{};
+      response.headers.forEach((name, values) => headers[name.toLowerCase()] = values.join(', '));
+      final capture = await _readBoundedBody(response, timeout: remaining());
+      return BoundedHttpResponse(
+        statusCode: response.statusCode,
+        headers: Map.unmodifiable(headers),
+        body: capture.bytes,
+        truncated: capture.truncated,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<BoundedBodyCapture> _readBoundedBody(
+    HttpClientResponse response, {
+    required Duration timeout,
+  }) => captureBoundedBody(response, contentLength: response.contentLength, timeout: timeout);
+
+  static Future<BoundedBodyCapture> captureBoundedBody(
+    Stream<List<int>> stream, {
+    required int contentLength,
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    final iterator = StreamIterator<List<int>>(stream);
     final bytes = BytesBuilder(copy: false);
     final deadline = Stopwatch()..start();
     var truncated = false;
     try {
       while (true) {
-        final remainingTime = _timeout - deadline.elapsed;
+        final remainingTime = timeout - deadline.elapsed;
         if (remainingTime <= Duration.zero) throw TimeoutException('API response body read timed out.');
         if (!await iterator.moveNext().timeout(remainingTime)) break;
         final chunk = iterator.current;
@@ -306,14 +530,14 @@ class SecurityTools {
         }
         bytes.add(chunk);
         if (bytes.length == maxApiResponseBytes) {
-          truncated = response.contentLength < 0 || response.contentLength > maxApiResponseBytes;
+          truncated = contentLength < 0 || contentLength > maxApiResponseBytes;
           break;
         }
       }
     } finally {
       await iterator.cancel();
     }
-    return _BodyCapture(bytes.takeBytes(), truncated);
+    return BoundedBodyCapture(bytes.takeBytes(), truncated);
   }
 
   /// Deterministic, local-only API response inspection. It never returns or stores

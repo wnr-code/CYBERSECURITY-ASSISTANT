@@ -6,12 +6,14 @@ class ToolInvocation {
     required this.toolId,
     required this.target,
     required this.authorized,
+    this.allowPrivateNetwork = false,
     this.priorResults = const [],
   });
 
   final String toolId;
   final String target;
   final bool authorized;
+  final bool allowPrivateNetwork;
   final List<ToolRunResult> priorResults;
 }
 
@@ -60,9 +62,17 @@ class ToolOrchestrator {
       case 'dns_lookup':
         return await _tools.runDnsLookup(invocation.target, authorized: invocation.authorized);
       case 'tls_inspector':
-        return await _tools.inspectTls(invocation.target, authorized: invocation.authorized);
+        return await _tools.inspectTls(
+          invocation.target,
+          authorized: invocation.authorized,
+          allowPrivateNetwork: invocation.allowPrivateNetwork,
+        );
       case 'http_headers':
-        return await _tools.checkHttpHeaders(invocation.target, authorized: invocation.authorized);
+        return await _tools.checkHttpHeaders(
+          invocation.target,
+          authorized: invocation.authorized,
+          allowPrivateNetwork: invocation.allowPrivateNetwork,
+        );
       case 'response_analyzer':
         return _analyze(invocation);
     }
@@ -75,6 +85,7 @@ class ToolOrchestrator {
     required String target,
     required Iterable<String> toolIds,
     required bool authorized,
+    bool allowPrivateNetwork = false,
     bool includeResponseAnalysis = true,
     void Function(AssessmentCheckOutcome outcome)? onOutcome,
   }) async {
@@ -84,13 +95,20 @@ class ToolOrchestrator {
     final outcomes = <AssessmentCheckOutcome>[];
     final results = <ToolRunResult>[];
 
-    Future<void> runOne(String toolId, {required String checkTarget, required bool checkAuthorized, List<ToolRunResult> prior = const []}) async {
+    Future<void> runOne(
+      String toolId, {
+      required String checkTarget,
+      required bool checkAuthorized,
+      bool allowPrivate = false,
+      List<ToolRunResult> prior = const [],
+    }) async {
       late final AssessmentCheckOutcome outcome;
       try {
         final result = await execute(ToolInvocation(
           toolId: toolId,
           target: checkTarget,
           authorized: checkAuthorized,
+          allowPrivateNetwork: allowPrivate,
           priorResults: prior,
         ));
         results.add(result);
@@ -103,7 +121,12 @@ class ToolOrchestrator {
     }
 
     for (final id in ids) {
-      await runOne(id, checkTarget: target, checkAuthorized: authorized);
+      await runOne(
+        id,
+        checkTarget: target,
+        checkAuthorized: authorized,
+        allowPrivate: allowPrivateNetwork,
+      );
     }
     if (includeResponseAnalysis && results.isNotEmpty) {
       await runOne(

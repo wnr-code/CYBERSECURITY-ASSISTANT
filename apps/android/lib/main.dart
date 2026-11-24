@@ -1924,7 +1924,7 @@ void _showResultDetails(
             Text(_displayResultSummary(result.summary, context), style: const TextStyle(fontWeight: FontWeight.w700)),
             for (final finding in result.findings) ...[
               const SizedBox(height: 10),
-              Text('${_severityName(finding.severity, context)} · ${_displayFindingTitle(finding.title, context)}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text('${context.tr(finding.confidence.name).toUpperCase()} · ${_severityName(finding.severity, context)} · ${_displayFindingTitle(finding.title, context)}', style: const TextStyle(fontWeight: FontWeight.w600)),
               Text(_displayRecommendation(finding.recommendation, context)),
             ],
             if (result.details.isNotEmpty) ...[

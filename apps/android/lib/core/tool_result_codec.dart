@@ -12,6 +12,7 @@ String encodeToolRunResult(ToolRunResult result) => jsonEncode({
           {
             'title': finding.title,
             'severity': finding.severity.name,
+            'confidence': finding.confidence.name,
             'recommendation': finding.recommendation,
           },
       ],
@@ -48,8 +49,10 @@ ToolRunResult decodeToolRunResult(String json) {
     }
     final title = rawFinding['title'];
     final severityName = rawFinding['severity'];
+    final confidenceName = rawFinding['confidence'];
     final recommendation = rawFinding['recommendation'];
-    if (title is! String || severityName is! String || recommendation is! String) {
+    if (title is! String || severityName is! String || recommendation is! String ||
+        (confidenceName != null && confidenceName is! String)) {
       throw const FormatException('Stored finding is missing required fields.');
     }
     FindingSeverity? severity;
@@ -57,7 +60,22 @@ ToolRunResult decodeToolRunResult(String json) {
       if (candidate.name == severityName) severity = candidate;
     }
     if (severity == null) throw FormatException('Unknown finding severity "$severityName".');
-    findings.add(SecurityFinding(title: title, severity: severity, recommendation: recommendation));
+    FindingConfidence? confidence;
+    if (confidenceName is String) {
+      for (final candidate in FindingConfidence.values) {
+        if (candidate.name == confidenceName) confidence = candidate;
+      }
+      if (confidence == null) throw FormatException('Unknown finding confidence "$confidenceName".');
+    } else if (severity == FindingSeverity.info) {
+      // Backward compatibility for saved reports created before confidence labels.
+      confidence = FindingConfidence.informational;
+    }
+    findings.add(SecurityFinding(
+      title: title,
+      severity: severity,
+      confidence: confidence ?? FindingConfidence.potential,
+      recommendation: recommendation,
+    ));
   }
 
   final completedAt = DateTime.tryParse(requiredString('completedAt'));

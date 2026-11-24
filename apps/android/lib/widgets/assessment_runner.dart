@@ -20,6 +20,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   final Set<String> _selected = {'dns_lookup', 'tls_inspector', 'http_headers'};
   final List<AssessmentCheckOutcome> _outcomes = [];
   bool _authorized = false;
+  bool _allowPrivateNetwork = false;
   bool _running = false;
   String? _error;
   String? _assessmentTarget;
@@ -56,6 +57,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             autocorrect: false,
             onChanged: (_) => setState(() {
               _authorized = false;
+              _allowPrivateNetwork = false;
               _error = null;
               _outcomes.clear();
               _assessmentTarget = null;
@@ -92,6 +94,18 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             value: _authorized,
             onChanged: _running ? null : (value) => setState(() => _authorized = value ?? false),
             title: Text(context.tr('I own this target or have permission to assess it.'), style: const TextStyle(fontSize: 12)),
+            controlAffinity: ListTileControlAffinity.leading,
+          ),
+          CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            value: _allowPrivateNetwork,
+            onChanged: _running ? null : (value) => setState(() => _allowPrivateNetwork = value ?? false),
+            title: Text(context.tr('Allow local/private network targets'), style: const TextStyle(fontSize: 12)),
+            subtitle: Text(
+              context.tr('Off by default. Enable only when you are authorized to assess a loopback, private, or link-local system.'),
+              style: const TextStyle(fontSize: 11),
+            ),
             controlAffinity: ListTileControlAffinity.leading,
           ),
           Align(
@@ -138,7 +152,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              title: Text('${finding.severity.name.toUpperCase()} · ${finding.title}', style: const TextStyle(fontSize: 12)),
+              title: Text('${context.tr(finding.confidence.name).toUpperCase()} · ${finding.severity.name.toUpperCase()} · ${finding.title}', style: const TextStyle(fontSize: 12)),
               subtitle: Text(finding.recommendation, style: const TextStyle(fontSize: 11)),
             ),
           for (final detail in result.details.take(16))
@@ -161,6 +175,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
         target: _targetController.text,
         toolIds: _selected,
         authorized: _authorized,
+        allowPrivateNetwork: _allowPrivateNetwork,
         onOutcome: (outcome) {
           if (!mounted) return;
           setState(() => _outcomes.add(outcome));

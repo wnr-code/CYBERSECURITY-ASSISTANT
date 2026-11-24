@@ -196,7 +196,7 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
                   Text('${context.tr('Konfirmasi izin diterima')}: ${_result!.authorizationConfirmed} (${context.tr('pernyataan mandiri saja')})', style: const TextStyle(fontSize: 11)),
                 for (final finding in _result!.findings) ...[
                   const SizedBox(height: 8),
-                  Text('${_severityLabel(finding.severity, context)} · ${_findingTitle(finding.title, context)}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text('${context.tr(finding.confidence.name).toUpperCase()} · ${_severityLabel(finding.severity, context)} · ${_findingTitle(finding.title, context)}', style: const TextStyle(fontWeight: FontWeight.w600)),
                   Text(context.tr(finding.recommendation), style: const TextStyle(fontSize: 12, height: 1.35)),
                 ],
                 if (_result!.details.isNotEmpty) ...[

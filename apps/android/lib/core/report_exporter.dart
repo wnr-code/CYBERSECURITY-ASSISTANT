@@ -27,6 +27,7 @@ String buildSessionReportJson(List<ToolRunResult> results, {DateTime? generatedA
             for (final finding in result.findings)
               {
                 'severity': finding.severity.name,
+                'confidence': finding.confidence.name,
                 'title': finding.title,
                 'recommendation': finding.recommendation,
               },

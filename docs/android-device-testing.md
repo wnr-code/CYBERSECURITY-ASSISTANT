@@ -21,7 +21,7 @@ No Flutter, Dart, `adb`, or Android emulator executable is installed in the codi
 
 ## Manual test setup
 
-Use a non-production Android device or emulator, and only endpoints you own or have explicit permission to test. Do not enter real API keys. Use a controlled HTTPS test host for DNS/TLS/headers and a non-sensitive hostname for persisted test history.
+Use a non-production Android device or emulator, and only endpoints you own or have explicit permission to test. Do not enter real API keys. Use a controlled HTTPS test host for DNS/TLS/headers and a non-sensitive hostname for persisted test history. The deterministic unit/integration fixture tests exercise the assessment pipeline without network access; they do not replace a device-side TLS/network check.
 
 Record before starting:
 
@@ -74,13 +74,13 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 
 - [ ] On an authorized HTTPS host with a valid certificate on port 443, expect successful handshake and subject, issuer, validity dates, remaining days, and device trust status.
 - [ ] On an owned test endpoint with an invalid/expired/untrusted certificate, expect a safe TLS validation error; no certificate trust bypass.
-- [ ] Try a host/port/path outside the supported origin-only HTTPS scope; expect rejection (TLS inspection connects to port 443).
+- [ ] Try a host on a non-443 port or with a query/fragment; expect rejection. A path is accepted and preserved as assessment scope, though TLS itself only connects to host port 443.
 - [ ] Check timeout/offline behavior. The tool uses an 8-second timeout; allow for device/network scheduling before declaring a hang.
 
 ### 5. HTTP Security Header Checker
 
-- [ ] On an authorized HTTPS host, expect one GET to `/`, HTTP status, response headers, and heuristic findings for selected missing headers.
-- [ ] Confirm redirects are reported but **not followed**, response bodies are not displayed/downloaded, and a normal HTTP response is treated as reachable.
+- [ ] On an authorized HTTPS host, enter the exact allowed URL including its path (for example, `https://api.your-domain.example/v1/health`, without query/fragment), then expect one GET to that same path, HTTP status, response headers, and heuristic findings for selected missing headers. The tool does not rewrite the path to `/`.
+- [ ] Confirm redirects are reported but **not followed**, response bodies are not displayed, at most 32 KiB is inspected, and a normal HTTP response is treated as reachable. The request has an 8-second overall limit.
 - [ ] Use an owned test endpoint with test-only `Set-Cookie`, authorization, token-like, or sensitive query/header values; verify displayed/exportable values are redacted where supported. Do not use real secrets. Redaction is heuristic, not comprehensive.
 - [ ] Treat missing CSP/HSTS/etc. as context-dependent review prompts, not proof of a vulnerability.
 
@@ -88,10 +88,27 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 
 - [ ] Before confirmation, a network check cannot proceed; accept the exact self-attestation text only for a host you are authorized to test.
 - [ ] Edit the target after confirmation. Expect the checkbox to clear and previous output to be discarded.
-- [ ] Confirm `http://`, embedded user/password, query string, fragment, non-443 port, non-root path, malformed port, malformed numeric IPv4, and empty input are rejected.
+- [ ] Confirm `http://`, embedded user/password, query string, fragment, non-443 port, malformed port, malformed numeric IPv4/IP shorthand, and empty input are rejected. An authorized HTTPS path is accepted and preserved.
 - [ ] Confirm the standard HTTPS origin (or bare hostname normalized to HTTPS) is accepted. The checkbox is a consent gate, not independent proof of authorization.
 
-### 7. SQLite save, load, delete, persistence
+### 7. Owner-run HTTPS API path procedure
+
+1. Deploy or select a **non-production HTTPS endpoint you own or are explicitly authorized to assess**. A safe read-only health/API route is preferred; do not use endpoints that trigger mutations. Use port 443 and a valid trusted certificate.
+2. In Assessment, enter the exact URL including the path (for example, `https://api.your-domain.example/v1/health`). Query strings and fragments are intentionally rejected. Select DNS, TLS, and HTTP checks, accept the authorization attestation, and leave **Allow local/private network targets** off for public hosts.
+3. Run the assessment once. Each check executes sequentially and has its own Completed/Failed outcome. DNS reports device-resolver A/AAAA addresses; TLS reports device trust/certificate metadata; HTTP issues one GET to the exact path, does not follow redirects, and inspects at most 32 KiB for up to eight seconds. Response body values are not included in the result; sensitive-looking JSON fields are reported by redacted field path.
+4. Only for an owned/authorized lab endpoint reachable at loopback/private/link-local addresses, explicitly enable **Allow local/private network targets**. This is off by default and applies to TLS/HTTP connections. Known cloud metadata hostnames/addresses are hard-blocked even when the option is enabled; do not attempt to probe them.
+5. Save/export only non-sensitive evidence. Do not use real bearer tokens, cookies, secrets, or production customer responses. The request has no query string and sends no authorization header.
+
+Interpretation and evidence labels:
+
+- **Confirmed** means a specific security condition is directly demonstrated with evidence. The current heuristic rules do not assert a confirmed vulnerability.
+- **Potential** is a rule-based indicator requiring owner review (for example, a missing header or a field name such as `access_token`); it does not establish exploitability or broken access control.
+- **Informational** records an observation without asserting a vulnerability (for example, a non-public DNS answer or a server technology header).
+- **Error** means the check could not complete (policy block, timeout, DNS/connectivity/TLS failure). It is not a security finding and must not be treated as a clean/pass result.
+
+The app labels findings with confidence and severity separately. Severity is a prioritization hint, not proof. A completed response analyzer summarizes only evidence from completed checks; it does not turn potential heuristics into confirmed issues.
+
+### 8. SQLite save, load, delete, persistence
 
 - [ ] Run one harmless check on an authorized test host and choose **Save to session** in the result dialog. On Home, open that recent session result, choose **Save on device**, and explicitly confirm the disclosure. Expect it under **Saved on this device** after **Load history** or **Refresh**.
 - [ ] Tap a saved result; verify target, time, summary, details, and findings can be read.
@@ -100,7 +117,7 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 - [ ] Separately verify the session list is in-memory only and is cleared by process restart or its session-clear action; saved SQLite history should remain until explicitly deleted.
 - [ ] Do not save sensitive production target information during testing. SQLite history is app-private but not encrypted or synced. Uninstalling/clearing app data is destructive and is not a substitute for the in-app delete check.
 
-### 8. Network loss and errors
+### 9. Network loss and errors
 
 - [ ] Start with airplane mode/no network and run DNS; expect a bounded, readable failure rather than a crash or infinite spinner.
 - [ ] With network disabled, run TLS and header checks; expect a bounded connection/TLS error, responsive Cancel/Back behavior after completion, and no leaked raw exception/secret.
