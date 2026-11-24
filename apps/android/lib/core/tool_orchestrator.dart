@@ -1,3 +1,4 @@
+import 'diagnostics.dart';
 import 'security_tools.dart';
 import 'tool_registry.dart';
 
@@ -58,25 +59,30 @@ class ToolOrchestrator {
       throw const ToolOrchestrationException('Requested tool is not available in the local registry.');
     }
 
-    switch (definition.id) {
-      case 'dns_lookup':
-        return await _tools.runDnsLookup(invocation.target, authorized: invocation.authorized);
-      case 'tls_inspector':
-        return await _tools.inspectTls(
-          invocation.target,
-          authorized: invocation.authorized,
-          allowPrivateNetwork: invocation.allowPrivateNetwork,
-        );
-      case 'http_headers':
-        return await _tools.checkHttpHeaders(
-          invocation.target,
-          authorized: invocation.authorized,
-          allowPrivateNetwork: invocation.allowPrivateNetwork,
-        );
-      case 'response_analyzer':
-        return _analyze(invocation);
+    try {
+      switch (definition.id) {
+        case 'dns_lookup':
+          return await _tools.runDnsLookup(invocation.target, authorized: invocation.authorized);
+        case 'tls_inspector':
+          return await _tools.inspectTls(
+            invocation.target,
+            authorized: invocation.authorized,
+            allowPrivateNetwork: invocation.allowPrivateNetwork,
+          );
+        case 'http_headers':
+          return await _tools.checkHttpHeaders(
+            invocation.target,
+            authorized: invocation.authorized,
+            allowPrivateNetwork: invocation.allowPrivateNetwork,
+          );
+        case 'response_analyzer':
+          return _analyze(invocation);
+      }
+      throw const ToolOrchestrationException('Registry entry has no execution adapter.');
+    } on Exception catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.network);
+      rethrow;
     }
-    throw const ToolOrchestrationException('Registry entry has no execution adapter.');
   }
 
   /// Runs selected registered checks sequentially, retaining each failure and

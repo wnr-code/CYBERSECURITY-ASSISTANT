@@ -127,6 +127,27 @@ class ConfigureAndroidTests(unittest.TestCase):
             configure_splash_resources(android)
             verify_sources(android)
 
+    def test_java_main_activity_gets_idempotent_native_crash_capture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            activity = android / "app/src/main/java/org/example/MainActivity.java"
+            activity.parent.mkdir(parents=True)
+            activity.write_text(
+                "package org.example;\nimport io.flutter.embedding.android.FlutterActivity;\n"
+                "public class MainActivity extends FlutterActivity {}\n",
+                encoding="utf-8",
+            )
+            configure_splash_activity(android)
+            generated = activity.read_text(encoding="utf-8")
+            self.assertIn("installDiagnosticCrashCapture();", generated)
+            self.assertIn("pending_native_crash.txt", generated)
+            self.assertIn("FileWriter", generated)
+            self.assertIn("previous.uncaughtException(thread, error)", generated)
+            self.assertIn("safe.length() > 8000", generated)
+            self.assertLess(generated.index("installDiagnosticCrashCapture();"), generated.index("super.onCreate"))
+            configure_splash_activity(android)
+            self.assertEqual(activity.read_text(encoding="utf-8"), generated)
+
     def test_unknown_gradle_template_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle.kts"
@@ -197,6 +218,15 @@ class ConfigureAndroidTests(unittest.TestCase):
             )
 
             configure_project(android)
+
+            generated_activity = main_activity.read_text(encoding="utf-8")
+            self.assertIn("installDiagnosticCrashCapture()", generated_activity)
+            self.assertIn("pending_native_crash.txt", generated_activity)
+            self.assertIn("previous?.uncaughtException(thread, error)", generated_activity)
+            self.assertIn(".take(8000)", generated_activity)
+            self.assertIn("[path]", generated_activity)
+            configure_project(android)
+            self.assertEqual(main_activity.read_text(encoding="utf-8"), generated_activity)
 
             backup_rules = android / "app/src/main/res/xml/backup_rules.xml"
             extraction_rules = android / "app/src/main/res/xml/data_extraction_rules.xml"

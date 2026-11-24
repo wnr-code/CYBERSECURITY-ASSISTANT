@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'diagnostics.dart';
 import 'policy_engine.dart';
 
 enum MarketCategory {
@@ -683,7 +684,8 @@ class MarketPackageManager extends ChangeNotifier {
       final installed = await installer.install(verified);
       _setStatus(package.id, PackageStatus.installed, null);
       return installed;
-    } on Exception catch (error) {
+    } on Exception catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.package);
       final message = error is PackageManagerException ? error.message : 'Package operation failed safely.';
       _setStatus(package.id, PackageStatus.failed, message);
       rethrow;

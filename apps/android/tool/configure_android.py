@@ -286,6 +286,7 @@ def configure_splash_activity(android_root: Path) -> None:
     if existing_call:
         if source.index(existing_call) > source.find("super.onCreate"):
             raise RuntimeError("SplashScreen installation must run before super.onCreate().")
+        _configure_native_crash_capture(activity_file)
         return
 
     if activity_file.suffix == ".kt":
@@ -328,6 +329,116 @@ def configure_splash_activity(android_root: Path) -> None:
     source, replacements = declaration.subn(replacement, source, count=1)
     if replacements != 1:
         raise RuntimeError(f"Unexpected generated MainActivity structure in {activity_file}; review it manually.")
+    activity_file.write_text(source, encoding="utf-8")
+    _configure_native_crash_capture(activity_file)
+
+
+def _configure_native_crash_capture(activity_file: Path) -> None:
+    """Persist bounded uncaught JVM crash evidence for the next Flutter startup."""
+    source = activity_file.read_text(encoding="utf-8")
+    if activity_file.suffix == ".java":
+        _configure_java_native_crash_capture(activity_file, source)
+        return
+    if activity_file.suffix != ".kt":
+        raise RuntimeError("Native diagnostic capture requires a generated Kotlin or Java MainActivity.")
+    if "private fun installDiagnosticCrashCapture()" in source:
+        return
+    if "import java.io.File" not in source:
+        package_line = re.search(r"(?m)^package\s+[\w.]+\s*$", source)
+        if package_line is None:
+            raise RuntimeError(f"No Kotlin package declaration found in {activity_file}.")
+        source = source[:package_line.end()] + "\nimport java.io.File\n" + source[package_line.end():]
+    if "installDiagnosticCrashCapture()" not in source:
+        source, count = re.subn(
+            r"(?m)^([ \t]*)installSplashScreen\(\)[ \t]*$",
+            lambda match: f"{match.group(1)}installSplashScreen()\n{match.group(1)}installDiagnosticCrashCapture()",
+            source,
+            count=1,
+        )
+        if count != 1:
+            raise RuntimeError(f"Could not insert native crash handler in {activity_file}.")
+    class_end = source.rfind("}")
+    if class_end < 0:
+        raise RuntimeError(f"No MainActivity class body found in {activity_file}.")
+    handler = r'''
+
+    private fun installDiagnosticCrashCapture() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            try {
+                val raw = buildString {
+                    append("Native uncaught exception: ").append(error.javaClass.name).append('\n')
+                    error.stackTrace.take(24).forEach { frame ->
+                        append(frame.className).append('.').append(frame.methodName)
+                            .append('(').append(frame.fileName ?: "unknown").append(':').append(frame.lineNumber).append(')').append('\n')
+                    }
+                }
+                val safe = raw
+                    .replace(Regex("https?://\\S+"), "[url]")
+                    .replace(Regex("(token|api[_-]?key|password|secret)\\s*[:=]\\s*[^\\s,;]+", RegexOption.IGNORE_CASE)) { match -> "${match.groupValues[1]}=[redacted]" }
+                    .replace(Regex("(?:/data/\\S+|/storage/emulated/\\S+)"), "[path]")
+                    .take(8000)
+                File(applicationContext.filesDir, "pending_native_crash.txt").writeText(safe)
+            } catch (_: Throwable) {
+                // Crash evidence is best-effort; never block the platform's fatal handler.
+            }
+            previous?.uncaughtException(thread, error) ?: android.os.Process.killProcess(android.os.Process.myPid())
+        }
+    }
+'''
+    source = source[:class_end] + handler + source[class_end:]
+    activity_file.write_text(source, encoding="utf-8")
+
+
+def _configure_java_native_crash_capture(activity_file: Path, source: str) -> None:
+    if "private void installDiagnosticCrashCapture()" in source:
+        return
+    if "import java.io.File;" not in source:
+        package_line = re.search(r"(?m)^package\s+[\w.]+\s*;\s*$", source)
+        if package_line is None:
+            raise RuntimeError(f"No Java package declaration found in {activity_file}.")
+        source = source[:package_line.end()] + "\nimport java.io.File;\n" + source[package_line.end():]
+    source, count = re.subn(
+        r"(?m)^([ \t]*)SplashScreen\.installSplashScreen\(this\);[ \t]*$",
+        lambda match: f"{match.group(1)}SplashScreen.installSplashScreen(this);\n{match.group(1)}installDiagnosticCrashCapture();",
+        source,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError(f"Could not insert Java native crash handler in {activity_file}.")
+    class_end = source.rfind("}")
+    if class_end < 0:
+        raise RuntimeError(f"No Java MainActivity class body found in {activity_file}.")
+    handler = r'''
+
+    private void installDiagnosticCrashCapture() {
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            try {
+                StringBuilder raw = new StringBuilder("Native uncaught exception: ")
+                    .append(error.getClass().getName()).append('\n');
+                StackTraceElement[] frames = error.getStackTrace();
+                for (int i = 0; i < Math.min(24, frames.length); i++) {
+                    StackTraceElement frame = frames[i];
+                    raw.append(frame.getClassName()).append('.').append(frame.getMethodName())
+                        .append('(').append(frame.getFileName() == null ? "unknown" : frame.getFileName())
+                        .append(':').append(frame.getLineNumber()).append(')').append('\n');
+                }
+                String safe = raw.toString()
+                    .replaceAll("https?://\\S+", "[url]")
+                    .replaceAll("(?i)(token|api[_-]?key|password|secret)\\s*[:=]\\s*[^\\s,;]+", "$1=[redacted]")
+                    .replaceAll("(?:/data/\\S+|/storage/emulated/\\S+)", "[path]");
+                if (safe.length() > 8000) safe = safe.substring(0, 8000);
+                try (java.io.FileWriter writer = new java.io.FileWriter(new File(getApplicationContext().getFilesDir(), "pending_native_crash.txt"))) { writer.write(safe); }
+            } catch (Throwable ignored) {
+                // Crash evidence is best-effort; never block the platform's fatal handler.
+            }
+            if (previous != null) previous.uncaughtException(thread, error);
+            else android.os.Process.killProcess(android.os.Process.myPid());
+        });
+    }
+'''
+    source = source[:class_end] + handler + source[class_end:]
     activity_file.write_text(source, encoding="utf-8")
 
 

@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
+import 'core/diagnostics.dart';
 import 'core/local_result_store.dart';
 import 'core/package_manager.dart';
 import 'core/provider_registry.dart';
@@ -13,17 +18,47 @@ import 'core/startup_trace.dart';
 import 'core/tool_registry.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
+import 'widgets/diagnostics_screen.dart';
 import 'widgets/assessment_runner.dart';
 import 'widgets/market_screen.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
 
+final DiagnosticReporter _diagnostics = DiagnosticReporter(store: FileDiagnosticQueueStore());
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTrace.begin();
+  DiagnosticHooks.install(_diagnostics);
+  _diagnostics.startRetryLoop();
+  unawaited(_initializeDiagnostics());
   StartupTrace.mark('runApp-call');
   runApp(const CybersecurityAssistantApp());
+}
+
+Future<void> _initializeDiagnostics() async {
+  try {
+    await _diagnostics.initialize();
+    final package = await PackageInfo.fromPlatform();
+    var android = 'Android';
+    if (Platform.isAndroid) {
+      final info = await DeviceInfoPlugin().androidInfo;
+      android = 'Android ${info.version.release} (API ${info.version.sdkInt})';
+    }
+    _diagnostics.updateDeviceMetadata(appVersion: package.version, buildNumber: package.buildNumber, androidVersion: android);
+    final crashFile = File('${(await getApplicationSupportDirectory()).path}/pending_native_crash.txt');
+    await consumeNativeCrashFile(_diagnostics, crashFile);
+    Connectivity().checkConnectivity().then((results) {
+      // Connectivity is only a coarse transport hint, not proof of internet reachability.
+      _diagnostics.setWifiAvailability(results.contains(ConnectivityResult.wifi));
+    }).catchError((_) {});
+    Connectivity().onConnectivityChanged.listen((results) {
+      _diagnostics.setWifiAvailability(results.contains(ConnectivityResult.wifi));
+    });
+  } catch (error, stack) {
+    await _diagnostics.record(error, stackTrace: stack, category: DiagnosticCategory.startup);
+  }
 }
 
 const _ink = Color(0xFF0B1020);
@@ -207,6 +242,12 @@ class _MainShellState extends State<MainShell> {
     ));
   }
 
+  void _openDiagnostics() {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (_) => DiagnosticsScreen(reporter: _diagnostics, marketManager: _marketPackageManager),
+    ));
+  }
+
   // AI remains a secondary screen; the centered bottom shortcut does not add a navigation destination.
   void _openAssistantModule() {
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
@@ -252,7 +293,8 @@ class _MainShellState extends State<MainShell> {
         _savedHistoryLoaded = true;
       });
       StartupTrace.mark('sqlite-history-loaded');
-    } catch (_) {
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       StartupTrace.mark('sqlite-history-error');
       if (mounted) setState(() => _storageError = 'Could not load local history on this device.');
     } finally {
@@ -275,7 +317,8 @@ class _MainShellState extends State<MainShell> {
         _savedHistoryLoaded = true;
       });
       return true;
-    } catch (_) {
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       if (mounted) setState(() => _storageError = 'Could not save the result to local history.');
       return false;
     } finally {
@@ -291,7 +334,8 @@ class _MainShellState extends State<MainShell> {
     try {
       await _resultStore.clear();
       if (mounted) setState(() => _savedResults = []);
-    } catch (_) {
+    } catch (error, stack) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       if (mounted) setState(() => _storageError = 'Could not clear local history.');
     } finally {
       if (mounted) setState(() => _storageBusy = false);
@@ -343,6 +387,7 @@ class _MainShellState extends State<MainShell> {
         onLocaleChanged: widget.onLocaleChanged,
         onOpenAssistant: _openAssistantModule,
         onOpenConnections: _openConnections,
+        onOpenDiagnostics: _openDiagnostics,
       ),
     ];
     final page = AnimatedSwitcher(
@@ -999,12 +1044,14 @@ class SettingsScreen extends StatelessWidget {
     required this.onLocaleChanged,
     required this.onOpenAssistant,
     required this.onOpenConnections,
+    required this.onOpenDiagnostics,
   });
 
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
   final VoidCallback onOpenAssistant;
   final VoidCallback onOpenConnections;
+  final VoidCallback onOpenDiagnostics;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -1056,6 +1103,16 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: Text(context.tr('Manage your optional endpoints and review provider guides.')),
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: onOpenConnections,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.bug_report_outlined, color: _mint),
+                title: const Text('Developer Diagnostics'),
+                subtitle: const Text('Local error queue, device-safe details and optional relay settings.'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onOpenDiagnostics,
               ),
             ),
             const SizedBox(height: 10),
