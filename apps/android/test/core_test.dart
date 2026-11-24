@@ -214,6 +214,50 @@ void main() {
       resolver.complete([publicFixtureAddress]);
     });
 
+    test('cancellation interrupts pending TLS and HTTP adapters after destination preflight', () async {
+      final tlsStarted = Completer<void>();
+      final tlsResponse = Completer<TlsPeerEvidence>();
+      final tlsToken = RuntimeCancellationToken();
+      final tlsTools = SecurityTools(
+        hostResolver: (_) async => [publicFixtureAddress],
+        tlsHandshake: (_, __, ___) {
+          if (!tlsStarted.isCompleted) tlsStarted.complete();
+          return tlsResponse.future;
+        },
+      );
+      final tlsOperation = tlsTools.inspectTls('owned.example', authorized: true, cancellationToken: tlsToken);
+      await tlsStarted.future;
+      tlsToken.cancel();
+      await expectLater(tlsOperation, throwsA(isA<ToolExecutionCancelled>()));
+      tlsResponse.complete(TlsPeerEvidence(
+        subject: 'CN=owned.example',
+        issuer: 'CN=fixture',
+        validFrom: DateTime.utc(2026),
+        validUntil: DateTime.utc(2027),
+      ));
+
+      final httpStarted = Completer<void>();
+      final httpResponse = Completer<BoundedHttpResponse>();
+      final httpToken = RuntimeCancellationToken();
+      final httpTools = SecurityTools(
+        hostResolver: (_) async => [publicFixtureAddress],
+        httpGet: (_, __, ___) {
+          if (!httpStarted.isCompleted) httpStarted.complete();
+          return httpResponse.future;
+        },
+      );
+      final httpOperation = httpTools.checkHttpHeaders('owned.example', authorized: true, cancellationToken: httpToken);
+      await httpStarted.future;
+      httpToken.cancel();
+      await expectLater(httpOperation, throwsA(isA<ToolExecutionCancelled>()));
+      httpResponse.complete(BoundedHttpResponse(
+        statusCode: 200,
+        headers: {},
+        body: Uint8List(0),
+        truncated: false,
+      ));
+    });
+
     test('explicit local-target option reaches the approved fixture address', () async {
       List<InternetAddress>? addressesUsed;
       final tools = SecurityTools(

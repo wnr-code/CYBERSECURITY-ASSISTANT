@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,10 +10,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 class _AdapterTools extends SecurityTools {
   int dnsCalls = 0;
+  Completer<void>? dnsStarted;
+  Completer<ToolRunResult>? pendingDns;
+  ToolCancellation? receivedCancellationToken;
 
   @override
   Future<ToolRunResult> runDnsLookup(String input, {required bool authorized, ToolCancellation? cancellationToken}) async {
     dnsCalls++;
+    receivedCancellationToken = cancellationToken;
+    if (dnsStarted != null && !dnsStarted!.isCompleted) dnsStarted!.complete();
+    if (pendingDns != null) return pendingDns!.future;
     return ToolRunResult(
       toolId: 'dns_lookup',
       target: input,
@@ -70,6 +77,33 @@ void main() {
       )),
       throwsFormatException,
     );
+  });
+
+  test('propagates cancellation to network tools and reports runtime cancellation', () async {
+    tools.dnsStarted = Completer<void>();
+    tools.pendingDns = Completer<ToolRunResult>();
+    final token = RuntimeCancellationToken();
+    final operation = adapter.executeTool(RuntimeToolRequest(
+      toolId: 'dns_lookup',
+      input: const {'target': 'owned.example'},
+      requiredCapabilities: const {RuntimeCapability.network},
+      networkAuthorized: true,
+      cancellationToken: token,
+    ));
+
+    await tools.dnsStarted!.future;
+    expect(identical(tools.receivedCancellationToken, token), isTrue);
+    token.cancel();
+    await expectLater(operation, throwsA(isA<RuntimeExecutionCancelled>()));
+    tools.pendingDns!.complete(ToolRunResult(
+      toolId: 'dns_lookup',
+      target: 'owned.example',
+      summary: 'Fixture DNS result',
+      details: const ['A record: 192.0.2.8'],
+      findings: const [],
+      completedAt: DateTime.utc(2026, 11, 23),
+      authorizationConfirmed: true,
+    ));
   });
 
   test('validates installed manifest and health state', () async {
