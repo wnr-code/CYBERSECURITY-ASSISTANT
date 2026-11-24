@@ -91,9 +91,9 @@ void main() {
     });
 
     test('accepts valid IPv4 targets and rejects malformed numeric addresses', () {
-      final ipv4 = policy.validateTarget('192.0.2.15', authorized: true);
-      expect(ipv4.host, '192.0.2.15');
-      expect(ipv4.uri.host, '192.0.2.15');
+      final ipv4 = policy.validateTarget('8.8.8.15', authorized: true);
+      expect(ipv4.host, '8.8.8.15');
+      expect(ipv4.uri.host, '8.8.8.15');
       for (final invalid in ['999.999.999.999', '192.168.01.1', '192.168.1']) {
         expect(
           () => policy.validateTarget(invalid, authorized: true),
