@@ -170,7 +170,7 @@ void main() {
         hostResolver: (_) async => [InternetAddress('127.0.0.1')],
         httpGet: (_, __, ___) async {
           httpCalls++;
-          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+          return BoundedHttpResponse(statusCode: 200, headers: const {}, body: Uint8List(0), truncated: false);
         },
       );
 
@@ -188,7 +188,7 @@ void main() {
         hostResolver: (_) async => [publicFixtureAddress, InternetAddress('169.254.169.254')],
         httpGet: (_, __, ___) async {
           httpCalls++;
-          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+          return BoundedHttpResponse(statusCode: 200, headers: const {}, body: Uint8List(0), truncated: false);
         },
       );
       await expectLater(
@@ -204,7 +204,7 @@ void main() {
         hostResolver: (_) async => [InternetAddress('127.0.0.1')],
         httpGet: (_, addresses, __) async {
           addressesUsed = addresses;
-          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+          return BoundedHttpResponse(statusCode: 200, headers: const {}, body: Uint8List(0), truncated: false);
         },
       );
       final result = await tools.checkHttpHeaders(
@@ -275,7 +275,7 @@ void main() {
       final httpEvidence = http.details.join('\n');
       expect(httpEvidence, contains('GET /v1/surat/1'));
       expect(httpEvidence, contains('Redirect returned; it was not followed.'));
-      expect(httpEvidence, contains('$.access_token'));
+      expect(httpEvidence, contains(r'$.access_token'));
       expect(httpEvidence, isNot(contains('fixture-secret-value')));
       expect(http.findings.any((finding) => finding.confidence == FindingConfidence.potential), isTrue);
       expect(http.findings.any((finding) => finding.confidence == FindingConfidence.informational), isTrue);
@@ -310,7 +310,7 @@ void main() {
         hostResolver: (_) async => [publicFixtureAddress],
         httpGet: (_, __, ___) async {
           await Future<void>.delayed(const Duration(milliseconds: 80));
-          return const BoundedHttpResponse(statusCode: 200, headers: {}, body: [], truncated: false);
+          return BoundedHttpResponse(statusCode: 200, headers: const {}, body: Uint8List(0), truncated: false);
         },
       );
       await expectLater(

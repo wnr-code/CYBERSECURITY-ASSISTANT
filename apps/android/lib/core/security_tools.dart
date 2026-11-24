@@ -102,6 +102,50 @@ typedef HttpGet = Future<BoundedHttpResponse> Function(
   Duration timeout,
 );
 
+class _PinnedSocketConnectionTask implements ConnectionTask<Socket> {
+  _PinnedSocketConnectionTask(this.addresses, this.remaining);
+
+  final List<InternetAddress> addresses;
+  final Duration Function() remaining;
+  ConnectionTask<Socket>? _activeTask;
+  bool _cancelled = false;
+  late final Future<Socket> _socket = _connect();
+
+  @override
+  Future<Socket> get socket => _socket;
+
+  Future<Socket> _connect() async {
+    Object? lastError;
+    for (final address in addresses) {
+      if (_cancelled) throw const SocketException('Connection was cancelled.');
+      final task = Socket.startConnect(address, 443);
+      _activeTask = task;
+      try {
+        final connected = await task.socket.timeout(remaining(), onTimeout: () {
+          task.cancel();
+          throw TimeoutException('Pinned HTTPS socket connection timed out.');
+        });
+        if (_cancelled) {
+          connected.destroy();
+          throw const SocketException('Connection was cancelled.');
+        }
+        return connected;
+      } on SocketException catch (error) {
+        lastError = error;
+        task.cancel();
+      }
+    }
+    if (lastError is SocketException) throw lastError;
+    throw const SocketException('No preflight-approved address could be connected.');
+  }
+
+  @override
+  void cancel() {
+    _cancelled = true;
+    _activeTask?.cancel();
+  }
+}
+
 class BoundedBodyCapture {
   const BoundedBodyCapture(this.bytes, this.truncated);
   final Uint8List bytes;
@@ -114,12 +158,12 @@ class SecurityTools {
     HostResolver? hostResolver,
     HttpGet? httpGet,
     TlsHandshake? tlsHandshake,
-    Duration timeout = const Duration(seconds: 8),
+    Duration? timeout,
   })  : _policy = policy ?? PolicyEngine(),
         _hostResolver = hostResolver ?? InternetAddress.lookup,
         _httpGet = httpGet ?? _requestHttp,
         _tlsHandshake = tlsHandshake ?? _performTlsHandshake,
-        _timeout = timeout;
+        _timeout = timeout ?? const Duration(seconds: 8);
   final PolicyEngine _policy;
   final Duration _timeout;
   final HostResolver _hostResolver;
@@ -463,25 +507,14 @@ class SecurityTools {
       if (value <= Duration.zero) throw TimeoutException('HTTPS request exceeded its time limit.');
       return value;
     }
-    final client = HttpClient()
-      ..connectionTimeout = timeout
-      ..findProxy = (_) => 'DIRECT'
-      ..connectionFactory = (requestUri, proxyHost, proxyPort) async {
-        if (proxyHost != null || requestUri.host.toLowerCase() != expectedHost || requestUri.port != 443) {
-          throw const HttpException('Request escaped the preflight-approved HTTPS destination.');
-        }
-        Object? lastError;
-        for (final address in approvedAddresses) {
-          try {
-            final socket = await Socket.connect(address, 443, timeout: remaining());
-            return ConnectionTask<Socket>.fromSocket(socket, socket.destroy);
-          } on SocketException catch (error) {
-            lastError = error;
-          }
-        }
-        if (lastError is SocketException) throw lastError;
-        throw const HttpException('No approved HTTPS destination could be reached.');
-      };
+    final client = HttpClient()..connectionTimeout = timeout;
+    client.findProxy = (_) => 'DIRECT';
+    client.connectionFactory = (requestUri, proxyHost, proxyPort) async {
+      if (proxyHost != null || requestUri.host.toLowerCase() != expectedHost || requestUri.port != 443) {
+        throw const HttpException('Request escaped the preflight-approved HTTPS destination.');
+      }
+      return _PinnedSocketConnectionTask(approvedAddresses, remaining);
+    };
     try {
       final request = await client.getUrl(uri).timeout(remaining());
       request.followRedirects = false;
