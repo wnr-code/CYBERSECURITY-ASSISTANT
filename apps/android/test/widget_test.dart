@@ -109,8 +109,8 @@ void main() {
         expect(find.text(category), findsWidgets);
       }
       final marketScrollView = find.byType(Scrollable).first;
-      await tester.scrollUntilVisible(find.text('Embedded Runtime (planned)'), 360, scrollable: marketScrollView);
-      expect(find.text('Embedded Runtime (planned)'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('External Runtime Package (unsupported)'), 360, scrollable: marketScrollView);
+      expect(find.text('External Runtime Package (unsupported)'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Security Assessment Evidence Guide'), 360, scrollable: marketScrollView);
       expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
       expect(tester.takeException(), isNull);

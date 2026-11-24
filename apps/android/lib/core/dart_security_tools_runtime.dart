@@ -100,7 +100,7 @@ class DartSecurityToolsRuntime implements RuntimeExecutionAdapter {
   @override
   Future<bool> healthCheck() async {
     final workspace = _workspace;
-    if (!_initialized || workspace == null) return false;
+    if (workspace == null) return false;
     final manifest = File(p.join(workspace.path, _manifestFile));
     if (!await manifest.exists()) return false;
     try {
