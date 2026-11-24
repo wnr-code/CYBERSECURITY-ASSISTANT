@@ -121,7 +121,8 @@ void main() {
     expect(find.text('Pemeriksaan yang dijalankan'), findsOneWidget);
     expect(find.text('Jalankan assessment'), findsOneWidget);
     expect(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'), findsOneWidget);
-    expect(find.byType(CheckboxListTile), findsNWidgets(4));
+    expect(find.text('Izinkan target jaringan lokal/private'), findsOneWidget);
+    expect(find.byType(CheckboxListTile), findsNWidgets(5));
     expect(tester.takeException(), isNull);
   });
 
