@@ -94,6 +94,7 @@ void main() {
       supportDirectoryProvider: () async => directory,
     );
     try {
+      await manager.initialize();
       await tester.pumpWidget(MaterialApp(
         locale: const Locale('id'),
         supportedLocales: AppLocalizations.supportedLocales,
