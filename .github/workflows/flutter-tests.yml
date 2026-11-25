@@ -64,8 +64,20 @@ jobs:
         run: python3 tool/run_flutter_analyze.py
 
       - name: Run unit and widget tests
+        id: flutter_tests
         working-directory: apps/android
+        env:
+          FLUTTER_TEST_EVIDENCE_DIR: ${{ runner.temp }}/flutter-test-evidence
         run: python3 tool/run_flutter_test.py
+
+      - name: Upload Flutter test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flutter-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/flutter-test-evidence/
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Build Android debug APK
         working-directory: apps/android
