@@ -3,7 +3,7 @@ import 'secure_credential_store.dart';
 /// Persists explicit AI conversation-sharing consent separately for each provider.
 /// The value contains no message or credential data and is kept in secure local storage.
 class AiDataSharingConsentStore {
-  AiDataSharingConsentStore({required SecureStorageBackend backend}) : _backend = backend;
+  AiDataSharingConsentStore({required this._backend});
 
   static const _namespace = 'cybersecurity_assistant.ai_data_sharing_consent.v1';
   static const supportedProviderIds = <String>{'gemini', 'local_ai'};

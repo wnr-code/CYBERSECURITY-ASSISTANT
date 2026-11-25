@@ -126,7 +126,8 @@ class AiProviderManager {
       final runtime = adapter.runtime;
       if (runtime is! LocalAiInferenceReadiness) return false;
       try {
-        return await runtime.isReady().timeout(const Duration(seconds: 3));
+        final readiness = runtime as LocalAiInferenceReadiness;
+        return await readiness.isReady().timeout(const Duration(seconds: 3));
       } catch (_) {
         return false;
       }

@@ -343,7 +343,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
             width: 480,
             child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               _infoHeading(dialogContext, 'Integrated capabilities'),
-              Text(dialogContext.tr('Gemini chat · model') + ': ${GeminiAiProviderAdapter.modelId}'),
+              Text('${dialogContext.tr('Gemini chat · model')}: ${GeminiAiProviderAdapter.modelId}'),
               const SizedBox(height: 5),
               Text(dialogContext.tr('Only registered DNS, TLS, and HTTP checks can be proposed by the assistant.'), style: const TextStyle(height: 1.4)),
               const SizedBox(height: 14),
@@ -390,7 +390,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
             const Icon(Icons.auto_awesome_rounded, color: Color(0xFFAA9AFF)),
             const SizedBox(width: 11),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(context.tr('Gemini chat · model') + ': ${GeminiAiProviderAdapter.modelId}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+              Text('${context.tr('Gemini chat · model')}: ${GeminiAiProviderAdapter.modelId}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
               const SizedBox(height: 3),
               Text(context.tr(_geminiCapabilityStatus().sourceLabel), style: TextStyle(color: Colors.white.withValues(alpha: .66), fontSize: 11)),
             ])),

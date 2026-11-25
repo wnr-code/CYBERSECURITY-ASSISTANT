@@ -13,7 +13,7 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/widgets/assistant_screen.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
 
 class _MemorySecureBackend implements SecureStorageBackend {
   final values = <String, String>{};
@@ -77,7 +77,10 @@ void main() {
     final activityStore = MemoryActivityHistoryStore();
     final coordinator = AiAssistantCoordinator(
       providers: providers,
-      bridge: AiTerminalExecutionBridge(runtime: TerminalRuntimeAdapter(orchestrator: ToolOrchestrator())),
+      bridge: AiTerminalExecutionBridge(runtime: TerminalRuntimeAdapter(
+        orchestrator: ToolOrchestrator(),
+        runAfterConsent: (String toolId, String? target, {String? correlationId}) async => null,
+      )),
       activityStore: activityStore,
     );
 
@@ -89,7 +92,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      localizationsDelegates: [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
       home: AssistantScreen(
         providers: providers,
         marketProviders: marketProviders,

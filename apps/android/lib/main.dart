@@ -329,7 +329,7 @@ class _MainShellState extends State<MainShell> {
       credentialStore: credentials,
       adapters: [
         GeminiAiProviderAdapter(credentialStore: credentials),
-        LocalAiProviderAdapter(const AndroidLlamaCppInferenceRuntime()),
+        const LocalAiProviderAdapter(AndroidLlamaCppInferenceRuntime()),
       ],
     );
     _ownsMarketProviderManager = widget.marketProviderManager == null;
