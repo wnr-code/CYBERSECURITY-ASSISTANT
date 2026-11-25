@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -28,6 +29,17 @@ def verify_sources(android_root: Path) -> None:
     manifest = ET.parse(manifest_file).getroot()
     application = manifest.find("application")
     _require(application is not None, "Android manifest has no application element")
+    _require(application.get(ANDROID_NS + "icon") == "@mipmap/ic_launcher", "Android application does not use the branded launcher icon")
+    resource_root = app / "src/main/res"
+    for density in ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"):
+        _require((resource_root / f"mipmap-{density}/ic_launcher.png").is_file(), f"Branded legacy launcher icon is missing for {density}")
+    adaptive_icon = resource_root / "mipmap-anydpi-v26/ic_launcher.xml"
+    _require(adaptive_icon.is_file(), "Android adaptive launcher icon is missing")
+    adaptive = ET.parse(adaptive_icon).getroot()
+    adaptive_drawables = {node.get(ANDROID_NS + "drawable") for node in adaptive}
+    _require("@color/launcher_background" in adaptive_drawables, "Adaptive icon background is missing")
+    _require("@mipmap/ic_launcher_foreground" in adaptive_drawables, "Adaptive icon foreground is missing")
+    _require((resource_root / "mipmap-xxxhdpi/ic_launcher_foreground.png").is_file(), "Adaptive icon artwork is missing")
     launchers = []
     for activity in application.findall("activity"):
         actions = [node.get(ANDROID_NS + "name") for node in activity.findall("intent-filter/action")]
@@ -55,6 +67,27 @@ def verify_sources(android_root: Path) -> None:
     install_index = activity_source.find(install_call) if install_call else -1
     super_index = activity_source.find("super.onCreate")
     _require(install_index >= 0 and super_index > install_index, "AndroidX SplashScreen must be installed before FlutterActivity.onCreate")
+    integrity_call = activity_source.find("AppIntegrityVerifier.verifyOrThrow(this)")
+    _require(integrity_call >= 0 and super_index > integrity_call, "APK identity verification must run before FlutterActivity starts")
+    _require("AppIntegrityVerifier.attachChannel(this, flutterEngine)" in activity_source,
+             "Native APK identity channel is not connected to Flutter")
+    _require("LocalAiCapabilityProbe.attachChannel(this, flutterEngine)" in activity_source,
+             "Local AI device-capability channel is not connected to Flutter")
+    capability_sources = list((app / "src/main").rglob("LocalAiCapabilityProbe.kt")) + list((app / "src/main").rglob("LocalAiCapabilityProbe.java"))
+    _require(len(capability_sources) == 1, f"Expected one native local AI capability probe, found {len(capability_sources)}")
+    capability_source = capability_sources[0].read_text(encoding="utf-8")
+    _require("totalRamBytes" in capability_source and "availableStorageBytes" in capability_source and "runtimeAvailable" in capability_source,
+             "Local AI device capability probe is missing resource/runtime status fields")
+    verifier_sources = list((app / "src/main").rglob("AppIntegrityVerifier.kt")) + list((app / "src/main").rglob("AppIntegrityVerifier.java"))
+    _require(len(verifier_sources) == 1, f"Expected one native APK integrity verifier, found {len(verifier_sources)}")
+    verifier_source = verifier_sources[0].read_text(encoding="utf-8")
+    _require("GET_SIGNING_CERTIFICATES" in verifier_source and "trusted_apk_cert_sha256" in verifier_source,
+             "Native APK verifier does not check package signing identity")
+    _require("digestApkFiles" in verifier_source and "SHA-256" in verifier_source,
+             "Native APK verifier does not hash installed APK components")
+    signer_resource = app / "src/main/res/values/trusted_signer.xml"
+    _require(signer_resource.is_file() and "trusted_apk_cert_sha256" in signer_resource.read_text(encoding="utf-8"),
+             "Trusted APK signer pin resource is missing")
     _require("native:activity-onCreate" in activity_source and "native:splash-installed" in activity_source,
              "Debug cold-start timestamps are missing from MainActivity")
     _require("removeSplashScreen" not in activity_source and "FlutterNativeSplash.remove" not in activity_source,
@@ -93,7 +126,7 @@ def verify_sources(android_root: Path) -> None:
     drawable_values = [value for node in launch_background.iter() for value in node.attrib.values()]
     _require("@drawable/splash_brand_mark" in drawable_values, "Legacy launch drawable does not include the brand logo")
     _require("@color/startup_navy" in drawable_values, "Legacy launch drawable does not include the brand background")
-    print("Native splash source wiring verified: launcher theme, AndroidX installSplashScreen() before FlutterActivity, branded API 23+ resources, and Flutter NormalTheme handoff.")
+    print("Generated Android source wiring verified: branded legacy/adaptive launcher icons, splash, pre-Flutter signer gate, integrity and Local AI capability channels, device-resource probe, SHA-256 verifier source, trusted-signer resource, branded API 23+ resources, and Flutter NormalTheme handoff. This is not runtime APK or inference verification.")
 
 
 def _find_aapt() -> str:
@@ -108,7 +141,37 @@ def _find_aapt() -> str:
     raise RuntimeError("Android aapt tool not found; cannot inspect the compiled APK")
 
 
-def verify_apk(apk: Path) -> None:
+def _find_apksigner() -> str:
+    found = shutil.which("apksigner")
+    if found:
+        return found
+    sdk_roots = {Path(value) for value in (os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")) if value}
+    for sdk in sdk_roots:
+        candidates = sorted((sdk / "build-tools").glob("*/apksigner"), reverse=True)
+        if candidates:
+            return str(candidates[0])
+    raise RuntimeError("Android apksigner tool not found; cannot verify the built APK signer")
+
+
+def _trusted_signer_pins(android_root: Path) -> set[str]:
+    resource = android_root / "app/src/main/res/values/trusted_signer.xml"
+    if not resource.is_file():
+        raise RuntimeError(f"Trusted signer resource not found: {resource}")
+    root = ET.parse(resource).getroot()
+    node = next((entry for entry in root.findall("string") if entry.get("name") == "trusted_apk_cert_sha256"), None)
+    raw = (node.text or "").strip() if node is not None else ""
+    pins = {value.strip().lower() for value in raw.split(",") if value.strip()}
+    _require(all(re.fullmatch(r"[0-9a-f]{64}", value) for value in pins), "Trusted signer resource contains an invalid SHA-256 fingerprint")
+    return pins
+
+
+def _parse_signer_fingerprints(apksigner_output: str) -> set[str]:
+    values = re.findall(r"(?im)^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f:]+)\s*$", apksigner_output)
+    normalized = {value.replace(":", "").lower() for value in values}
+    return {value for value in normalized if re.fullmatch(r"[0-9a-f]{64}", value)}
+
+
+def verify_apk(apk: Path, android_root: Path) -> None:
     _require(apk.is_file(), f"Built APK not found: {apk}")
     with zipfile.ZipFile(apk) as package:
         names = set(package.namelist())
@@ -129,9 +192,26 @@ def verify_apk(apk: Path) -> None:
     _require(launch_theme_id.startswith("7f"), "Compiled APK launcher theme does not point to an app resource")
     for marker in ("style/LaunchTheme", "style/NormalTheme", "style/Theme.SplashScreen", "drawable/splash_brand_mark",
                    "drawable/launch_background", "drawable/startup_window_background", "color/startup_navy",
-                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon", "postSplashScreenTheme"):
-        _require(marker in resources_dump, f"Compiled APK is missing native splash resource: {marker}")
-    print(f"Built APK native splash verified: {apk} (compiled manifest and resource table inspected with aapt).")
+                   "windowSplashScreenBackground", "windowSplashScreenAnimatedIcon", "postSplashScreenTheme",
+                   "string/trusted_apk_cert_sha256"):
+        _require(marker in resources_dump, f"Compiled APK is missing required Android resource: {marker}")
+
+    apksigner = _find_apksigner()
+    signature = subprocess.run([apksigner, "verify", "--verbose", "--print-certs", str(apk)], check=True, capture_output=True, text=True)
+    actual_signers = _parse_signer_fingerprints(signature.stdout + signature.stderr)
+    _require(len(actual_signers) == 1, "Expected exactly one APK signer certificate digest from apksigner")
+    pins = _trusted_signer_pins(android_root)
+    if pins:
+        _require(actual_signers.issubset(pins), "Built APK signer does not match the configured trusted developer certificate")
+        signer_result = f"configured trusted signer(s) verified: {', '.join(sorted(actual_signers))}"
+    else:
+        signer_result = f"APK signature valid but no trusted release signer pin is configured (signer(s): {', '.join(sorted(actual_signers))}); not release-trusted"
+
+    digest = hashlib.sha256()
+    with apk.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    print(f"Built APK structure verified: {apk}; size={apk.stat().st_size} bytes; sha256={digest.hexdigest()}; {signer_result}.")
 
 
 def main() -> int:
@@ -142,9 +222,9 @@ def main() -> int:
     try:
         verify_sources(arguments.android_root)
         if arguments.apk:
-            verify_apk(arguments.apk)
+            verify_apk(arguments.apk, arguments.android_root)
     except (OSError, RuntimeError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
-        message = f"Android splash verification failed: {error}"
+        message = f"Android verification failed: {error}"
         print(message, file=sys.stderr)
         if os.environ.get("GITHUB_ACTIONS"):
             escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")

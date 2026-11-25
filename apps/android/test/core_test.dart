@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/assessment_execution_manager.dart';
+import 'package:cybersecurity_assistant/core/assessment_report_exporter.dart';
 import 'package:cybersecurity_assistant/core/dart_security_tools_runtime.dart';
 import 'package:cybersecurity_assistant/core/github_releases.dart';
 import 'package:cybersecurity_assistant/core/local_result_store.dart';
@@ -1071,6 +1072,56 @@ void main() {
     });
   });
 
+  group('Assessment report exporter', () {
+    test('exports run configuration and partial outcomes without dropping failures', () {
+      final now = DateTime.utc(2026, 11, 23);
+      final successful = ToolRunResult(
+        toolId: 'http_headers',
+        target: 'owned.example',
+        summary: 'Received HTTP 200.',
+        details: const ['content-type: application/json'],
+        findings: const [
+          SecurityFinding(
+            title: 'CSP header not observed',
+            severity: FindingSeverity.low,
+            recommendation: 'Review CSP.',
+          ),
+        ],
+        completedAt: now,
+        authorizationConfirmed: true,
+      );
+      final decoded = jsonDecode(buildAssessmentReportJson(
+        target: 'owned.example',
+        selectedToolIds: const ['http_headers', 'tls_inspector'],
+        authorizationConfirmed: true,
+        privateNetworkAllowed: false,
+        outcomes: [
+          AssessmentCheckOutcome(toolId: 'http_headers', status: AssessmentCheckStatus.completed, result: successful),
+          const AssessmentCheckOutcome(toolId: 'tls_inspector', status: AssessmentCheckStatus.failed, error: 'TLS check failed'),
+        ],
+        generatedAt: now,
+      )) as Map<String, dynamic>;
+
+      expect(decoded['schemaVersion'], 1);
+      expect(decoded['generatedAt'], now.toIso8601String());
+      expect(decoded['target'], 'owned.example');
+      expect(decoded['authorizationConfirmed'], isTrue);
+      expect(decoded['privateNetworkAllowed'], isFalse);
+      expect(decoded['summary'], {
+        'outcomeCount': 2,
+        'completedCount': 1,
+        'failedCount': 1,
+        'skippedCount': 0,
+        'cancelledCount': 0,
+      });
+      final outcomes = decoded['outcomes'] as List<dynamic>;
+      expect(outcomes, hasLength(2));
+      expect(outcomes[0]['findings'], hasLength(1));
+      expect(outcomes[1]['status'], 'failed');
+      expect(outcomes[1]['error'], 'TLS check failed');
+    });
+  });
+
   group('Session report exporter', () {
     test('produces valid JSON and excludes duplicate analyzer rollups', () {
       final now = DateTime.utc(2026, 11, 23);
@@ -1121,6 +1172,11 @@ void main() {
             recommendation: 'Review context.',
           ),
           SecurityFinding(
+            title: 'Critical observation fixture',
+            severity: FindingSeverity.critical,
+            recommendation: 'Review and verify.',
+          ),
+          SecurityFinding(
             title: 'Informational observation',
             severity: FindingSeverity.info,
             confidence: FindingConfidence.informational,
@@ -1130,7 +1186,13 @@ void main() {
         completedAt: DateTime.utc(2026, 11, 23),
       );
       final roundTrip = decodeToolRunResult(encodeToolRunResult(result));
+      expect(roundTrip.findings.map((finding) => finding.severity), [
+        FindingSeverity.low,
+        FindingSeverity.critical,
+        FindingSeverity.info,
+      ]);
       expect(roundTrip.findings.map((finding) => finding.confidence), [
+        FindingConfidence.potential,
         FindingConfidence.potential,
         FindingConfidence.informational,
       ]);
@@ -1138,6 +1200,7 @@ void main() {
       final oldJson = encodeToolRunResult(result).replaceAll(RegExp(r',\s*"confidence":"[^"]+"'), '');
       final legacy = decodeToolRunResult(oldJson);
       expect(legacy.findings.map((finding) => finding.confidence), [
+        FindingConfidence.potential,
         FindingConfidence.potential,
         FindingConfidence.informational,
       ]);
@@ -1305,7 +1368,7 @@ void main() {
         expect(report.outcome, RuntimeExecutionOutcome.failed);
         expect(assessment.outcomes.single.executionReport?.executionId, report.executionId);
         expect(report.terminalAuditSaveConfirmed, terminalAuditShouldPersist);
-        expect(toolActivity.summary.contains('Runtime terminal audit save was not confirmed.'), !terminalAuditShouldPersist);
+        expect(toolActivity.summary?.contains('Runtime terminal audit save was not confirmed.') ?? false, !terminalAuditShouldPersist);
         expect(report.terminalStateSaveConfirmed, isTrue);
         if (terminalAuditShouldPersist) {
           expect(runtimeManager.auditEvents.map((event) => event['action']), contains('tool-RuntimeExecutionException'));

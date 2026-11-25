@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/policy_engine.dart';
@@ -30,17 +31,85 @@ class _FailOnSaveNumberStore extends _Store {
 
 class _ScriptedStore extends _Store {
   bool Function(Map<String, Object?> snapshot)? failWhen;
+  Object? failureToThrow;
 
   @override
   Future<void> save(Map<String, Object?> snapshot) async {
-    if (failWhen?.call(snapshot) == true) throw StateError('Controlled persistence failure.');
+    if (failWhen?.call(snapshot) == true) throw failureToThrow ?? StateError('Controlled persistence failure.');
     await super.save(snapshot);
+  }
+}
+
+class _ControlledPersistenceStore extends _Store {
+  bool armed = false;
+  bool failHeldSave = false;
+  final heldFailure = StateError('Controlled held persistence failure.');
+  bool _held = false;
+  bool Function(Map<String, Object?> snapshot)? holdWhen;
+  final heldSnapshot = Completer<Map<String, Object?>>();
+  final releaseHeldSave = Completer<void>();
+  final attemptedSnapshots = <Map<String, Object?>>[];
+  final successfulSnapshots = <Map<String, Object?>>[];
+  int _activeSaves = 0;
+  int maxConcurrentSaves = 0;
+
+  @override
+  Future<void> save(Map<String, Object?> snapshot) async {
+    final captured = Map<String, Object?>.from(jsonDecode(jsonEncode(snapshot)) as Map);
+    attemptedSnapshots.add(captured);
+    _activeSaves++;
+    if (_activeSaves > maxConcurrentSaves) maxConcurrentSaves = _activeSaves;
+    try {
+      if (armed && !_held && holdWhen?.call(captured) == true) {
+        _held = true;
+        heldSnapshot.complete(captured);
+        await releaseHeldSave.future;
+        if (failHeldSave) throw heldFailure;
+      }
+      successfulSnapshots.add(captured);
+      await super.save(captured);
+    } finally {
+      _activeSaves--;
+    }
+  }
+}
+
+class _OtherAdapter extends _Adapter {
+  @override
+  RuntimeDescriptor get descriptor => const RuntimeDescriptor(
+        id: 'runtime.other', name: 'Other Fixture Runtime', version: '1.0.0', license: 'MIT',
+        supportedAbis: ['arm64-v8a'], dependencies: [], requiredCapabilities: {RuntimeCapability.filesystemRead},
+        sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      );
+}
+
+class _SignallingHealthAdapter extends _Adapter {
+  final healthCheckStarted = Completer<void>();
+
+  @override
+  Future<bool> healthCheck() async {
+    if (!healthCheckStarted.isCompleted) healthCheckStarted.complete();
+    return healthy;
   }
 }
 
 bool _snapshotHasAction(Map<String, Object?> snapshot, String action) {
   final audit = snapshot['audit'];
   return audit is List && audit.any((entry) => entry is Map && entry['action'] == action);
+}
+
+bool _snapshotHasRuntimeAction(Map<String, Object?> snapshot, String action, String runtimeId) {
+  final audit = snapshot['audit'];
+  return audit is List && audit.any((entry) => entry is Map && entry['action'] == action && entry['runtimeId'] == runtimeId);
+}
+
+String? _snapshotLifecycle(Map<String, Object?> snapshot, String runtimeId) {
+  final states = snapshot['states'];
+  if (states is! List) return null;
+  for (final state in states.whereType<Map>()) {
+    if (state['id'] == runtimeId) return state['lifecycle'] as String?;
+  }
+  return null;
 }
 
 class _Adapter implements RuntimeAdapter {
@@ -50,6 +119,8 @@ class _Adapter implements RuntimeAdapter {
   int initializes = 0;
   int stops = 0;
   Object? stopFailure;
+  Object? uninstallFailure;
+  bool removeMetadataBeforeUninstallFailure = false;
   int updates = 0;
   int removals = 0;
   @override
@@ -70,7 +141,16 @@ class _Adapter implements RuntimeAdapter {
   @override
   Future<void> update(Directory directory, String version) async { updates++; }
   @override
-  Future<void> uninstall(Directory directory) async { removals++; }
+  Future<void> uninstall(Directory directory) async {
+    removals++;
+    if (uninstallFailure != null) {
+      if (removeMetadataBeforeUninstallFailure) {
+        final metadata = File('${directory.path}/metadata');
+        if (await metadata.exists()) await metadata.delete();
+      }
+      throw uninstallFailure!;
+    }
+  }
   @override
   Future<bool> healthCheck() async => healthy;
 }
@@ -92,12 +172,10 @@ class _InstallFailureAdapter extends _Adapter {
 class _ExecutionAdapter extends _Adapter implements RuntimeExecutionAdapter {
   _ExecutionAdapter({
     this.output = const {'result': 'ok'},
-    this.maxExecution = const Duration(milliseconds: 200),
     this.maxInputBytes = 128,
     this.failure,
   });
   final Map<String, Object?> output;
-  final Duration maxExecution;
   final int maxInputBytes;
   final Object? failure;
   RuntimeToolRequest? lastRequest;
@@ -110,7 +188,7 @@ class _ExecutionAdapter extends _Adapter implements RuntimeExecutionAdapter {
         dependencies: const [], requiredCapabilities: const {RuntimeCapability.network},
         supportedToolIds: const ['dns_lookup'], minAndroidApi: 29,
         sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-        resourceLimit: RuntimeResourceLimit(maxExecution: maxExecution, maxInputBytes: maxInputBytes, maxOutputBytes: 128),
+        resourceLimit: RuntimeResourceLimit(maxExecution: const Duration(milliseconds: 200), maxInputBytes: maxInputBytes, maxOutputBytes: 128),
       );
 
   @override
@@ -152,7 +230,6 @@ class _ControlledExecutionAdapter extends _ExecutionAdapter {
   final stopStarted = Completer<void>();
   final stopRelease = Completer<void>();
   bool holdStop = false;
-  Object? stopFailure;
 
   @override
   Future<Map<String, Object?>> executeTool(RuntimeToolRequest request) {
@@ -168,6 +245,21 @@ class _ControlledExecutionAdapter extends _ExecutionAdapter {
     if (!stopStarted.isCompleted) stopStarted.complete();
     if (holdStop) await stopRelease.future;
     if (stopFailure != null) throw stopFailure!;
+  }
+}
+
+class _ControlledHealthAdapter extends _ExecutionAdapter {
+  final healthCheckStarted = Completer<void>();
+  final healthCheckRelease = Completer<void>();
+  bool holdHealthCheck = false;
+
+  @override
+  Future<bool> healthCheck() async {
+    if (holdHealthCheck) {
+      if (!healthCheckStarted.isCompleted) healthCheckStarted.complete();
+      await healthCheckRelease.future;
+    }
+    return healthy;
   }
 }
 
@@ -520,6 +612,7 @@ void main() {
       expect(report.persistenceFailures.any((failure) => failure.kind == RuntimePersistenceKind.state), isTrue);
       expect(report.persistenceFailures.every((failure) => failure.executionId == report.executionId), isTrue);
       expect(report.persistenceFailures.every((failure) => failure.runtimeId == adapter.descriptor.id && failure.toolId == 'dns_lookup'), isTrue);
+      expect(testManager.busy, isFalse, reason: 'Terminal state persistence failure must release execution admission.');
       expect(testManager.stateFor(adapter.descriptor.id)?.lifecycle, RuntimeLifecycle.running,
           reason: 'A failed state write rolls back in memory; the manager must not claim stopped.');
       expect(testManager.auditEvents.map((event) => event['action']), contains('tool-complete'));
@@ -578,6 +671,7 @@ void main() {
       await slow.executionStarted.future;
       timeoutTimers.lastWhere((timer) => timer.isActive).fire();
       await expectLater(timeoutPending, throwsA(isA<TimeoutException>()));
+      expect(timeoutManager.busy, isFalse, reason: 'Timeout cleanup must release execution admission.');
       expect(timeoutToken.isCancelled, isFalse, reason: 'Timeout cleanup must not masquerade as caller cancellation.');
       expect(slow.lastRequest?.cancellationToken.isCancelled, isTrue, reason: 'Timeout cancels the child token.');
       expect(timeoutManager.auditEvents.map((event) => event['action']), contains('tool-timeout'));
@@ -594,6 +688,7 @@ void main() {
       await cancellable.executionStarted.future;
       token.cancel();
       await expectLater(cancelPending, throwsA(isA<RuntimeExecutionCancelled>()));
+      expect(cancelManager.busy, isFalse, reason: 'Cancellation cleanup must release execution admission.');
       expect(token.isCancelled, isTrue, reason: 'An explicit caller cancellation remains observable.');
       expect(cancellable.lastRequest?.cancellationToken.isCancelled, isTrue);
       expect(token.debugListenerCount, 0);
@@ -660,6 +755,221 @@ void main() {
       expect(result.output['result'], 'accepted');
       expect(executionAdapter.executions, 1);
       expect(result.report?.executionId, isNotEmpty);
+      testManager.dispose();
+    });
+
+    for (final entry in <String, Future<dynamic> Function(RuntimeManager, String)>{
+      'initializeRuntime': (testManager, runtimeId) => testManager.initializeRuntime(runtimeId, userApproved: true),
+      'start': (testManager, runtimeId) => testManager.start(runtimeId, userApproved: true, policyAllowed: true),
+      'update': (testManager, runtimeId) => testManager.update(runtimeId, '1.0.1', userApproved: true, licenseAccepted: true),
+      'uninstall': (testManager, runtimeId) => testManager.uninstall(runtimeId, userApproved: true),
+      'healthCheck': (testManager, runtimeId) => testManager.healthCheck(runtimeId),
+    }.entries) {
+      test('rejects ${entry.key} while execution owns the runtime admission', () async {
+        final executionAdapter = _ControlledExecutionAdapter();
+        final timers = <_ManualTimer>[];
+        final testManager = _controlledManager(adapter: executionAdapter, store: _Store(), root: root, timers: timers);
+        final runtimeId = executionAdapter.descriptor.id;
+        await _installNetworkAdapter(testManager, executionAdapter);
+        if (entry.key == 'start') await testManager.initializeRuntime(runtimeId, userApproved: true);
+
+        final pending = testManager.executeTool(
+          runtimeId: runtimeId,
+          toolId: 'dns_lookup',
+          input: const {'target': 'active'},
+          requiredCapabilities: const {RuntimeCapability.network},
+          networkAuthorized: true,
+        );
+        await executionAdapter.executionStarted.future;
+        await expectLater(entry.value(testManager, runtimeId), throwsStateError);
+        expect(executionAdapter.stops, 0, reason: 'Only execution-owned cleanup may stop the adapter.');
+
+        executionAdapter.executionResult.complete(const {'result': 'done'});
+        await pending;
+        expect(testManager.busy, isFalse, reason: 'Execution admission is released after completion.');
+        testManager.dispose();
+      });
+    }
+
+    test('conflicting lifecycle operations are rejected and admission releases after completion', () async {
+      final lifecycleAdapter = _ControlledHealthAdapter();
+      final timers = <_ManualTimer>[];
+      final testManager = _controlledManager(adapter: lifecycleAdapter, store: _Store(), root: root, timers: timers);
+      final runtimeId = lifecycleAdapter.descriptor.id;
+      await _installNetworkAdapter(testManager, lifecycleAdapter);
+      await testManager.initializeRuntime(runtimeId, userApproved: true);
+      lifecycleAdapter.holdHealthCheck = true;
+
+      final pendingStart = testManager.start(runtimeId, userApproved: true, policyAllowed: true);
+      await lifecycleAdapter.healthCheckStarted.future;
+      await expectLater(testManager.healthCheck(runtimeId), throwsStateError);
+      expect(testManager.busy, isTrue);
+      lifecycleAdapter.healthCheckRelease.complete();
+      await pendingStart;
+      expect(testManager.busy, isFalse);
+      testManager.dispose();
+    });
+
+    test('queued audit transaction excludes the earlier failed event after rollback', () async {
+      final firstAdapter = _Adapter();
+      final secondAdapter = _SignallingHealthAdapter();
+      final transactionStore = _ControlledPersistenceStore();
+      final transactionManager = RuntimeManager(
+        environment: environment,
+        store: transactionStore,
+        adapters: [firstAdapter, secondAdapter],
+        supportDirectoryProvider: () async => root,
+      );
+      await transactionManager.install(firstAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      await transactionManager.install(secondAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      final previousSuccessCount = transactionStore.successfulSnapshots.length;
+      transactionStore
+        ..armed = true
+        ..failHeldSave = true
+        ..holdWhen = (snapshot) => _snapshotHasRuntimeAction(snapshot, 'health-ok', firstAdapter.descriptor.id);
+
+      final firstTransaction = transactionManager.healthCheck(firstAdapter.descriptor.id);
+      final secondTransaction = transactionManager.healthCheck(secondAdapter.descriptor.id);
+      final failedSnapshot = await transactionStore.heldSnapshot.future;
+      await secondAdapter.healthCheckStarted.future;
+      // Let the already-started lifecycle continuation enqueue its transaction;
+      // this is a microtask fence, not a timed delay.
+      await Future<void>.microtask(() {});
+      expect(_snapshotHasRuntimeAction(failedSnapshot, 'health-ok', firstAdapter.descriptor.id), isTrue);
+
+      transactionStore.releaseHeldSave.complete();
+      await expectLater(firstTransaction, throwsA(same(transactionStore.heldFailure)));
+      await secondTransaction;
+      final laterSnapshots = transactionStore.successfulSnapshots.skip(previousSuccessCount).toList();
+      expect(laterSnapshots, isNotEmpty);
+      expect(laterSnapshots.every((snapshot) =>
+          !_snapshotHasRuntimeAction(snapshot, 'health-ok', firstAdapter.descriptor.id)), isTrue);
+      expect(transactionStore.maxConcurrentSaves, 1);
+      expect(transactionManager.auditEvents.any((event) =>
+          event['action'] == 'health-ok' && event['runtimeId'] == firstAdapter.descriptor.id), isFalse);
+      transactionManager.dispose();
+    });
+
+    test('queued state transaction snapshots only after failed state rollback', () async {
+      final firstAdapter = _Adapter();
+      final secondAdapter = _SignallingHealthAdapter();
+      final transactionStore = _ControlledPersistenceStore();
+      final transactionManager = RuntimeManager(
+        environment: environment,
+        store: transactionStore,
+        adapters: [firstAdapter, secondAdapter],
+        supportDirectoryProvider: () async => root,
+      );
+      await transactionManager.install(firstAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      await transactionManager.initializeRuntime(firstAdapter.descriptor.id, userApproved: true);
+      await transactionManager.install(secondAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      final firstRuntimeId = firstAdapter.descriptor.id;
+      final previousSuccessCount = transactionStore.successfulSnapshots.length;
+      transactionStore
+        ..armed = true
+        ..failHeldSave = true
+        ..holdWhen = (snapshot) => _snapshotLifecycle(snapshot, firstRuntimeId) == RuntimeLifecycle.running.name;
+
+      final firstTransaction = transactionManager.start(firstRuntimeId, userApproved: true, policyAllowed: true);
+      final failedSnapshot = await transactionStore.heldSnapshot.future;
+      final secondTransaction = transactionManager.healthCheck(secondAdapter.descriptor.id);
+      await secondAdapter.healthCheckStarted.future;
+      await Future<void>.microtask(() {});
+      expect(_snapshotLifecycle(failedSnapshot, firstRuntimeId), RuntimeLifecycle.running.name);
+
+      transactionStore.releaseHeldSave.complete();
+      await expectLater(firstTransaction, throwsA(same(transactionStore.heldFailure)));
+      await secondTransaction;
+      expect(transactionManager.stateFor(firstRuntimeId)?.lifecycle, RuntimeLifecycle.initialized);
+      final laterSnapshots = transactionStore.successfulSnapshots.skip(previousSuccessCount).toList();
+      expect(laterSnapshots, isNotEmpty);
+      expect(laterSnapshots.every((snapshot) => _snapshotLifecycle(snapshot, firstRuntimeId) != RuntimeLifecycle.running.name), isTrue);
+      expect(laterSnapshots.every((snapshot) =>
+          !_snapshotHasRuntimeAction(snapshot, RuntimeLifecycle.running.name, firstRuntimeId)), isTrue);
+      expect(transactionStore.maxConcurrentSaves, 1);
+      transactionManager.dispose();
+    });
+
+    test('concurrent successful persistence keeps both latest audit mutations', () async {
+      final firstAdapter = _Adapter();
+      final secondAdapter = _SignallingHealthAdapter();
+      final transactionStore = _ControlledPersistenceStore();
+      final transactionManager = RuntimeManager(
+        environment: environment,
+        store: transactionStore,
+        adapters: [firstAdapter, secondAdapter],
+        supportDirectoryProvider: () async => root,
+      );
+      await transactionManager.install(firstAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      await transactionManager.install(secondAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      final previousSuccessCount = transactionStore.successfulSnapshots.length;
+      transactionStore
+        ..armed = true
+        ..holdWhen = (snapshot) => _snapshotHasRuntimeAction(snapshot, 'health-ok', firstAdapter.descriptor.id);
+
+      final firstTransaction = transactionManager.healthCheck(firstAdapter.descriptor.id);
+      final secondTransaction = transactionManager.healthCheck(secondAdapter.descriptor.id);
+      await transactionStore.heldSnapshot.future;
+      await secondAdapter.healthCheckStarted.future;
+      await Future<void>.microtask(() {});
+      transactionStore.releaseHeldSave.complete();
+      await Future.wait([firstTransaction, secondTransaction]);
+
+      final latest = transactionStore.successfulSnapshots.last;
+      expect(_snapshotHasRuntimeAction(latest, 'health-ok', firstAdapter.descriptor.id), isTrue);
+      expect(_snapshotHasRuntimeAction(latest, 'health-ok', secondAdapter.descriptor.id), isTrue);
+      expect(transactionStore.successfulSnapshots.length, greaterThan(previousSuccessCount));
+      expect(transactionStore.maxConcurrentSaves, 1);
+      transactionManager.dispose();
+    });
+
+    test('lifecycle persistence failure during another runtime execution is not attributed to it', () async {
+      final executionAdapter = _ControlledExecutionAdapter();
+      final lifecycleAdapter = _Adapter();
+      final scriptedStore = _ScriptedStore();
+      final timers = <_ManualTimer>[];
+      final testManager = RuntimeManager(
+        environment: environment,
+        store: scriptedStore,
+        adapters: [executionAdapter, lifecycleAdapter],
+        supportDirectoryProvider: () async => root,
+        timerFactory: (duration, callback) {
+          final timer = _ManualTimer(callback);
+          timers.add(timer);
+          return timer;
+        },
+      );
+      await _installNetworkAdapter(testManager, executionAdapter);
+      await testManager.install(lifecycleAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.filesystemRead});
+      scriptedStore.failWhen = (snapshot) => _snapshotHasAction(snapshot, 'health-ok');
+
+      final pending = testManager.executeTool(
+        runtimeId: executionAdapter.descriptor.id,
+        toolId: 'dns_lookup',
+        input: const {'target': 'active'},
+        requiredCapabilities: const {RuntimeCapability.network},
+        networkAuthorized: true,
+      );
+      await executionAdapter.executionStarted.future;
+      await expectLater(testManager.healthCheck(lifecycleAdapter.descriptor.id), throwsStateError);
+      final lifecycleFailure = testManager.persistenceFailures.singleWhere((failure) => failure.operation == 'health-ok');
+      expect(lifecycleFailure.runtimeId, lifecycleAdapter.descriptor.id);
+      expect(lifecycleFailure.executionId, isNull);
+      expect(lifecycleFailure.toolId, isNull);
+
+      scriptedStore.failWhen = null;
+      executionAdapter.executionResult.complete(const {'result': 'done'});
+      final result = await pending;
+      expect(result.report!.persistenceFailures, isEmpty);
+      expect(testManager.reportForExecution(result.report!.executionId), same(result.report));
+      expect(testManager.busy, isFalse, reason: 'Execution admission must release after concurrent lifecycle persistence failure.');
       testManager.dispose();
     });
 
@@ -799,6 +1109,70 @@ void main() {
     expect(manager.stateFor('runtime.fixture')?.lastError, 'Runtime cleanup failed.');
     expect(manager.auditEvents.map((event) => event['action']), contains('runtime-stop-cleanup-failed'));
     expect(manager.persistenceFailures, isEmpty);
+    expect(manager.busy, isFalse, reason: 'Failed stop must release lifecycle admission.');
+    await manager.healthCheck('runtime.fixture');
+    expect(manager.busy, isFalse);
+  });
+
+  test('uninstall adapter failure compensates partial removal and retains state and grants', () async {
+    final uninstallStore = _Store();
+    final uninstallAdapter = _Adapter()
+      ..uninstallFailure = StateError('adapter uninstall rejected')
+      ..removeMetadataBeforeUninstallFailure = true;
+    final uninstallManager = RuntimeManager(
+      environment: const RuntimeEnvironment(platform: 'Android', abi: 'arm64-v8a'),
+      store: uninstallStore,
+      adapters: [uninstallAdapter],
+      supportDirectoryProvider: () async => root,
+    );
+    await uninstallManager.install(uninstallAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+        grantedCapabilities: const {RuntimeCapability.filesystemRead});
+    final originalError = uninstallAdapter.uninstallFailure!;
+    final directory = Directory('${root.path}/runtime_workspaces/${uninstallAdapter.descriptor.id}');
+
+    await expectLater(uninstallManager.uninstall(uninstallAdapter.descriptor.id, userApproved: true), throwsA(same(originalError)));
+
+    expect(uninstallAdapter.removals, 1);
+    expect(uninstallAdapter.installs, 2, reason: 'The partially uninstalled adapter is reinstalled as compensation.');
+    expect(await File('${directory.path}/metadata').exists(), isTrue);
+    expect(uninstallManager.stateFor(uninstallAdapter.descriptor.id)?.lifecycle, RuntimeLifecycle.installed);
+    final grants = uninstallStore.value['grants'] as Map;
+    expect(grants[uninstallAdapter.descriptor.id], contains(RuntimeCapability.filesystemRead.name));
+    expect(uninstallManager.auditEvents.map((event) => event['action']), contains('uninstall-failed'));
+    expect(uninstallManager.busy, isFalse);
+    uninstallManager.dispose();
+  });
+
+  test('uninstall persistence failure restores adapter, directory, state and grants', () async {
+    final uninstallStore = _ScriptedStore();
+    final uninstallAdapter = _Adapter();
+    final uninstallManager = RuntimeManager(
+      environment: const RuntimeEnvironment(platform: 'Android', abi: 'arm64-v8a'),
+      store: uninstallStore,
+      adapters: [uninstallAdapter],
+      supportDirectoryProvider: () async => root,
+    );
+    await uninstallManager.install(uninstallAdapter.descriptor.id, userApproved: true, licenseAccepted: true,
+        grantedCapabilities: const {RuntimeCapability.filesystemRead});
+    final originalError = StateError('uninstall persistence failed');
+    uninstallStore
+      ..failureToThrow = originalError
+      ..failWhen = (snapshot) => _snapshotHasAction(snapshot, 'uninstall');
+    final directory = Directory('${root.path}/runtime_workspaces/${uninstallAdapter.descriptor.id}');
+
+    await expectLater(uninstallManager.uninstall(uninstallAdapter.descriptor.id, userApproved: true), throwsA(same(originalError)));
+
+    expect(uninstallAdapter.removals, 1);
+    expect(uninstallAdapter.installs, 2, reason: 'The adapter is reinstalled after uninstall state persistence fails.');
+    expect(await directory.exists(), isTrue);
+    expect(await File('${directory.path}/metadata').exists(), isTrue);
+    expect(uninstallManager.stateFor(uninstallAdapter.descriptor.id)?.lifecycle, RuntimeLifecycle.installed);
+    final grants = uninstallStore.value['grants'] as Map;
+    expect(grants[uninstallAdapter.descriptor.id], contains(RuntimeCapability.filesystemRead.name));
+    expect(uninstallManager.auditEvents.map((event) => event['action']), contains('uninstall-failed'));
+    expect(uninstallManager.persistenceFailures.any((failure) => failure.operation == 'uninstall'), isTrue);
+    expect(uninstallManager.busy, isFalse);
+    uninstallManager.dispose();
   });
 
   test('enforces approval, declared capability and adapter-backed lifecycle without arbitrary shell execution', () async {

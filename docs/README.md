@@ -15,6 +15,7 @@
 
 ## Implementation notes
 
+- [Diagnostics Relay setup](diagnostics-relay.md) — local-first diagnostics, explicit consent, secure relay token storage, and Cloudflare Workers + D1 setup.
 - [Android app foundation](../apps/android/README.md) — current Flutter features, limitations, setup, and CI verification.
 
 Architecture documents describe intended or proposed work and must not be read as evidence that a feature is implemented. Consult the implementation notes and security audit for actual status.

@@ -17,6 +17,7 @@ import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/dashboard_screen.dart';
+import 'package:cybersecurity_assistant/widgets/floating_terminal.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:cybersecurity_assistant/widgets/tool_runner_dialog.dart';
@@ -270,11 +271,18 @@ void _useTallViewport(WidgetTester tester, {double width = 800}) {
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
 Future<void> _pumpApp(WidgetTester tester) async {
-  // The repeating Digital Earth motion honors this reduced-motion setting;
-  // pumpAndSettle can then settle deterministically like an accessibility user.
+  // The active-assessment grid animation honors reduced motion, allowing
+  // pumpAndSettle to settle deterministically like an accessibility user.
   tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
   addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
   await tester.pumpWidget(_testApp());
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openCatalogFromEdgePanel(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Buka Edge Panel'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Katalog').last);
   await tester.pumpAndSettle();
 }
 
@@ -286,7 +294,7 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('Market is a separate package page with the six catalog categories and honest placeholders', (tester) async {
+  testWidgets('Market keeps the package catalog in an internal tab with six honest categories', (tester) async {
     final directory = (await tester.runAsync(() => Directory.systemTemp.createTemp('market-widget-')))!;
     final manager = MarketPackageManager(
       catalog: bundledMarketCatalog,
@@ -305,11 +313,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.text('MARKET'), findsOneWidget);
+      expect(find.text('Market'), findsOneWidget);
+      expect(find.byType(TabBar), findsOneWidget);
+      expect(find.text('Provider'), findsWidgets);
+      expect(find.text('Paket'), findsWidgets);
       for (final category in ['Alat Keamanan', 'Runtime', 'Plugin', 'Model AI', 'Paket Pengetahuan', 'Konektor Cloud/API']) {
         expect(find.text(category), findsWidgets);
       }
-      final marketScrollView = find.byType(Scrollable).first;
+      final marketScrollView = find.descendant(of: find.byKey(const ValueKey('market-packages-list')), matching: find.byType(Scrollable)).first;
       await tester.scrollUntilVisible(find.text('External Runtime Package (unsupported)'), 360, scrollable: marketScrollView);
       expect(find.text('External Runtime Package (unsupported)'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Security Assessment Evidence Guide'), 360, scrollable: marketScrollView);
@@ -524,7 +535,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('bottom-navigation-0')));
     await tester.pumpAndSettle();
     expect(manager.activeRun?.runId, originalRunId);
-    expect(find.textContaining('0 / 1'), findsOneWidget, reason: 'Dashboard observes progress from the same application-owned run.');
+    expect(find.textContaining('owned.example · 0 / 1 pemeriksaan'), findsOneWidget,
+        reason: 'The status visual uses the active run target and live progress from the application-owned manager.');
 
     await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
     await tester.pump();
@@ -913,8 +925,8 @@ void main() {
       expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
     }
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
-    expect(find.text('DIGITAL EARTH'), findsOneWidget);
-    expect(find.text('DIAM'), findsOneWidget);
+    expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
+    expect(find.text('Belum ada Assessment tersimpan'), findsOneWidget);
     expect(find.text('SKOR KEAMANAN'), findsOneWidget);
     expect(find.text('Belum dihitung'), findsOneWidget);
     expect(find.text('Tidak ada assessment yang berjalan'), findsOneWidget);
@@ -965,8 +977,12 @@ void main() {
           activityError: null,
           marketPackageManager: packageManager,
           assessmentProgress: null,
+          activeAssessmentTarget: null,
           onNavigateToTools: () {},
+          onOpenCatalog: () {},
           onNavigateToReports: () {},
+          onNavigateToFindings: (_) {},
+          onOpenSecurityOverview: () {},
           onOpenAssistant: () {},
           onOpenActivity: (_) {},
           onOpenResult: (_) {},
@@ -1041,14 +1057,46 @@ void main() {
     await tester.pumpAndSettle();
 
     final dashboardScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.text('STATUS ASSESSMENT'), 280, scrollable: dashboardScroll);
+    expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
+    expect(find.textContaining('Findings yang dimuat: 1'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('security-status-hero')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ikhtisar Keamanan'), findsOneWidget);
+    expect(find.text('Peta jaringan belum tersedia'), findsOneWidget);
+    await tester.tap(find.byTooltip('Kembali'));
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.textContaining('1 sesi assessment dalam data yang dimuat'), 280, scrollable: dashboardScroll);
     expect(find.textContaining('1 sesi assessment dalam data yang dimuat'), findsOneWidget);
+    final securityHero = find.byKey(const ValueKey('security-status-hero'));
+    expect(find.descendant(of: securityHero, matching: find.text('Selesai')), findsOneWidget);
+    expect(find.descendant(of: securityHero, matching: find.textContaining('owned.example')), findsOneWidget);
+    expect(find.descendant(of: securityHero, matching: find.textContaining('1 pemeriksaan selesai.')), findsOneWidget);
+    expect(find.descendant(of: securityHero, matching: find.textContaining('Findings yang dimuat: 1')), findsOneWidget);
     await tester.scrollUntilVisible(find.textContaining('1 temuan dalam data yang dimuat'), 280, scrollable: dashboardScroll);
     expect(find.textContaining('1 temuan dalam data yang dimuat'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Pencarian DNS'), 280, scrollable: dashboardScroll);
     expect(find.text('Pencarian DNS'), findsOneWidget);
     expect(find.text('owned.example'), findsWidgets);
     expect(find.text('Aktivitas terbaru'), findsOneWidget);
+
+    await tester.scrollUntilVisible(find.text('Buka Temuan'), 280, scrollable: dashboardScroll);
+    await tester.tap(find.text('Buka Temuan'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('finding-search-filter')), findsOneWidget,
+        reason: 'The Dashboard Findings shortcut opens directly on the Findings view.');
+    var severityFilter = tester.widget<DropdownButton<FindingSeverity?>>(find.byKey(const ValueKey('finding-severity-filter')));
+    expect(severityFilter.value, isNull);
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-0')));
+    await tester.pumpAndSettle();
+    final homeScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.text('TINGGI  1'), 280, scrollable: homeScroll);
+    await tester.tap(find.text('TINGGI  1'));
+    await tester.pumpAndSettle();
+    severityFilter = tester.widget<DropdownButton<FindingSeverity?>>(find.byKey(const ValueKey('finding-severity-filter')));
+    expect(severityFilter.value, FindingSeverity.high,
+        reason: 'Tapping an actual severity count opens Findings with that repository filter applied.');
     expect(tester.takeException(), isNull);
   });
 
@@ -1110,20 +1158,20 @@ void main() {
     expect(find.text('Assistant'), findsNothing);
   });
 
-  testWidgets('assessment and individual-tool catalog have separate, clearly labeled views', (tester) async {
+  testWidgets('Assessment is clean and Catalog is a separate destination', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
     await tester.tap(find.text('Assessment').first);
     await tester.pumpAndSettle();
 
     expect(find.text('Jalankan assessment'), findsOneWidget);
-    expect(find.text('Katalog alat'), findsOneWidget);
-    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori'), findsNothing);
+    expect(find.text('Katalog'), findsNothing);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsNothing);
 
-    await tester.tap(find.text('Katalog alat'));
-    await tester.pumpAndSettle();
-    expect(find.text('Jalankan assessment'), findsNothing);
-    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori'), findsOneWidget);
+    await _openCatalogFromEdgePanel(tester);
+    expect(find.text('DISCOVER CAPABILITIES'), findsOneWidget);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsOneWidget);
+    expect(find.text('Katalog alat'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -1132,64 +1180,32 @@ void main() {
     await _pumpApp(tester);
     await tester.tap(find.text('Assessment').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Katalog alat'));
-    await tester.pumpAndSettle();
+    await _openCatalogFromEdgePanel(tester);
 
     final catalogSearch = find.byWidgetPredicate(
-      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat atau kategori',
+      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog',
     );
     await tester.enterText(catalogSearch, 'TLS');
     await tester.pump();
 
-    expect(find.text('Inspeksi Sertifikat TLS'), findsOneWidget);
-    expect(find.text('Pencarian DNS'), findsNothing);
+    expect(find.text('SSL/TLS Inspector'), findsOneWidget);
+    expect(find.text('DNS Lookup'), findsNothing);
   });
 
-  testWidgets('does not run a network check until authorization is confirmed', (tester) async {
+  testWidgets('built-in catalog details use Built-in capability and hand off to Assessment', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Katalog alat'));
-    await tester.pumpAndSettle();
-    final dnsToolEntry = find.text('Pencarian DNS');
-    await tester.tap(dnsToolEntry);
+    await _openCatalogFromEdgePanel(tester);
+    await tester.tap(find.text('DNS Lookup'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).last, 'example.com');
-    expect(find.text('Domain yang dicari'), findsOneWidget);
-    await tester.tap(find.text('Jalankan pemeriksaan'));
+    expect(find.text('Purpose & requirements'), findsOneWidget);
+    expect(find.text('Bawaan'), findsWidgets);
+    expect(find.text('Pasang'), findsNothing);
+    await tester.tap(find.text('Buka Assessment'));
     await tester.pumpAndSettle();
-
-    expect(find.text('Konfirmasi bahwa Anda memiliki atau mendapat izin untuk menguji target ini.'), findsOneWidget);
-
-    final authorization = find.descendant(
-      of: find.byType(AlertDialog),
-      matching: find.byType(CheckboxListTile),
-    ).first;
-    await tester.tap(authorization);
-    await tester.pump();
-    expect(tester.widget<CheckboxListTile>(authorization).value, isTrue);
-
-    await tester.enterText(find.byType(TextField).last, 'other.example');
-    await tester.pump();
-    expect(tester.widget<CheckboxListTile>(authorization).value, isFalse);
-  });
-
-  testWidgets('GitHub release metadata lookup is user-triggered', (tester) async {
-    _useTallViewport(tester);
-    await _pumpApp(tester);
-    await tester.tap(find.text('Assessment').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Katalog alat'));
-    await tester.pumpAndSettle();
-    final releaseButton = find.text('Lihat rilis GitHub');
-    await tester.tap(releaseButton);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Metadata rilis GitHub'), findsOneWidget);
-    expect(find.text('Periksa rilis terbaru'), findsOneWidget);
-    expect(find.text('Pilih repositori referensi yang diizinkan. Halaman ini hanya membaca metadata rilis; file tidak diunduh atau dijalankan.'), findsOneWidget);
+    expect(find.text('Jalankan assessment'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('provider catalog search opens an explicitly unconnected guide', (tester) async {
@@ -1273,6 +1289,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.values, isEmpty);
     expect(find.text('Credential deleted.'), findsOneWidget);
+  });
+
+  testWidgets('Edge Panel opens the in-app terminal and retains its session across tabs and minimization', (tester) async {
+    await _pumpApp(tester);
+
+    await tester.tap(find.byTooltip('Buka Edge Panel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edge Panel'), findsOneWidget);
+    expect(find.textContaining('belum menampilkan aksi provider'), findsOneWidget);
+
+    await tester.tap(find.text('Terminal Mengambang'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FloatingTerminal), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'help');
+    await tester.tap(find.byTooltip('Jalankan perintah'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Perintah yang didukung: help'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-2')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FloatingTerminal), findsOneWidget);
+    expect(find.textContaining('Perintah yang didukung: help'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Minimalkan terminal'));
+    await tester.pumpAndSettle();
+    expect(find.text('Terminal diminimalkan'), findsOneWidget);
+    await tester.tap(find.text('Terminal diminimalkan'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FloatingTerminal), findsOneWidget);
+    expect(find.textContaining('Perintah yang didukung: help'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Keluar dari terminal'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keluar'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FloatingTerminal), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('requires current authorization and rejects invalid connection URLs', (tester) async {

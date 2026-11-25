@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'app_self_protection.dart';
 import 'diagnostics.dart';
 import 'policy_engine.dart';
 
@@ -169,6 +170,17 @@ class PackageManagerException implements Exception {
   String toString() => message;
 }
 
+void _authorizeMarketDataPayload(MarketPackage package) {
+  try {
+    const AppSelfProtectionPolicy().authorizeMarketPayload(
+      payloadType: package.payloadType.name,
+      dataOnly: package.canBeInstalledAsData,
+    );
+  } on AppSelfProtectionException catch (error) {
+    throw PackageManagerException(error.message);
+  }
+}
+
 class DownloadedPackage {
   const DownloadedPackage(this.bytes);
   final Uint8List bytes;
@@ -319,6 +331,7 @@ class PackageVerifier {
   final PackageSignatureVerifier? signatureVerifier;
 
   Future<VerifiedPackage> verify(MarketPackage package, Uint8List bytes) async {
+    _authorizeMarketDataPayload(package);
     final expectedSize = package.downloadSizeBytes;
     if (expectedSize != null && bytes.length != expectedSize) {
       throw const PackageManagerException('Downloaded size does not match the catalogue metadata.');
@@ -444,6 +457,15 @@ class PackageInstaller {
 
   Future<InstalledPackage> install(VerifiedPackage verified) async {
     final package = verified.package;
+    _authorizeMarketDataPayload(package);
+    final expectedSha = package.sha256?.toLowerCase();
+    final actualSha = sha256.convert(verified.bytes).toString();
+    if (expectedSha == null ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(expectedSha) ||
+        expectedSha != actualSha ||
+        verified.sha256.toLowerCase() != actualSha) {
+      throw const PackageManagerException('Package checksum verification failed at the installer boundary.');
+    }
     if (!_isSafePackageId(package.id) || !_isSafeVersion(package.version)) {
       throw const PackageManagerException('Package ID or version is unsafe.');
     }
@@ -585,6 +607,54 @@ class MarketPackageManager extends ChangeNotifier {
   String? errorFor(String id) => _errors[id];
   InstalledPackage? installedById(String id) => _registry?.byId(id);
 
+  /// Reads only a previously verified JSON data package. Market payloads are
+  /// never loaded as code, and the on-disk digest/schema are rechecked at read time.
+  Future<Map<String, Object?>> readInstalledJsonData(MarketPackage package) async {
+    if (package.payloadType != PackagePayloadType.jsonData) {
+      throw const PackageManagerException('Only verified JSON data packages can be opened in Market.');
+    }
+    await initialize();
+    final installed = _registry?.byId(package.id);
+    if (installed == null) throw const PackageManagerException('This package is not installed.');
+    if (installed.version != package.version) {
+      throw const PackageManagerException('The installed package version is not represented by current verified metadata.');
+    }
+    if (!_isSafePackageId(installed.id) || !_isSafeVersion(installed.version)) {
+      throw const PackageManagerException('Installed package registry contains an unsafe path.');
+    }
+    final expectedRelative = p.join(installed.id, installed.version, 'payload.json');
+    if (installed.id != package.id || installed.relativeFile != expectedRelative) {
+      throw const PackageManagerException('Installed package path is invalid.');
+    }
+    final file = File(p.join(_installer!.packageDirectory.path, expectedRelative));
+    if (await FileSystemEntity.type(file.path, followLinks: false) != FileSystemEntityType.file) {
+      throw const PackageManagerException('Installed package file is missing.');
+    }
+    final size = await file.length();
+    if (size <= 0 || size > maxPackageBytes) throw const PackageManagerException('Installed data package exceeds the safe read limit.');
+    final bytes = await file.readAsBytes();
+    if (bytes.length != size || bytes.length > maxPackageBytes) {
+      throw const PackageManagerException('Installed data package exceeds the safe read limit.');
+    }
+    final digest = sha256.convert(bytes).toString();
+    if (digest != installed.sha256 || digest != package.sha256?.toLowerCase()) {
+      throw const PackageManagerException('Installed package checksum verification failed.');
+    }
+    try {
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic> ||
+          decoded['schemaVersion'] != 1 ||
+          decoded['packageId'] != package.id ||
+          decoded['version'] != installed.version ||
+          decoded['content'] is! Map<String, dynamic>) {
+        throw const PackageManagerException('Installed data package manifest is invalid.');
+      }
+      return Map<String, Object?>.unmodifiable(decoded);
+    } on FormatException {
+      throw const PackageManagerException('Installed data package is not valid UTF-8 JSON.');
+    }
+  }
+
   Future<void> initialize() async {
     final registry = _registry;
     if (registry != null) return;
@@ -659,6 +729,7 @@ class MarketPackageManager extends ChangeNotifier {
   }
 
   Future<InstalledPackage> install(MarketPackage package, {required bool licenseAccepted}) async {
+    _authorizeMarketDataPayload(package);
     if (package.license?.trim().isNotEmpty != true) {
       throw const PackageManagerException('Package installation is disabled because verified license metadata is unavailable.');
     }

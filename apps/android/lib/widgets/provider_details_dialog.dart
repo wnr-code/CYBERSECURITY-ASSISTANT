@@ -16,7 +16,8 @@ String _providerDescription(String id, BuildContext context) => switch (id) {
       's3_compatible' => context.tr('Penyimpanan objek yang kompatibel dengan S3.'),
       'webdav' => context.tr('Endpoint penyimpanan file WebDAV milik Anda.'),
       'openai' => context.tr('Penyedia model AI opsional menggunakan API key milik Anda.'),
-      'gemini' => context.tr('Penyedia model AI Google opsional menggunakan API key milik Anda.'),
+      'local_ai' => context.tr('Runtime inferensi lokal opsional di perangkat; tidak ada fallback cloud.'),
+      'gemini' => context.tr('Penyedia model AI Google menggunakan API key milik Anda; prompt dikirim hanya setelah persetujuan per permintaan.'),
       'anthropic' => context.tr('Penyedia model AI opsional menggunakan API key milik Anda.'),
       'openrouter' => context.tr('Perute model AI opsional menggunakan API key milik Anda.'),
       'virustotal' => context.tr('API intelijen keamanan opsional; pengiriman indikator belum tersedia.'),
@@ -26,8 +27,9 @@ String _providerDescription(String id, BuildContext context) => switch (id) {
     };
 
 String _providerGuidance(String id, BuildContext context) => switch (id) {
+      'local_ai' => context.tr('A local inference adapter contract is ready, but this build does not bundle or start a model runtime. No network or cloud fallback is used.'),
       'openai' => context.tr('Buat API key pada dashboard resmi OpenAI dan simpan hanya jika Anda memahami tagihan API. Aplikasi ini belum mengirim permintaan OpenAI.'),
-      'gemini' => context.tr('Buat API key melalui Google AI Studio. Kunci hanya dapat disimpan lokal; pemanggilan Gemini belum diimplementasikan.'),
+      'gemini' => context.tr('Save your Google AI Studio key in Android secure storage, then use the Assistant. Prompts and approved tool results are sent to Google only after explicit per-request consent; never send secrets or personal data.'),
       'anthropic' => context.tr('Buat API key di Anthropic Console. Kunci hanya dapat disimpan lokal; pemanggilan Claude belum diimplementasikan.'),
       'openrouter' => context.tr('Buat API key di OpenRouter dan periksa biaya model. Kunci hanya dapat disimpan lokal; permintaan belum tersedia.'),
       'cloudflare_workers' => context.tr('Deploy Worker pada akun Anda dan gunakan endpoint HTTPS milik Anda. Aplikasi belum mengirim token atau memanggil Worker.'),
@@ -122,7 +124,9 @@ class _ProviderDetailsDialogState extends State<ProviderDetailsDialog> {
               ],
               const SizedBox(height: 12),
               Text(
-                context.tr('Kredensial tersimpan belum dikirim ke provider. Permintaan terautentikasi dan uji koneksi khusus provider belum dibuat.'),
+                context.tr(widget.provider.id == 'gemini'
+                    ? 'Gemini uses this saved API key only for Assistant requests after you confirm data sharing. No provider request is made just by saving the key.'
+                    : 'Stored credentials are not sent to this provider: authenticated requests and provider-specific connection tests are not implemented.'),
                 style: const TextStyle(height: 1.4),
               ),
               const SizedBox(height: 8),

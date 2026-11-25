@@ -7,8 +7,9 @@ import '../core/security_findings.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
+import '../l10n/activity_localization.dart';
 import '../l10n/app_localizations.dart';
-import 'digital_earth_hero.dart';
+import 'security_status_hero.dart';
 
 const _dashboardMint = Color(0xFF73F0C2);
 const _dashboardBlue = Color(0xFF36D9FF);
@@ -29,8 +30,12 @@ class DashboardScreen extends StatefulWidget {
     required this.activityError,
     required this.marketPackageManager,
     required this.assessmentProgress,
+    required this.activeAssessmentTarget,
     required this.onNavigateToTools,
+    required this.onOpenCatalog,
     required this.onNavigateToReports,
+    required this.onNavigateToFindings,
+    required this.onOpenSecurityOverview,
     required this.onOpenAssistant,
     required this.onOpenActivity,
     required this.onOpenResult,
@@ -50,8 +55,12 @@ class DashboardScreen extends StatefulWidget {
   final String? activityError;
   final MarketPackageManager marketPackageManager;
   final AssessmentProgressSnapshot? assessmentProgress;
+  final String? activeAssessmentTarget;
   final VoidCallback onNavigateToTools;
+  final VoidCallback onOpenCatalog;
   final VoidCallback onNavigateToReports;
+  final ValueChanged<FindingSeverity?> onNavigateToFindings;
+  final VoidCallback onOpenSecurityOverview;
   final VoidCallback onOpenAssistant;
   final ValueChanged<ActivityEvent> onOpenActivity;
   final ValueChanged<ToolRunResult> onOpenResult;
@@ -108,6 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width < 360 ? 14.0 : 20.0;
     final assessmentEvents = widget.activityEvents.where((event) => event.kind == ActivityKind.assessment).toList(growable: false);
+    final latestAssessment = assessmentEvents.isEmpty ? null : _latestAssessment(assessmentEvents);
     final findingsBySeverity = <FindingSeverity, int>{
       for (final severity in FindingSeverity.values)
         severity: widget.findings.where((finding) => finding.severity == severity).length,
@@ -136,7 +146,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.4),
             ),
             const SizedBox(height: 16),
-            const DigitalEarthHero(),
+            SecurityStatusHero(
+              assessmentProgress: running,
+              activeAssessmentTarget: widget.activeAssessmentTarget,
+              latestAssessment: latestAssessment,
+              activityLoaded: widget.activityLoaded,
+              activityBusy: widget.activityBusy,
+              activityError: widget.activityError,
+              findingsCount: widget.findings.length,
+              findingsBySeverity: findingsBySeverity,
+              findingsLoaded: widget.findingsLoaded,
+              findingsBusy: widget.findingsBusy,
+              findingsError: widget.findingsError,
+              onTap: widget.onOpenSecurityOverview,
+            ),
             const SizedBox(height: 18),
             _DashboardHeading(title: context.tr('SECURITY INSTRUMENTS'), icon: Icons.tune_rounded),
             const SizedBox(height: 9),
@@ -202,7 +225,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 value: '${toolRegistry.length}',
                 label: context.tr('Registry entries'),
                 icon: Icons.grid_view_rounded,
-                onTap: widget.onNavigateToTools,
+                onTap: widget.onOpenCatalog,
               )),
               const SizedBox(width: 8),
               Expanded(child: _CompactMetric(
@@ -272,6 +295,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     label: _severityName(severity, context),
                     count: counts[severity]!,
                     color: _severityColor(severity),
+                    onTap: widget.findingsLoaded ? () => widget.onNavigateToFindings(severity) : null,
                   ),
               ]),
             ],
@@ -279,14 +303,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 12),
               Wrap(spacing: 7, runSpacing: 7, children: [
                 for (final severity in FindingSeverity.values)
-                  _SeverityCountChip(label: _severityName(severity, context), count: 0, color: _severityColor(severity)),
+                  _SeverityCountChip(
+                    label: _severityName(severity, context),
+                    count: 0,
+                    color: _severityColor(severity),
+                    onTap: () => widget.onNavigateToFindings(severity),
+                  ),
               ]),
             ],
             const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: widget.onNavigateToReports,
+                onPressed: () => widget.onNavigateToFindings(null),
                 icon: const Icon(Icons.arrow_forward_rounded),
                 label: Text(context.tr('Open Findings')),
               ),
@@ -314,7 +343,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ] else ...[
               Text('${assessmentEvents.length} ${context.tr('assessment runs in loaded records')}',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Text(_assessmentStatusSummary(assessmentEvents, context), style: _mutedBody()),
               const SizedBox(height: 3),
               Text(context.tr('Loaded Activity Timeline records only; not all-time.'), style: _scopeText()),
@@ -372,9 +401,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: widget.onNavigateToTools,
+                onPressed: widget.onOpenCatalog,
                 icon: const Icon(Icons.arrow_forward_rounded),
-                label: Text(context.tr('Open Tool Catalog')),
+                label: Text(context.tr('Open Catalog')),
               ),
             ),
           ]),
@@ -420,7 +449,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         icon: Icons.fact_check_outlined,
         title: context.tr('No checks yet'),
         detail: context.tr('Start an authorized check from the tool catalog. Results will appear here.'),
-        action: TextButton.icon(onPressed: widget.onNavigateToTools, icon: const Icon(Icons.arrow_forward_rounded), label: Text(context.tr('Browse local tools'))),
+        action: TextButton.icon(onPressed: widget.onOpenCatalog, icon: const Icon(Icons.arrow_forward_rounded), label: Text(context.tr('Open Catalog'))),
       );
     }
     return Column(children: [
@@ -601,16 +630,31 @@ class _DataScopePill extends StatelessWidget {
 }
 
 class _SeverityCountChip extends StatelessWidget {
-  const _SeverityCountChip({required this.label, required this.count, required this.color});
+  const _SeverityCountChip({required this.label, required this.count, required this.color, this.onTap});
   final String label;
   final int count;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(color: color.withValues(alpha: .1), borderRadius: BorderRadius.circular(22), border: Border.all(color: color.withValues(alpha: .35))),
-        child: Text('$label  $count', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+  Widget build(BuildContext context) => Semantics(
+        button: onTap != null,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(22),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .1),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: color.withValues(alpha: .35)),
+              ),
+              child: Text('$label  $count', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ),
       );
 }
 
@@ -635,7 +679,11 @@ class _ActivityPreviewRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = event.kind == ActivityKind.assessment ? context.tr('Assessment run') : _toolName(event.toolId ?? '', context);
+    final label = event.kind == ActivityKind.assessment
+        ? context.tr('Assessment run')
+        : event.kind == ActivityKind.aiRequest
+            ? context.tr('AI request')
+            : _toolName(event.toolId ?? '', context);
     final statusColor = switch (event.status) {
       ActivityStatus.started || ActivityStatus.running => const Color(0xFF71B7FF),
       ActivityStatus.completed => _dashboardMint,
@@ -649,7 +697,11 @@ class _ActivityPreviewRow extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: Row(children: [
-            Icon(event.kind == ActivityKind.assessment ? Icons.radar_rounded : Icons.play_circle_outline_rounded, color: statusColor, size: 20),
+            Icon(event.kind == ActivityKind.assessment
+                ? Icons.radar_rounded
+                : event.kind == ActivityKind.aiRequest
+                    ? Icons.auto_awesome_outlined
+                    : Icons.play_circle_outline_rounded, color: statusColor, size: 20),
             const SizedBox(width: 10),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -716,18 +768,25 @@ TextStyle _mutedBody() => TextStyle(color: Colors.white.withValues(alpha: .72), 
 TextStyle _scopeText() => TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 11, height: 1.35);
 
 String _severityName(FindingSeverity severity, BuildContext context) => switch (severity) {
+      FindingSeverity.critical => context.tr('Critical'),
       FindingSeverity.high => context.tr('High'),
       FindingSeverity.medium => context.tr('Medium'),
       FindingSeverity.low => context.tr('Low'),
-      FindingSeverity.info => context.tr('Info'),
+      FindingSeverity.info => context.tr('Informational'),
     };
 
 Color _severityColor(FindingSeverity severity) => switch (severity) {
+      FindingSeverity.critical => const Color(0xFFFF3B5C),
       FindingSeverity.high => const Color(0xFFFF7070),
       FindingSeverity.medium => Colors.orangeAccent,
       FindingSeverity.low => const Color(0xFF71B7FF),
       FindingSeverity.info => _dashboardMint,
     };
+
+ActivityEvent _latestAssessment(List<ActivityEvent> events) {
+  final ordered = List<ActivityEvent>.of(events)..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+  return ordered.first;
+}
 
 String _assessmentStatusSummary(List<ActivityEvent> events, BuildContext context) {
   final completed = events.where((event) => event.status == ActivityStatus.completed).length;
@@ -750,6 +809,10 @@ String _toolName(String id, BuildContext context) => switch (id) {
       'tls_inspector' => context.tr('TLS Certificate Inspection'),
       'http_headers' => context.tr('HTTP Security Header Checker'),
       'response_analyzer' => context.tr('Security Response Analyzer'),
+      'terminal_workspace' => context.tr('Terminal workspace'),
+      'cloudflare_accounts' => context.tr('Cloudflare Accounts Read'),
+      'cloudflare_zones' => context.tr('Cloudflare Zones Read'),
+      'cloudflare_zone_detail' => context.tr('Cloudflare Zone Details Read'),
       _ => id.isEmpty ? context.tr('Tool activity') : id,
     };
 

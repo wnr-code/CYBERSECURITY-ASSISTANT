@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'app_self_protection.dart';
 import 'diagnostics.dart';
 import 'policy_engine.dart';
 import 'security_tools.dart';
@@ -327,11 +328,11 @@ class _RuntimeTerminalOutcome {
   final StackTrace? stackTrace;
   final Duration? timeout;
 
-  Exception asException() => switch (kind) {
+  Object asException() => switch (kind) {
         _RuntimeTerminalKind.cancelled => const RuntimeExecutionCancelled(),
         _RuntimeTerminalKind.timeout => TimeoutException('Runtime execution timed out.', timeout),
         _RuntimeTerminalKind.failed => error is RuntimeExecutionException
-            ? error!
+            ? error as RuntimeExecutionException
             : RuntimeExecutionException(sanitizeDiagnosticText(error.toString())),
         _RuntimeTerminalKind.success => StateError('A successful terminal outcome has no exception.'),
       };
@@ -463,6 +464,7 @@ class RuntimeManager extends ChangeNotifier {
   final RuntimeEnvironment environment;
   final RuntimeStateStore store;
   final PolicyEngine _policy;
+  static const AppSelfProtectionPolicy _selfProtection = AppSelfProtectionPolicy();
   final DateTime Function() _clock;
   final Future<Directory> Function() _supportDirectoryProvider;
   final RuntimeTimerFactory _timerFactory;
@@ -766,7 +768,7 @@ class RuntimeManager extends ChangeNotifier {
     }
     final healthy = await adapter.healthCheck();
     final state = await _set(id, RuntimeLifecycle.stopped, version: adapter.descriptor.version, health: _clock().toUtc());
-    if (!healthy) return _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed after stop.');
+    if (!healthy) return await _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed after stop.');
     return state;
     } finally {
       _busy = false;
@@ -948,6 +950,16 @@ class RuntimeManager extends ChangeNotifier {
     if (state == null || !{RuntimeLifecycle.installed, RuntimeLifecycle.initialized, RuntimeLifecycle.stopped}.contains(state.lifecycle)) {
       await _record('tool-rejected-not-ready', runtimeId, toolId: toolId);
       throw const RuntimeExecutionException('Runtime is not installed and ready.');
+    }
+    try {
+      _selfProtection.authorizeToolExecution(
+        toolId: toolId,
+        requestedCapabilities: requiredCapabilities.map((capability) => capability.name).toSet(),
+      );
+    } on AppSelfProtectionException catch (error, stack) {
+      await _record('tool-rejected-self-protection', runtimeId, toolId: toolId);
+      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      throw RuntimeExecutionException(error.message);
     }
     if (!descriptor.requiredCapabilities.containsAll(requiredCapabilities) ||
         !(_grants[runtimeId] ?? const <RuntimeCapability>{}).containsAll(requiredCapabilities)) {

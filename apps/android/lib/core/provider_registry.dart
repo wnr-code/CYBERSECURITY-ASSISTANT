@@ -1,4 +1,4 @@
-enum ProviderCategory { backend, database, storage, ai, securityIntelligence, custom }
+enum ProviderCategory { cloudInfrastructure, backend, database, storage, ai, onDeviceAi, securityIntelligence, custom }
 
 enum ProviderAuthType { none, apiKey, scopedToken, providerConfig, custom }
 
@@ -10,6 +10,7 @@ class ProviderDefinition {
     required this.description,
     required this.authType,
     required this.setupGuidance,
+    this.integrationImplemented = false,
   });
 
   final String id;
@@ -19,11 +20,20 @@ class ProviderDefinition {
   final ProviderAuthType authType;
   final String setupGuidance;
 
-  /// The provider is catalogued for planning but has no authenticated adapter yet.
-  bool get integrationImplemented => false;
+  /// True only when a provider-specific executable adapter exists in this build.
+  final bool integrationImplemented;
 }
 
 const providerRegistry = <ProviderDefinition>[
+  ProviderDefinition(
+    id: 'cloudflare',
+    name: 'Cloudflare',
+    category: ProviderCategory.cloudInfrastructure,
+    description: 'Read-only Cloudflare account and zone overview. No Cloudflare resources are modified; Workers, DNS records, and other product controls remain unavailable.',
+    authType: ProviderAuthType.scopedToken,
+    setupGuidance: 'Create a narrowly scoped API token in the official Cloudflare dashboard. Account visibility is determined by GET /accounts; zone listing requires Zone Zone Read. Token verification alone does not reveal permission scopes, so each read capability is checked against its own API response.',
+    integrationImplemented: true,
+  ),
   ProviderDefinition(
     id: 'cloudflare_workers',
     name: 'Cloudflare Workers',
@@ -105,6 +115,14 @@ const providerRegistry = <ProviderDefinition>[
     setupGuidance: 'Use an HTTPS endpoint and a dedicated account. Authenticated WebDAV operations are not implemented.',
   ),
   ProviderDefinition(
+    id: 'local_ai',
+    name: 'Local AI runtime',
+    category: ProviderCategory.onDeviceAi,
+    description: 'Optional on-device inference runtime; no cloud fallback.',
+    authType: ProviderAuthType.none,
+    setupGuidance: 'A local inference runtime adapter contract is prepared, but no model is bundled or started automatically. No requests are sent until an on-device runtime is explicitly connected.',
+  ),
+  ProviderDefinition(
     id: 'openai',
     name: 'OpenAI',
     category: ProviderCategory.ai,
@@ -118,7 +136,8 @@ const providerRegistry = <ProviderDefinition>[
     category: ProviderCategory.ai,
     description: 'Optional cloud AI provider using a user-owned key.',
     authType: ProviderAuthType.apiKey,
-    setupGuidance: 'A user-owned API key can be stored locally, but no provider call is implemented. Review provider data handling before future cloud analysis.',
+    setupGuidance: 'Save a user-owned API key in Android secure storage, then use the Assistant. Prompts and approved tool results are sent to Google only after explicit per-request consent. Never send secrets or personal data.',
+    integrationImplemented: true,
   ),
   ProviderDefinition(
     id: 'anthropic',
@@ -171,10 +190,12 @@ const providerRegistry = <ProviderDefinition>[
 ];
 
 String providerCategoryLabel(ProviderCategory category) => switch (category) {
+      ProviderCategory.cloudInfrastructure => 'Cloud Infrastructure Provider',
       ProviderCategory.backend => 'Backend',
       ProviderCategory.database => 'Database',
       ProviderCategory.storage => 'Cloud Storage',
       ProviderCategory.ai => 'AI Provider',
+      ProviderCategory.onDeviceAi => 'On-device AI Provider',
       ProviderCategory.securityIntelligence => 'Security Intelligence',
       ProviderCategory.custom => 'Custom Service',
     };

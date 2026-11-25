@@ -8,7 +8,9 @@ structure is unfamiliar rather than silently leaving an unsafe default.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -132,6 +134,37 @@ def _write_brand_vector(drawable_root: Path) -> None:
     )
 
 
+def configure_launcher_icon(android_root: Path, icon_assets: Path | None = None) -> None:
+    """Install selected app artwork as legacy density icons and an adaptive icon."""
+    assets = icon_assets or Path(__file__).resolve().parents[1] / "assets" / "branding" / "launcher_icons"
+    resource_root = android_root / "app" / "src" / "main" / "res"
+    densities = ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi")
+    expected = [assets / f"mipmap-{density}" / "ic_launcher.png" for density in densities]
+    expected.append(assets / "mipmap-xxxhdpi" / "ic_launcher_foreground.png")
+    missing = [str(path) for path in expected if not path.is_file()]
+    if missing:
+        raise RuntimeError("Selected launcher icon assets are missing: " + ", ".join(missing))
+
+    for density in densities:
+        target = resource_root / f"mipmap-{density}"
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(assets / f"mipmap-{density}" / "ic_launcher.png", target / "ic_launcher.png")
+    foreground_target = resource_root / "mipmap-xxxhdpi" / "ic_launcher_foreground.png"
+    shutil.copyfile(assets / "mipmap-xxxhdpi" / "ic_launcher_foreground.png", foreground_target)
+
+    adaptive_root = resource_root / "mipmap-anydpi-v26"
+    adaptive_root.mkdir(parents=True, exist_ok=True)
+    (adaptive_root / "ic_launcher.xml").write_text(
+        '''<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
+''',
+        encoding="utf-8",
+    )
+
+
 def configure_splash_resources(android_root: Path) -> None:
     """Install a matching legacy window background and Android 12+ splash theme."""
     resource_root = android_root / "app" / "src" / "main" / "res"
@@ -145,7 +178,7 @@ def configure_splash_resources(android_root: Path) -> None:
     colors = ET.parse(colors_file).getroot() if colors_file.exists() else ET.Element("resources")
     if colors.tag != "resources":
         raise RuntimeError(f"Unexpected Android colors resource root in {colors_file}.")
-    for name, value in (("startup_navy", SPLASH_NAVY),):
+    for name, value in (("startup_navy", SPLASH_NAVY), ("launcher_background", SPLASH_NAVY)):
         color = next((node for node in colors.findall("color") if node.get("name") == name), None)
         if color is None:
             color = ET.SubElement(colors, "color", {"name": name})
@@ -228,6 +261,8 @@ def configure_manifest(manifest_file: Path) -> None:
     if application is None:
         raise RuntimeError(f"No <application> element found in {manifest_file}.")
     application.set(_android_attribute("label"), "Cybersecurity Assistant")
+    application.set(_android_attribute("icon"), "@mipmap/ic_launcher")
+    application.set(_android_attribute("roundIcon"), "@mipmap/ic_launcher")
     application.set(_android_attribute("usesCleartextTraffic"), "false")
     application.set(_android_attribute("allowBackup"), "false")
     application.set(_android_attribute("fullBackupContent"), "@xml/backup_rules")
@@ -274,6 +309,119 @@ def configure_manifest(manifest_file: Path) -> None:
     tree.write(manifest_file, encoding="utf-8", xml_declaration=True)
 
 
+def configure_trusted_signer_resource(android_root: Path, trusted_signers: str | None = None) -> None:
+    """Write a public SHA-256 signer pin; release builds refuse to start without one."""
+    raw = os.environ.get("TRUSTED_APK_CERT_SHA256", "") if trusted_signers is None else trusted_signers
+    pins = [value.strip().lower() for value in raw.split(",") if value.strip()]
+    if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in pins):
+        raise RuntimeError("TRUSTED_APK_CERT_SHA256 must contain one or more comma-separated 64-character SHA-256 fingerprints.")
+    normalized = ",".join(sorted(set(pins)))
+    values_root = android_root / "app" / "src" / "main" / "res" / "values"
+    values_root.mkdir(parents=True, exist_ok=True)
+    resource_file = values_root / "trusted_signer.xml"
+    resources = ET.parse(resource_file).getroot() if resource_file.exists() else ET.Element("resources")
+    if resources.tag != "resources":
+        raise RuntimeError(f"Unexpected signer-pin resource root in {resource_file}.")
+    pin = next((node for node in resources.findall("string") if node.get("name") == "trusted_apk_cert_sha256"), None)
+    if pin is None:
+        pin = ET.SubElement(resources, "string", {"name": "trusted_apk_cert_sha256", "translatable": "false"})
+    pin.text = normalized
+    ET.indent(resources, space="    ")
+    ET.ElementTree(resources).write(resource_file, encoding="utf-8", xml_declaration=True)
+
+
+def _configure_native_apk_integrity(activity_file: Path, android_root: Path) -> None:
+    source = activity_file.read_text(encoding="utf-8")
+    is_kotlin = activity_file.suffix == ".kt"
+    package_match = re.search(r"(?m)^package\s+([\w.]+)\s*;?\s*$", source)
+    if package_match is None:
+        raise RuntimeError(f"No native package declaration found in {activity_file}.")
+    package_name = package_match.group(1)
+    source_dir = android_root / "app" / "src" / "main" / ("kotlin" if is_kotlin else "java")
+    verifier_file = source_dir.joinpath(*package_name.split("."), f"AppIntegrityVerifier.{activity_file.suffix[1:]}")
+    template_file = Path(__file__).resolve().parent / "native" / f"AppIntegrityVerifier.{activity_file.suffix[1:]}"
+    if not template_file.is_file():
+        raise RuntimeError(f"Native APK integrity verifier template is missing: {template_file}")
+    verifier = template_file.read_text(encoding="utf-8").replace("__ANDROID_PACKAGE__", package_name)
+    verifier_file.parent.mkdir(parents=True, exist_ok=True)
+    if verifier_file.exists() and verifier_file.read_text(encoding="utf-8") != verifier:
+        raise RuntimeError(f"Refusing to overwrite an unrecognized native verifier: {verifier_file}")
+    verifier_file.write_text(verifier, encoding="utf-8")
+
+    verify_call = "AppIntegrityVerifier.verifyOrThrow(this)"
+    if verify_call not in source:
+        splash_pattern = r"(?m)^(\s*)installSplashScreen\(\)\s*$" if is_kotlin else r"(?m)^(\s*)SplashScreen\.installSplashScreen\(this\);\s*$"
+        source, count = re.subn(splash_pattern, lambda match: f"{match.group(1)}{verify_call}\n{match.group(0)}", source, count=1)
+        if count != 1:
+            raise RuntimeError(f"Could not place the APK identity check before Flutter starts in {activity_file}.")
+
+    channel_call = "AppIntegrityVerifier.attachChannel(this, flutterEngine)"
+    if channel_call not in source:
+        import_line = "import io.flutter.embedding.engine.FlutterEngine"
+        if is_kotlin:
+            if import_line not in source:
+                source = source[:package_match.end()] + f"\n{import_line}\n" + source[package_match.end():]
+            if "override fun configureFlutterEngine" in source:
+                pattern = r"(?m)^(\s*)super\.configureFlutterEngine\(flutterEngine\)\s*$"
+                source, count = re.subn(pattern, lambda match: f"{match.group(0)}\n{match.group(1)}{channel_call}", source, count=1)
+                if count != 1:
+                    raise RuntimeError(f"Could not attach integrity channel in {activity_file}.")
+            else:
+                class_end = source.rfind("}")
+                if class_end < 0:
+                    raise RuntimeError(f"No MainActivity class body found in {activity_file}.")
+                method = (
+                    "\n\n    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {\n"
+                    "        super.configureFlutterEngine(flutterEngine)\n"
+                    f"        {channel_call}\n"
+                    "    }\n"
+                )
+                source = source[:class_end] + method + source[class_end:]
+        else:
+            java_import = "import io.flutter.embedding.engine.FlutterEngine;"
+            if java_import not in source:
+                source = source[:package_match.end()] + f"\n{java_import}\n" + source[package_match.end():]
+            if "configureFlutterEngine(FlutterEngine flutterEngine)" in source:
+                pattern = r"(?m)^(\s*)super\.configureFlutterEngine\(flutterEngine\);\s*$"
+                source, count = re.subn(pattern, lambda match: f"{match.group(0)}\n{match.group(1)}{channel_call};", source, count=1)
+                if count != 1:
+                    raise RuntimeError(f"Could not attach integrity channel in {activity_file}.")
+            else:
+                class_end = source.rfind("}")
+                if class_end < 0:
+                    raise RuntimeError(f"No MainActivity class body found in {activity_file}.")
+                method = (
+                    "\n\n    @Override\n"
+                    "    public void configureFlutterEngine(FlutterEngine flutterEngine) {\n"
+                    "        super.configureFlutterEngine(flutterEngine);\n"
+                    f"        {channel_call};\n"
+                    "    }\n"
+                )
+                source = source[:class_end] + method + source[class_end:]
+    capability_template = Path(__file__).resolve().parent / "native" / f"LocalAiCapabilityProbe.{activity_file.suffix[1:]}"
+    if not capability_template.is_file():
+        raise RuntimeError(f"Local AI capability probe template is missing: {capability_template}")
+    capability_file = source_dir.joinpath(*package_name.split("."), f"LocalAiCapabilityProbe.{activity_file.suffix[1:]}")
+    capability_source = capability_template.read_text(encoding="utf-8").replace("__ANDROID_PACKAGE__", package_name)
+    if capability_file.exists() and capability_file.read_text(encoding="utf-8") != capability_source:
+        raise RuntimeError(f"Refusing to overwrite an unrecognized local AI capability probe: {capability_file}")
+    capability_file.write_text(capability_source, encoding="utf-8")
+
+    capability_call = "LocalAiCapabilityProbe.attachChannel(this, flutterEngine)"
+    if capability_call not in source:
+        pattern = r"(?m)^(\s*)AppIntegrityVerifier\.attachChannel\(this, flutterEngine\);?\s*$"
+        terminator = ";" if not is_kotlin else ""
+        source, count = re.subn(
+            pattern,
+            lambda match: f"{match.group(0)}\n{match.group(1)}{capability_call}{terminator}",
+            source,
+            count=1,
+        )
+        if count != 1:
+            raise RuntimeError(f"Could not attach Local AI device-capability reporting in {activity_file}.")
+    activity_file.write_text(source, encoding="utf-8")
+
+
 def configure_splash_activity(android_root: Path) -> None:
     """Install AndroidX SplashScreen before FlutterActivity initializes its view."""
     app_root = android_root / "app" / "src" / "main"
@@ -288,6 +436,7 @@ def configure_splash_activity(android_root: Path) -> None:
         if source.index(existing_call) > source.find("super.onCreate"):
             raise RuntimeError("SplashScreen installation must run before super.onCreate().")
         _configure_native_crash_capture(activity_file)
+        _configure_native_apk_integrity(activity_file, android_root)
         return
 
     if activity_file.suffix == ".kt":
@@ -332,6 +481,7 @@ def configure_splash_activity(android_root: Path) -> None:
         raise RuntimeError(f"Unexpected generated MainActivity structure in {activity_file}; review it manually.")
     activity_file.write_text(source, encoding="utf-8")
     _configure_native_crash_capture(activity_file)
+    _configure_native_apk_integrity(activity_file, android_root)
 
 
 def _configure_native_crash_capture(activity_file: Path) -> None:
@@ -457,9 +607,11 @@ def configure_project(android_root: Path) -> None:
 
     configure_gradle(gradle_files[0])
     configure_manifest(manifest_file)
+    configure_trusted_signer_resource(android_root)
     configure_splash_activity(android_root)
     _write_backup_rules(android_root)
     configure_splash_resources(android_root)
+    configure_launcher_icon(android_root)
 
 
 def main() -> int:
@@ -476,7 +628,9 @@ def main() -> int:
     except (OSError, ET.ParseError, RuntimeError) as error:
         print(f"Android hardening configuration failed: {error}", file=sys.stderr)
         return 1
-    print("Configured Android 12+ and legacy branded splash, portrait launch, HTTPS-only traffic, minSdk >= 29 (Android 10+), and backup exclusions.")
+    print("Configured Android splash, APK signer/integrity gate, portrait launch, HTTPS-only traffic, minSdk >= 29, and backup exclusions.")
+    if not os.environ.get("TRUSTED_APK_CERT_SHA256", "").strip():
+        print("WARNING: no release signer pin is configured; release builds will fail closed at startup. Development builds are not protected.", file=sys.stderr)
     return 0
 
 

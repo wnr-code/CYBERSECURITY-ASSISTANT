@@ -3,18 +3,44 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from verify_android_splash import verify_sources
+from verify_android_splash import _parse_signer_fingerprints, verify_sources
 
 from configure_android import (
     configure_gradle,
+    configure_launcher_icon,
     configure_manifest,
     configure_project,
     configure_splash_activity,
     configure_splash_resources,
+    configure_trusted_signer_resource,
 )
 
 
 class ConfigureAndroidTests(unittest.TestCase):
+    def test_apksigner_fingerprint_parser_normalizes_colon_separated_sha256(self):
+        fingerprint = ":".join(["AA"] * 32)
+        parsed = _parse_signer_fingerprints(
+            f"Signer #1 certificate SHA-256 digest: {fingerprint}\n"
+            "Signer #1 certificate SHA-1 digest: AA:BB\n"
+        )
+        self.assertEqual(parsed, {"aa" * 32})
+
+    def test_trusted_signer_resource_is_validated_and_idempotent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            first = "A" * 64
+            second = "b" * 64
+            configure_trusted_signer_resource(android, f"{first},{second},{first}")
+            resource = android / "app/src/main/res/values/trusted_signer.xml"
+            parsed = ET.parse(resource).getroot()
+            pin = next(node for node in parsed.findall("string") if node.get("name") == "trusted_apk_cert_sha256")
+            self.assertEqual(pin.text, f"{first.lower()},{second}")
+            before = resource.read_text(encoding="utf-8")
+            configure_trusted_signer_resource(android, f"{first},{second},{first}")
+            self.assertEqual(resource.read_text(encoding="utf-8"), before)
+            with self.assertRaisesRegex(RuntimeError, "64-character SHA-256"):
+                configure_trusted_signer_resource(android, "not-a-certificate")
+
     def test_kotlin_gradle_template_gets_android_10_minimum_sdk_29(self):
         with tempfile.TemporaryDirectory() as temporary:
             gradle = Path(temporary) / "build.gradle.kts"
@@ -78,6 +104,29 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertTrue((resource_root / "drawable/launch_background.xml").is_file())
             self.assertEqual(len([style for style in styles.findall("style") if style.get("name") == "LaunchTheme"]), 1)
 
+    def test_launcher_icon_installs_selected_brand_for_legacy_and_adaptive_android(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            android = Path(temporary) / "android"
+            configure_launcher_icon(android)
+            configure_launcher_icon(android)
+
+            resource_root = android / "app/src/main/res"
+            icon_assets = Path(__file__).resolve().parents[1] / "assets/branding/launcher_icons"
+            for density in ("mdpi", "hdpi", "xhdpi", "xxhdpi", "xxxhdpi"):
+                target = resource_root / f"mipmap-{density}/ic_launcher.png"
+                source = icon_assets / f"mipmap-{density}/ic_launcher.png"
+                self.assertEqual(target.read_bytes(), source.read_bytes())
+            foreground = resource_root / "mipmap-xxxhdpi/ic_launcher_foreground.png"
+            self.assertEqual(
+                foreground.read_bytes(),
+                (icon_assets / "mipmap-xxxhdpi/ic_launcher_foreground.png").read_bytes(),
+            )
+            adaptive = ET.parse(resource_root / "mipmap-anydpi-v26/ic_launcher.xml").getroot()
+            self.assertEqual(adaptive.tag, "adaptive-icon")
+            drawable_names = {node.get("{http://schemas.android.com/apk/res/android}drawable") for node in adaptive}
+            self.assertIn("@color/launcher_background", drawable_names)
+            self.assertIn("@mipmap/ic_launcher_foreground", drawable_names)
+
     def test_splash_config_updates_flutter_scaffold_style_items(self):
         with tempfile.TemporaryDirectory() as temporary:
             android = Path(temporary) / "android"
@@ -123,8 +172,11 @@ class ConfigureAndroidTests(unittest.TestCase):
             gradle = app / "build.gradle.kts"
             gradle.write_text("android {\n    defaultConfig {\n        minSdk = 29\n    }\n}\n", encoding="utf-8")
             configure_gradle(gradle)
+            configure_trusted_signer_resource(android, "a" * 64)
+            configure_manifest(main / "AndroidManifest.xml")
             configure_splash_activity(android)
             configure_splash_resources(android)
+            configure_launcher_icon(android)
             verify_sources(android)
 
     def test_java_main_activity_gets_idempotent_native_crash_capture(self):
@@ -144,7 +196,17 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertIn("FileWriter", generated)
             self.assertIn("previous.uncaughtException(thread, error)", generated)
             self.assertIn("safe.length() > 8000", generated)
-            self.assertLess(generated.index("installDiagnosticCrashCapture();"), generated.index("super.onCreate"))
+            self.assertIn("AppIntegrityVerifier.verifyOrThrow(this)", generated)
+            self.assertIn("AppIntegrityVerifier.attachChannel(this, flutterEngine)", generated)
+            self.assertIn("LocalAiCapabilityProbe.attachChannel(this, flutterEngine)", generated)
+            self.assertLess(generated.index("AppIntegrityVerifier.verifyOrThrow(this)"), generated.index("super.onCreate"))
+            native_verifier = android / "app/src/main/java/org/example/AppIntegrityVerifier.java"
+            self.assertIn("GET_SIGNING_CERTIFICATES", native_verifier.read_text(encoding="utf-8"))
+            capability_probe = android / "app/src/main/java/org/example/LocalAiCapabilityProbe.java"
+            capability_source = capability_probe.read_text(encoding="utf-8")
+            self.assertIn("totalRamBytes", capability_source)
+            self.assertIn("availableStorageBytes", capability_source)
+            self.assertIn('values.put("runtimeAvailable", false)', capability_source)
             configure_splash_activity(android)
             self.assertEqual(activity.read_text(encoding="utf-8"), generated)
 
@@ -181,6 +243,8 @@ class ConfigureAndroidTests(unittest.TestCase):
                 )
             )
             self.assertEqual(application.get(f"{android_ns}label"), "Cybersecurity Assistant")
+            self.assertEqual(application.get(f"{android_ns}icon"), "@mipmap/ic_launcher")
+            self.assertEqual(application.get(f"{android_ns}roundIcon"), "@mipmap/ic_launcher")
             launcher = application.find("activity")
             self.assertIsNotNone(launcher)
             self.assertEqual(launcher.get(f"{android_ns}screenOrientation"), "portrait")
@@ -247,6 +311,12 @@ class ConfigureAndroidTests(unittest.TestCase):
             gradle_text = (app / "build.gradle.kts").read_text(encoding="utf-8")
             self.assertIn("minSdk = 29", gradle_text)
             self.assertIn("androidx.core:core-splashscreen:1.0.1", gradle_text)
+            generated_manifest = ET.parse(manifest).getroot()
+            generated_application = generated_manifest.find("application")
+            self.assertEqual(generated_application.get("{http://schemas.android.com/apk/res/android}icon"), "@mipmap/ic_launcher")
+            icon_resources = app / "src/main/res"
+            self.assertTrue((icon_resources / "mipmap-anydpi-v26/ic_launcher.xml").is_file())
+            self.assertTrue((icon_resources / "mipmap-xxxhdpi/ic_launcher_foreground.png").is_file())
             activity_text = main_activity.read_text(encoding="utf-8")
             self.assertIn("installSplashScreen()", activity_text)
             self.assertLess(activity_text.index("installSplashScreen()"), activity_text.index("super.onCreate"))

@@ -1,6 +1,6 @@
 # Cybersecurity Assistant — Final Technical Blueprint
 
-- **Status:** Product/architecture blueprint; AI Cybersecurity Expert Engine and Embedded Runtime remain planned, not implemented.
+- **Status:** Product/architecture blueprint; the full AI Cybersecurity Expert Engine and Embedded Runtime remain planned. A narrow opt-in Gemini Assistant adapter and guarded registered-tool loop are implemented; no Local AI runtime/model is bundled.
 - **Platform:** Android-first
 - **Product description:** Local-first Android cybersecurity assistant with a planned AI Cybersecurity Expert Engine.
 - **Architecture principles:** Local-first, hybrid AI, BYOI (Bring Your Own Infrastructure), BYOK (Bring Your Own Key), a user-controlled tool ecosystem, and no mandatory developer backend.
@@ -13,7 +13,7 @@ Cybersecurity Assistant is an Android application for discovering, managing, and
 
 1. **Android application** — user interface and control center.
 2. **Cybersecurity Tool Engine** — registry, policy checks, adapters, and execution of compatible tools.
-3. **AI Cybersecurity Expert Engine (planned)** — cybersecurity reasoning, attributable knowledge retrieval, guarded tool planning, evidence analysis, remediation drafts, and report intelligence. See the [dedicated AI architecture](ai-cybersecurity-expert-engine.md). It is not implemented by the current Assistant UI.
+3. **AI Cybersecurity Expert Engine (planned)** — full cybersecurity reasoning, attributable knowledge retrieval, evidence analysis, remediation drafts, and report intelligence. The current Assistant provides narrow Gemini chat and a guarded registered-tool loop, not the complete engine. See the [dedicated AI architecture](ai-cybersecurity-expert-engine.md).
 4. **Cybersecurity Knowledge and Result Services** — versioned security references, normalized local findings, provenance, and report contracts shared with the AI and tools (planned or partial as marked in the AI ledger).
 5. **User-owned cloud infrastructure** — optional services configured and controlled by each user; it is not a mandatory developer backend.
 

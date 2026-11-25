@@ -1,44 +1,72 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'core/activity_timeline.dart';
+import 'core/apk_integrity.dart';
+import 'core/ai_assistant_coordinator.dart';
+import 'core/ai_provider_manager.dart';
+import 'core/ai_terminal_execution_bridge.dart';
 import 'core/assessment_execution_manager.dart';
 import 'core/diagnostics.dart';
 import 'core/local_result_store.dart';
+import 'core/market_provider_manager.dart';
 import 'core/package_manager.dart';
 import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
+import 'core/runtime_manager.dart';
 import 'core/security_findings.dart';
+import 'core/secure_credential_store.dart';
 import 'core/security_tools.dart';
 import 'core/startup_trace.dart';
+import 'core/terminal_process_executor.dart';
+import 'core/terminal_runtime_adapter.dart';
+import 'core/terminal_session_manager.dart';
 import 'core/tool_orchestrator.dart';
 import 'core/tool_registry.dart';
+import 'core/workspace_file_system.dart';
+import 'l10n/activity_localization.dart';
 import 'l10n/app_localizations.dart';
 import 'widgets/animated_splash_screen.dart';
 import 'widgets/diagnostics_screen.dart';
+import 'widgets/edge_panel.dart';
+import 'widgets/floating_terminal.dart';
+import 'widgets/assistant_screen.dart';
 import 'widgets/assessment_runner.dart';
+import 'widgets/catalog_screen.dart';
 import 'widgets/dashboard_screen.dart';
 import 'widgets/market_screen.dart';
+import 'widgets/market_provider_detail_screen.dart';
+import 'widgets/cloudflare_dashboard_screen.dart';
+import 'widgets/security_overview_screen.dart';
 import 'widgets/provider_details_dialog.dart';
 import 'widgets/release_catalog_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
 
 final DiagnosticReporter _diagnostics = DiagnosticReporter(store: FileDiagnosticQueueStore());
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTrace.begin();
-  DiagnosticHooks.install(_diagnostics);
-  _diagnostics.startRetryLoop();
-  unawaited(_initializeDiagnostics());
+  final apkIntegrity = await ApkIntegrityMonitor(
+    nativeBridge: const MethodChannelAppIntegrityBridge(),
+    secureStorage: FlutterSecureStorageBackend(),
+  ).verifyAtStartup(enforceRelease: kReleaseMode);
+  final mustBlockRelease = kReleaseMode && !apkIntegrity.trusted;
+  if (!mustBlockRelease) {
+    DiagnosticHooks.install(_diagnostics);
+    _diagnostics.startRetryLoop();
+    unawaited(_initializeDiagnostics());
+  }
   StartupTrace.mark('runApp-call');
-  runApp(const CybersecurityAssistantApp());
+  runApp(CybersecurityAssistantApp(apkIntegrityReport: apkIntegrity));
 }
 
 Future<void> _initializeDiagnostics() async {
@@ -72,9 +100,10 @@ const _mint = Color(0xFF73F0C2);
 const _electricBlue = Color(0xFF168DFF);
 
 class CybersecurityAssistantApp extends StatefulWidget {
-  const CybersecurityAssistantApp({super.key, this.resultStore});
+  const CybersecurityAssistantApp({super.key, this.resultStore, this.apkIntegrityReport});
 
   final ResultHistoryStore? resultStore;
+  final ApkIntegrityReport? apkIntegrityReport;
 
   @override
   State<CybersecurityAssistantApp> createState() => _CybersecurityAssistantAppState();
@@ -91,6 +120,7 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
     super.initState();
     StartupTrace.mark('flutter-root-init');
     _resultStore = widget.resultStore ?? LocalResultStore();
+    if (kReleaseMode && widget.apkIntegrityReport?.trusted != true) return;
     // Hold the branded Flutter handoff long enough to be visible on real phones.
     // The native Android splash covers engine startup; neither splash waits for SQLite.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -153,7 +183,9 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
           ),
         ),
       ),
-      home: AnimatedSwitcher(
+      home: kReleaseMode && widget.apkIntegrityReport?.trusted != true
+          ? _AppIntegrityBlockedScreen(report: widget.apkIntegrityReport)
+          : AnimatedSwitcher(
         duration: const Duration(milliseconds: 560),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
@@ -168,6 +200,7 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
             ? MainShell(
                 key: const ValueKey('main-shell'),
                 resultStore: _resultStore,
+                apkIntegrityReport: widget.apkIntegrityReport,
                 locale: _locale,
                 onLocaleChanged: _setLocale,
               )
@@ -177,13 +210,49 @@ class _CybersecurityAssistantAppState extends State<CybersecurityAssistantApp> {
   }
 }
 
+class _AppIntegrityBlockedScreen extends StatelessWidget {
+  const _AppIntegrityBlockedScreen({required this.report});
+  final ApkIntegrityReport? report;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: _ink,
+        body: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(28),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.gpp_bad_outlined, color: Colors.orangeAccent, size: 42),
+                    const SizedBox(height: 14),
+                    Text(context.tr('Application integrity check failed'), style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    Text(context.tr('The app cannot open because its trusted identity or update could not be verified.'), style: const TextStyle(height: 1.45)),
+                    if (report != null) ...[
+                      const SizedBox(height: 12),
+                      Text(context.tr(report!.message), style: TextStyle(color: Colors.white.withValues(alpha: .66), height: 1.4)),
+                    ],
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({
     super.key,
     this.resultStore,
+    this.apkIntegrityReport,
     this.activityStore,
     this.findingRepository,
     this.assessmentExecutionManager,
+    this.marketProviderManager,
+    this.aiProviderManager,
     this.initialSavedResults,
     this.initialStorageError,
     this.locale = const Locale('id'),
@@ -191,9 +260,12 @@ class MainShell extends StatefulWidget {
   });
 
   final ResultHistoryStore? resultStore;
+  final ApkIntegrityReport? apkIntegrityReport;
   final ActivityHistoryStore? activityStore;
   final FindingRepository? findingRepository;
   final AssessmentExecutionManager? assessmentExecutionManager;
+  final MarketProviderManager? marketProviderManager;
+  final AiProviderManager? aiProviderManager;
   final List<ToolRunResult>? initialSavedResults;
   final String? initialStorageError;
   final Locale locale;
@@ -205,12 +277,26 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _selectedIndex = 0;
+  bool _openFindingsOnReports = false;
+  FindingSeverity? _openFindingsSeverity;
   final List<ToolRunResult> _recentResults = [];
   late final ResultHistoryStore _resultStore;
   late final ActivityHistoryStore _activityStore;
   late final FindingRepository _findingRepository;
   late final MarketPackageManager _marketPackageManager;
   late final AssessmentExecutionManager _assessmentExecutionManager;
+  late final AiProviderManager _aiProviderManager;
+  late final MarketProviderManager _marketProviderManager;
+  late final bool _ownsAiProviderManager;
+  late final bool _ownsMarketProviderManager;
+  late final ToolOrchestrator _terminalOrchestrator;
+  late final TerminalSessionManager _terminalSession;
+  late final SafeTerminalProcessExecutor _terminalExecutor;
+  final ChangeNotifier _securityOverviewChanges = ChangeNotifier();
+  bool _edgePanelOpen = false;
+  bool _terminalOpen = false;
+  bool _terminalMinimized = false;
+  Offset? _terminalPosition;
   List<FindingRecord> _findings = [];
   bool _findingsLoaded = false;
   bool _findingsBusy = false;
@@ -233,7 +319,37 @@ class _MainShellState extends State<MainShell> {
         (_resultStore is ActivityHistoryStore ? _resultStore as ActivityHistoryStore : MemoryActivityHistoryStore());
     _findingRepository = widget.findingRepository ??
         (_resultStore is FindingRepository ? _resultStore as FindingRepository : MemoryFindingRepository());
+    final secureBackend = FlutterSecureStorageBackend();
+    final credentials = SecureCredentialStore(backend: secureBackend);
+    _ownsAiProviderManager = widget.aiProviderManager == null && widget.marketProviderManager == null;
+    _aiProviderManager = widget.aiProviderManager ?? widget.marketProviderManager?.aiProviders ?? AiProviderManager(
+      credentialStore: credentials,
+      adapters: [GeminiAiProviderAdapter(credentialStore: credentials)],
+    );
+    _ownsMarketProviderManager = widget.marketProviderManager == null;
+    _marketProviderManager = widget.marketProviderManager ?? MarketProviderManager(
+      credentials: credentials,
+      configuration: ProviderConfigurationStore(secureBackend),
+      aiProviders: _aiProviderManager,
+      activityStore: _activityStore,
+      onActivity: _acceptActivity,
+    );
     _marketPackageManager = MarketPackageManager.bundled();
+    _terminalOrchestrator = ToolOrchestrator(
+      packageManager: _marketPackageManager,
+      activityStore: _activityStore,
+      findingRepository: _findingRepository,
+      reportStore: _resultStore,
+      onActivity: _acceptActivity,
+      onFindings: _acceptFindings,
+      onReportSaved: _acceptSavedReport,
+      onReportSaveFailed: _reportSaveFailed,
+    );
+    _terminalSession = TerminalSessionManager(activityStore: _activityStore, onActivity: _acceptActivity);
+    _terminalExecutor = SafeTerminalProcessExecutor(
+      runtimeAdapter: TerminalRuntimeAdapter(orchestrator: _terminalOrchestrator, runAfterConsent: _runTerminalTool),
+      workspaceProvider: () => WorkspaceFileSystem.forApplication(authorize: _authorizeWorkspaceOperation),
+    );
     _assessmentExecutionManager = widget.assessmentExecutionManager ?? AssessmentExecutionManager(
       orchestrator: ToolOrchestrator(
         packageManager: _marketPackageManager,
@@ -265,19 +381,236 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  void _selectDestination(int index) => setState(() => _selectedIndex = index);
+  void _selectDestination(int index) => setState(() {
+        _selectedIndex = index;
+        _edgePanelOpen = false;
+        _openFindingsOnReports = false;
+        _openFindingsSeverity = null;
+      });
+
+  void _navigateToFindings(FindingSeverity? severity) => setState(() {
+        _selectedIndex = 2;
+        _edgePanelOpen = false;
+        _openFindingsOnReports = true;
+        _openFindingsSeverity = severity;
+      });
+
+  void _openSecurityOverview() {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 230),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => AnimatedBuilder(
+        animation: Listenable.merge([_assessmentExecutionManager, _securityOverviewChanges]),
+        builder: (context, _) => SecurityOverviewScreen(
+          assessmentProgress: _assessmentExecutionManager.progress,
+          activeAssessmentTarget: _assessmentExecutionManager.activeRun == null
+              ? null
+              : sanitizeActivityTarget(_assessmentExecutionManager.activeRun!.target),
+          latestAssessment: _latestAssessmentEvent,
+          findings: List.unmodifiable(_findings),
+          findingsLoaded: _findingsLoaded,
+          findingsBusy: _findingsBusy,
+          findingsError: _findingsError,
+          activityEvents: List.unmodifiable(_activityEvents),
+          activityLoaded: _activityHistoryLoaded,
+          activityBusy: _activityBusy,
+          activityError: _activityError,
+          onOpenAssessment: () {
+            Navigator.of(context).pop();
+            _selectDestination(1);
+          },
+          onOpenFindings: (severity) {
+            Navigator.of(context).pop();
+            _navigateToFindings(severity);
+          },
+          onOpenReports: () {
+            Navigator.of(context).pop();
+            _selectDestination(2);
+          },
+          onOpenActivity: (event) {
+            Navigator.of(context).pop();
+            unawaited(_openActivitySource(event));
+          },
+        ),
+      ),
+      transitionsBuilder: (_, animation, __, child) {
+        final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+        return FadeTransition(
+          opacity: curved,
+          child: SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0, .025), end: Offset.zero).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    ));
+  }
+
+  ActivityEvent? get _latestAssessmentEvent {
+    final assessments = _activityEvents.where((event) => event.kind == ActivityKind.assessment).toList()
+      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    return assessments.isEmpty ? null : assessments.first;
+  }
 
   void _assessmentExecutionChanged() {
     if (mounted) setState(() {});
   }
 
-  void _openConnections() {
+  void _notifySecurityOverview() {
+    if (mounted) _securityOverviewChanges.notifyListeners();
+  }
+
+  Future<bool> _reviewAiTool(AiTerminalToolProposal proposal) async {
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Review AI tool proposal')),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${dialogContext.tr('Tool')}: ${proposal.toolId}'),
+          const SizedBox(height: 6),
+          Text('${dialogContext.tr('Target')}: ${proposal.target}'),
+          const SizedBox(height: 8),
+          Text('${dialogContext.tr('Reason')}: ${proposal.rationale}'),
+          const SizedBox(height: 10),
+          Text(dialogContext.tr('This is only the first review. The tool runner will separately validate target scope and require its authorization confirmation before network access.')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Decline'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Review tool'))),
+        ],
+      ),
+    );
+    return approved == true;
+  }
+
+  TerminalExecutionResult _assistantToolReceipt(ToolRunResult result) {
+    final report = result.runtimeExecutionReport;
+    final runtimeReport = report is RuntimeExecutionReport ? report : null;
+    return TerminalExecutionResult.completed(
+      _displayResultSummary(result.summary, context),
+      executionId: runtimeReport?.executionId,
+      executionData: {
+        'tool_id': result.toolId,
+        'target': result.target,
+        'summary': result.summary,
+        'details': result.details.take(12).toList(growable: false),
+        'findings': result.findings.take(12).map((finding) => {
+          'title': finding.title,
+          'severity': finding.severity.name,
+          'confidence': finding.confidence.name,
+          'recommendation': finding.recommendation,
+        }).toList(growable: false),
+        'runtime_status': runtimeReport?.outcome.name,
+        'authorization_confirmed': result.authorizationConfirmed,
+        'completed_at': result.completedAt.toUtc().toIso8601String(),
+      },
+    );
+  }
+
+  Future<bool> _authorizeWorkspaceOperation({
+    required WorkspaceActor actor,
+    required WorkspaceAction action,
+    required String relativePath,
+  }) async {
+    if (!mounted || actor != WorkspaceActor.terminal) return false;
+    final prompt = switch (action) {
+      WorkspaceAction.list => 'Allow Terminal to list this workspace path?',
+      WorkspaceAction.read => 'Allow Terminal to read this workspace file?',
+      WorkspaceAction.write => 'Allow Terminal to write this workspace file?',
+      WorkspaceAction.createDirectory => 'Allow Terminal to create this workspace directory?',
+      WorkspaceAction.delete => 'Allow Terminal to delete this workspace file?',
+    };
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(dialogContext.tr('Workspace access request')),
+            content: Text('${dialogContext.tr(prompt)}\n\n${dialogContext.tr('Only this workspace-relative path is in scope:')} $relativePath\n\n${dialogContext.tr('Private app data, credentials, executables, and app code are excluded.')}'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(dialogContext.tr('Cancel'))),
+              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(dialogContext.tr('Allow once'))),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<TerminalExecutionResult?> _runTerminalTool(String toolId, String? target, {String? correlationId}) async {
+    final definition = _terminalOrchestrator.registry.byId(toolId);
+    if (definition == null || !mounted) return null;
+    ToolRunResult? completedResult;
+    TerminalExecutionResult? executionOutcome;
+    final dialogResult = await showDialog<ToolRunResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ToolRunnerDialog(
+        tool: definition,
+        recentResults: List.unmodifiable([..._recentResults, ..._savedResults]),
+        initialTarget: target,
+        correlationId: correlationId,
+        orchestrator: _terminalOrchestrator,
+        onExecutionFinished: (result, cancelled) {
+          completedResult = result;
+          executionOutcome = result != null
+              ? _assistantToolReceipt(result)
+              : cancelled
+                  ? TerminalExecutionResult.cancelled(context.tr('Check cancelled.'))
+                  : TerminalExecutionResult.failed(context.tr('The tool did not complete. Review Reports or the Activity Timeline.'));
+        },
+      ),
+    );
+    final result = dialogResult ?? completedResult;
+    if (result != null && mounted) {
+      _rememberResult(result);
+      return _assistantToolReceipt(result);
+    }
+    return executionOutcome;
+  }
+
+  void _openTerminalWorkspace() {
+    if (_terminalSession.isExited) _terminalSession.startNewSession();
+    setState(() {
+      _edgePanelOpen = false;
+      _terminalOpen = true;
+      _terminalMinimized = false;
+      _terminalPosition = null;
+    });
+  }
+
+  void _closeTerminalWorkspace() => setState(() {
+        _terminalOpen = false;
+        _terminalMinimized = false;
+        _terminalPosition = null;
+      });
+
+  Future<void> _exitMinimizedTerminal() async {
+    if (_terminalSession.status == TerminalSessionStatus.running) return;
+    await _terminalSession.exit();
+    if (mounted) _closeTerminalWorkspace();
+  }
+
+  void _moveTerminal(Offset delta, Size bounds, Size panelSize) {
+    final current = _terminalPosition ?? Offset(
+      math.max(8.0, bounds.width - panelSize.width - 12).toDouble(),
+      math.max(8.0, bounds.height - panelSize.height - 12).toDouble(),
+    );
+    setState(() {
+      _terminalPosition = Offset(
+        (current.dx + delta.dx).clamp(0.0, math.max(0.0, bounds.width - panelSize.width)).toDouble(),
+        (current.dy + delta.dy).clamp(0.0, math.max(0.0, bounds.height - panelSize.height)).toDouble(),
+      );
+    });
+  }
+
+  void _openConnections({ProviderCategory? initialCategory}) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
-      transitionDuration: const Duration(milliseconds: 220),
-      reverseTransitionDuration: const Duration(milliseconds: 180),
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
       pageBuilder: (_, __, ___) => Scaffold(
         appBar: AppBar(title: Text(context.tr('Connections and providers'))),
-        body: const ConnectionsScreen(),
+        body: ConnectionsScreen(initialCategory: initialCategory),
       ),
       transitionsBuilder: (_, animation, __, child) => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
@@ -287,26 +620,103 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _openMarket() {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => MarketScreen(
+        packageManager: _marketPackageManager,
+        providerManager: _marketProviderManager,
+        onOpenCloudflareDashboard: _openCloudflareDashboard,
+      ),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
+    ));
+  }
+
+  void _openCatalog() {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => CatalogScreen(
+        packageManager: _marketPackageManager,
+        providerManager: _marketProviderManager,
+        onOpenAssessment: () => _selectDestination(1),
+        onOpenCloudflareDashboard: _openCloudflareDashboard,
+      ),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
+    ));
+  }
+
+  void _openCloudflareDashboard() {
+    if (_marketProviderManager.statusFor('cloudflare') != ManagedProviderStatus.connected) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Verify and connect the Cloudflare token from Market first.'))));
+      return;
+    }
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => CloudflareDashboardScreen(
+        manager: _marketProviderManager,
+        onOpenTerminal: () {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          _openTerminalWorkspace();
+        },
+      ),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
+    ));
+  }
+
+  void _openGeminiProviderDetails() {
+    if (_marketProviderManager.statusFor('gemini') != ManagedProviderStatus.connected) return;
     Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => MarketScreen(packageManager: _marketPackageManager),
+      builder: (_) => MarketProviderDetailScreen(providerId: 'gemini', manager: _marketProviderManager),
     ));
   }
 
   void _openDiagnostics() {
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => DiagnosticsScreen(reporter: _diagnostics, marketManager: _marketPackageManager),
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => DiagnosticsScreen(reporter: _diagnostics, marketManager: _marketPackageManager, apkIntegrityReport: widget.apkIntegrityReport),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
     ));
   }
 
   // AI remains a secondary screen; the centered bottom shortcut does not add a navigation destination.
   void _openAssistantModule() {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
-      transitionDuration: const Duration(milliseconds: 240),
-      reverseTransitionDuration: const Duration(milliseconds: 180),
-      pageBuilder: (_, __, ___) => AssistantScreen(
-        onOpenConnections: _openConnections,
-        onOpenTools: () => _selectDestination(1),
-      ),
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 240),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) {
+        final coordinator = AiAssistantCoordinator(
+          providers: _aiProviderManager,
+          bridge: AiTerminalExecutionBridge(runtime: _terminalExecutor.runtimeAdapter),
+          activityStore: _activityStore,
+        );
+        return AssistantScreen(
+          providers: _aiProviderManager,
+          coordinator: coordinator,
+          reviewTool: _reviewAiTool,
+          onOpenConnections: () => _openConnections(initialCategory: ProviderCategory.ai),
+          onOpenTools: () => _selectDestination(1),
+        );
+      },
       transitionsBuilder: (_, animation, __, child) {
         final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
         return FadeTransition(
@@ -371,19 +781,28 @@ class _MainShellState extends State<MainShell> {
       builder: (dialogContext) => AlertDialog(
         title: Text(dialogContext.tr('Activity details')),
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _ActivityDetailLine(label: dialogContext.tr('Activity type'), value: event.kind == ActivityKind.assessment ? dialogContext.tr('Assessment run') : _toolDisplayName(event.toolId ?? '', dialogContext)),
+          _ActivityDetailLine(label: dialogContext.tr('Activity type'), value: event.kind == ActivityKind.assessment
+              ? dialogContext.tr('Assessment run')
+              : event.kind == ActivityKind.aiRequest
+                  ? dialogContext.tr('AI request')
+                  : _toolDisplayName(event.toolId ?? '', dialogContext)),
+          _ActivityDetailLine(label: dialogContext.tr('Activity ID'), value: event.eventId),
           _ActivityDetailLine(label: dialogContext.tr('Target'), value: event.target),
           _ActivityDetailLine(label: dialogContext.tr('Status'), value: _activityStatusLabel(event.status, dialogContext)),
           _ActivityDetailLine(label: dialogContext.tr('Started'), value: event.startedAt.toLocal().toString()),
           if (event.finishedAt != null) _ActivityDetailLine(label: dialogContext.tr('Finished'), value: event.finishedAt!.toLocal().toString()),
           if (event.summary != null) _ActivityDetailLine(label: dialogContext.tr('Summary'), value: _activitySummary(event, dialogContext)),
           if (event.findingCount != null) _ActivityDetailLine(label: dialogContext.tr('Indicators'), value: '${event.findingCount}'),
-          if (event.parentEventId != null) _ActivityDetailLine(label: dialogContext.tr('Assessment run ID'), value: event.parentEventId!),
+          if (event.sourceResultKey != null) _ActivityDetailLine(label: dialogContext.tr('Source report ID'), value: event.sourceResultKey!),
+          if (event.parentEventId != null) _ActivityDetailLine(label: dialogContext.tr('Parent activity ID'), value: event.parentEventId!),
+          if (event.runtimeExecutionId != null) _ActivityDetailLine(label: dialogContext.tr('Runtime Execution ID'), value: event.runtimeExecutionId!),
           const SizedBox(height: 8),
           Text(
-            sourceResult == null
-                ? dialogContext.tr('Activity data stores only the host and bounded status metadata. The full source report was not saved or is no longer available.')
-                : dialogContext.tr('Open the source report to review full evidence.'),
+            event.kind == ActivityKind.aiRequest
+                ? dialogContext.tr('Prompt text is intentionally not stored. Related tool activities reference this AI request ID; execution reports and findings remain linked through their normal records.')
+                : sourceResult == null
+                    ? dialogContext.tr('Activity data stores only the host and bounded status metadata. The full source report was not saved or is no longer available.')
+                    : dialogContext.tr('Open the source report to review full evidence.'),
             style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.4, fontSize: 12),
           ),
         ])),
@@ -410,6 +829,7 @@ class _MainShellState extends State<MainShell> {
     eventsById[event.eventId] = event;
     final events = eventsById.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
     if (mounted) setState(() => _activityEvents = events.take(500).toList(growable: false));
+    _notifySecurityOverview();
   }
 
   void _acceptFindings(List<FindingRecord> findings) {
@@ -423,6 +843,7 @@ class _MainShellState extends State<MainShell> {
         _findings = ordered.take(500).toList(growable: false);
         _findingsLoaded = true;
       });
+      _notifySecurityOverview();
     }
   }
 
@@ -432,6 +853,7 @@ class _MainShellState extends State<MainShell> {
         _findingsBusy = true;
         _findingsError = null;
       });
+      _notifySecurityOverview();
     }
     try {
       final loaded = await _findingRepository.loadFindings(limit: 500);
@@ -445,11 +867,18 @@ class _MainShellState extends State<MainShell> {
         _findings = ordered.take(500).toList(growable: false);
         _findingsLoaded = true;
       });
+      _notifySecurityOverview();
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
-      if (mounted) setState(() => _findingsError = 'Could not load local security findings.');
+      if (mounted) {
+        setState(() => _findingsError = 'Could not load local security findings.');
+        _notifySecurityOverview();
+      }
     } finally {
-      if (mounted) setState(() => _findingsBusy = false);
+      if (mounted) {
+        setState(() => _findingsBusy = false);
+        _notifySecurityOverview();
+      }
     }
   }
 
@@ -482,6 +911,7 @@ class _MainShellState extends State<MainShell> {
           final loadedAssessmentEvent = assessmentEvent;
           final byId = {for (final event in _activityEvents) event.eventId: event, loadedAssessmentEvent.eventId: loadedAssessmentEvent};
           setState(() => _activityEvents = byId.values.toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt)));
+          _notifySecurityOverview();
         }
       } catch (error, stack) {
         DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
@@ -518,6 +948,7 @@ class _MainShellState extends State<MainShell> {
         _activityBusy = true;
         _activityError = null;
       });
+      _notifySecurityOverview();
     }
     try {
       final loaded = await _activityStore.loadActivities(limit: 500);
@@ -531,11 +962,18 @@ class _MainShellState extends State<MainShell> {
         _activityEvents = events.take(500).toList(growable: false);
         _activityHistoryLoaded = true;
       });
+      _notifySecurityOverview();
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
-      if (mounted) setState(() => _activityError = 'Could not load local activity history.');
+      if (mounted) {
+        setState(() => _activityError = 'Could not load local activity history.');
+        _notifySecurityOverview();
+      }
     } finally {
-      if (mounted) setState(() => _activityBusy = false);
+      if (mounted) {
+        setState(() => _activityBusy = false);
+        _notifySecurityOverview();
+      }
     }
   }
 
@@ -545,6 +983,7 @@ class _MainShellState extends State<MainShell> {
         _activityBusy = true;
         _activityError = null;
       });
+      _notifySecurityOverview();
     }
     try {
       await _activityStore.clearActivities();
@@ -553,12 +992,19 @@ class _MainShellState extends State<MainShell> {
           _activityEvents = [];
           _activityHistoryLoaded = true;
         });
+        _notifySecurityOverview();
       }
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
-      if (mounted) setState(() => _activityError = 'Could not clear local activity history.');
+      if (mounted) {
+        setState(() => _activityError = 'Could not clear local activity history.');
+        _notifySecurityOverview();
+      }
     } finally {
-      if (mounted) setState(() => _activityBusy = false);
+      if (mounted) {
+        setState(() => _activityBusy = false);
+        _notifySecurityOverview();
+      }
     }
   }
 
@@ -647,6 +1093,8 @@ class _MainShellState extends State<MainShell> {
         DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);
       } finally {
         _marketPackageManager.dispose();
+        if (_ownsMarketProviderManager) _marketProviderManager.dispose();
+        if (_ownsAiProviderManager) _aiProviderManager.close();
       }
     }
   }
@@ -654,12 +1102,15 @@ class _MainShellState extends State<MainShell> {
   @override
   void dispose() {
     _assessmentExecutionManager.removeListener(_assessmentExecutionChanged);
+    _terminalSession.dispose();
+    _securityOverviewChanges.dispose();
     unawaited(_shutdownOwnedServices());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
     final wideLayout = MediaQuery.sizeOf(context).width >= 760;
     final recentResults = List<ToolRunResult>.unmodifiable(_recentResults);
     final savedResults = List<ToolRunResult>.unmodifiable(_savedResults);
@@ -684,27 +1135,26 @@ class _MainShellState extends State<MainShell> {
         activityError: _activityError,
         marketPackageManager: _marketPackageManager,
         assessmentProgress: _assessmentExecutionManager.progress,
+        activeAssessmentTarget: _assessmentExecutionManager.activeRun == null
+            ? null
+            : sanitizeActivityTarget(_assessmentExecutionManager.activeRun!.target),
         onNavigateToTools: () => _selectDestination(1),
+        onOpenCatalog: _openCatalog,
         onNavigateToReports: () => _selectDestination(2),
+        onNavigateToFindings: _navigateToFindings,
+        onOpenSecurityOverview: _openSecurityOverview,
         onOpenAssistant: _openAssistantModule,
         onOpenActivity: (event) => unawaited(_openActivitySource(event)),
         onOpenResult: (result) => _showResultDetails(context, result, onSaveResult: _saveResultLocally),
         onSaveResult: _saveResultLocally,
       ),
       ToolsScreen(
-        recentResults: recentResults,
-        marketPackageManager: _marketPackageManager,
-        onResult: _rememberResult,
-        onOpenMarket: _openMarket,
-        activityStore: _activityStore,
-        onActivity: _acceptActivity,
-        findingRepository: _findingRepository,
-        onFindings: _acceptFindings,
-        onReportSaved: _acceptSavedReport,
-        onReportSaveFailed: _reportSaveFailed,
+        packageManager: _marketPackageManager,
         assessmentExecutionManager: _assessmentExecutionManager,
       ),
       ReportsScreen(
+        openFindingsOnOpen: _openFindingsOnReports,
+        initialFindingSeverity: _openFindingsSeverity,
         recentResults: recentResults,
         savedResults: savedResults,
         savedHistoryLoaded: _savedHistoryLoaded,
@@ -734,21 +1184,25 @@ class _MainShellState extends State<MainShell> {
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
         onOpenAssistant: _openAssistantModule,
-        onOpenConnections: _openConnections,
+        onOpenConnections: (category) => _openConnections(initialCategory: category),
+        onOpenAssessment: () => _selectDestination(1),
+        onOpenReports: () => _selectDestination(2),
         onOpenDiagnostics: _openDiagnostics,
       ),
     ];
     final page = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 230),
+      duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 230),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position: Tween<Offset>(begin: const Offset(0, .012), end: Offset.zero).animate(animation),
-          child: child,
-        ),
-      ),
+      transitionBuilder: (child, animation) => reduceMotion
+          ? child
+          : FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(begin: const Offset(0, .012), end: Offset.zero).animate(animation),
+                child: child,
+              ),
+            ),
       child: KeyedSubtree(key: ValueKey(_selectedIndex), child: pages[_selectedIndex]),
     );
 
@@ -770,22 +1224,118 @@ class _MainShellState extends State<MainShell> {
             ),
           ],
         ),
-        actions: const [Center(child: _ModeBadge()), SizedBox(width: 12)],
+        actions: [
+          IconButton(
+            tooltip: context.tr('Open Edge Panel'),
+            onPressed: () => setState(() => _edgePanelOpen = true),
+            icon: const Icon(Icons.bolt_rounded, color: _mint),
+          ),
+          const Center(child: _ModeBadge()),
+          const SizedBox(width: 12),
+        ],
       ),
       body: SafeArea(
-        child: Row(children: [
-          if (wideLayout)
-            NavigationRail(
-              selectedIndex: _selectedIndex,
-              labelType: NavigationRailLabelType.all,
-              onDestinationSelected: _selectDestination,
-              destinations: [
-                for (final destination in destinations)
-                  NavigationRailDestination(icon: Icon(destination.icon), label: Text(destination.label)),
-              ],
-            ),
-          Expanded(child: page),
-        ]),
+        child: LayoutBuilder(builder: (context, constraints) {
+          final terminalWidth = math.min(400.0, math.max(0.0, constraints.maxWidth - 16)).toDouble();
+          final terminalHeight = math.min(480.0, math.max(0.0, constraints.maxHeight - 16)).toDouble();
+          final visibleTerminalHeight = _terminalMinimized ? 56.0 : terminalHeight;
+          final requestedPosition = _terminalPosition ?? Offset(
+            math.max(8.0, constraints.maxWidth - terminalWidth - 12).toDouble(),
+            math.max(8.0, constraints.maxHeight - terminalHeight - 12).toDouble(),
+          );
+          final terminalPosition = Offset(
+            requestedPosition.dx.clamp(0.0, math.max(0.0, constraints.maxWidth - terminalWidth)).toDouble(),
+            requestedPosition.dy.clamp(0.0, math.max(0.0, constraints.maxHeight - visibleTerminalHeight)).toDouble(),
+          );
+          return Stack(clipBehavior: Clip.hardEdge, children: [
+            Row(children: [
+              if (wideLayout)
+                NavigationRail(
+                  selectedIndex: _selectedIndex,
+                  labelType: NavigationRailLabelType.all,
+                  onDestinationSelected: _selectDestination,
+                  destinations: [
+                    for (final destination in destinations)
+                      NavigationRailDestination(icon: Icon(destination.icon), label: Text(destination.label)),
+                  ],
+                ),
+              Expanded(child: page),
+            ]),
+            if (_edgePanelOpen)
+              Positioned.fill(
+                child: Stack(children: [
+                  GestureDetector(
+                    onTap: () => setState(() => _edgePanelOpen = false),
+                    child: ColoredBox(color: Colors.black.withValues(alpha: .52)),
+                  ),
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    bottom: 0,
+                    child: EdgePanel(
+                      cloudflareConnected: _marketProviderManager.statusFor('cloudflare') == ManagedProviderStatus.connected,
+                      geminiConnected: _marketProviderManager.statusFor('gemini') == ManagedProviderStatus.connected,
+                      onOpenCloudflareDashboard: () {
+                        setState(() => _edgePanelOpen = false);
+                        _openCloudflareDashboard();
+                      },
+                      onOpenGeminiDetails: () {
+                        setState(() => _edgePanelOpen = false);
+                        _openGeminiProviderDetails();
+                      },
+                      onClose: () => setState(() => _edgePanelOpen = false),
+                      onOpenTerminal: _openTerminalWorkspace,
+                      onOpenAssessment: () {
+                        setState(() => _edgePanelOpen = false);
+                        _selectDestination(1);
+                      },
+                      onOpenCatalog: () {
+                        setState(() => _edgePanelOpen = false);
+                        _openCatalog();
+                      },
+                      onOpenReports: () {
+                        setState(() => _edgePanelOpen = false);
+                        _selectDestination(2);
+                      },
+                      onOpenSettings: () {
+                        setState(() => _edgePanelOpen = false);
+                        _selectDestination(3);
+                      },
+                      onOpenConnections: () {
+                        setState(() => _edgePanelOpen = false);
+                        _openConnections();
+                      },
+                    ),
+                  ),
+                ]),
+              ),
+            if (_terminalOpen)
+              Positioned(
+                left: terminalPosition.dx,
+                top: terminalPosition.dy,
+                width: terminalWidth,
+                height: visibleTerminalHeight,
+                child: AnimatedBuilder(
+                  animation: _terminalSession,
+                  builder: (context, _) => _terminalMinimized
+                      ? MinimizedTerminal(
+                          status: _terminalSession.status,
+                          onExpand: () => setState(() => _terminalMinimized = false),
+                          onExit: _exitMinimizedTerminal,
+                          canExit: _terminalSession.status != TerminalSessionStatus.running,
+                        )
+                      : FloatingTerminal(
+                          key: const ValueKey('floating-terminal-workspace'),
+                          session: _terminalSession,
+                          executor: _terminalExecutor,
+                          onMinimize: () => setState(() => _terminalMinimized = true),
+                          onExit: _closeTerminalWorkspace,
+                          onDrag: (delta) => _moveTerminal(delta, constraints.biggest, Size(terminalWidth, terminalHeight)),
+                        ),
+                ),
+              ),
+          ]);
+        }),
       ),
       bottomNavigationBar: wideLayout
           ? null
@@ -1016,6 +1566,8 @@ enum _ActivityDateFilter { all, today, week, month }
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({
     super.key,
+    this.openFindingsOnOpen = false,
+    this.initialFindingSeverity,
     required this.recentResults,
     required this.savedResults,
     required this.savedHistoryLoaded,
@@ -1042,6 +1594,8 @@ class ReportsScreen extends StatefulWidget {
     this.onOpenFindingActivity,
   });
 
+  final bool openFindingsOnOpen;
+  final FindingSeverity? initialFindingSeverity;
   final List<ToolRunResult> recentResults;
   final List<ToolRunResult> savedResults;
   final bool savedHistoryLoaded;
@@ -1084,6 +1638,27 @@ class _ReportsScreenState extends State<ReportsScreen> {
   ActivityKind? _activityKind;
   String? _activityToolId;
   ActivityStatus? _activityStatus;
+  int _activityVisibleCount = 30;
+  int _findingVisibleCount = 30;
+  int _reportVisibleCount = 30;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.openFindingsOnOpen) _content = _ReportContent.findings;
+    _findingSeverity = widget.initialFindingSeverity;
+  }
+
+  @override
+  void didUpdateWidget(covariant ReportsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.openFindingsOnOpen != widget.openFindingsOnOpen) {
+      _content = widget.openFindingsOnOpen ? _ReportContent.findings : _ReportContent.reports;
+    }
+    if (oldWidget.initialFindingSeverity != widget.initialFindingSeverity) {
+      _findingSeverity = widget.initialFindingSeverity;
+    }
+  }
 
   @override
   void dispose() {
@@ -1198,6 +1773,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
       if (targetQuery.isNotEmpty && !event.target.toLowerCase().contains(targetQuery)) return false;
       return true;
     }).toList()..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    final visibleRows = rows.take(_reportVisibleCount).toList(growable: false);
+    final visibleFindings = findings.take(_findingVisibleCount).toList(growable: false);
+    final visibleActivities = activities.take(_activityVisibleCount).toList(growable: false);
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 960),
@@ -1342,6 +1920,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   _activityToolId = null;
                 }),
               ),
+              ChoiceChip(
+                label: Text(context.tr('AI requests')),
+                selected: _activityKind == ActivityKind.aiRequest,
+                onSelected: (_) => setState(() {
+                  _activityKind = ActivityKind.aiRequest;
+                  _activityToolId = null;
+                }),
+              ),
               for (final toolId in const ['dns_lookup', 'tls_inspector', 'http_headers', 'response_analyzer'])
                 ChoiceChip(
                   label: Text(_toolDisplayName(toolId, context)),
@@ -1399,8 +1985,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 title: context.tr('No activity matches these filters'),
                 detail: context.tr('Run a security assessment or an individual tool. Only attempted and completed work is recorded.'),
               )
-            else
-              for (final event in activities) ...[
+            else ...[
+              for (final event in visibleActivities) ...[
                 _ActivityCard(
                   key: ValueKey('activity-${event.eventId}'),
                   event: event,
@@ -1408,6 +1994,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
                 const SizedBox(height: 8),
               ],
+              if (activities.length > visibleActivities.length)
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _activityVisibleCount += 30),
+                    icon: const Icon(Icons.expand_more_rounded),
+                    label: Text('${context.tr('Load more')} (${visibleActivities.length}/${activities.length})'),
+                  ),
+                ),
+            ],
           ] else if (_content == _ReportContent.findings) ...[
             TextField(
               key: const ValueKey('finding-search-filter'),
@@ -1496,8 +2091,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 title: context.tr('No findings match these filters'),
                 detail: context.tr('Run a check that produces an indicator, or revise the filters. Finding status is managed separately from report history.'),
               )
-            else
-              for (final finding in findings) ...[
+            else ...[
+              for (final finding in visibleFindings) ...[
                 _StoredFindingCard(
                   key: ValueKey('finding-${finding.findingId}'),
                   finding: finding,
@@ -1506,6 +2101,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 ),
                 const SizedBox(height: 8),
               ],
+              if (findings.length > visibleFindings.length)
+                Center(
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _findingVisibleCount += 30),
+                    icon: const Icon(Icons.expand_more_rounded),
+                    label: Text('${context.tr('Load more')} (${visibleFindings.length}/${findings.length})'),
+                  ),
+                ),
+            ],
           ] else if (widget.storageBusy && rows.isEmpty && _filter != _ReportFilter.session)
             const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
           else if (rows.isEmpty)
@@ -1514,8 +2118,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
               title: context.tr('No reports in this view'),
               detail: context.tr('Run a local check, or save a result from its details to keep it after closing the app.'),
             )
-          else
-            for (final entry in rows) ...[
+          else ...[
+            for (final entry in visibleRows) ...[
               _ResultCard(
                 result: entry.result,
                 saved: entry.saved,
@@ -1527,6 +2131,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ),
               const SizedBox(height: 8),
             ],
+            if (rows.length > visibleRows.length)
+              Center(
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _reportVisibleCount += 30),
+                  icon: const Icon(Icons.expand_more_rounded),
+                  label: Text('${context.tr('Load more')} (${visibleRows.length}/${rows.length})'),
+                ),
+              ),
+          ],
           const SizedBox(height: 16),
           Text(context.tr('Only assess systems you own or have permission to test. App confirmation is not legal proof of authorization.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 12, height: 1.45)),
@@ -1564,7 +2177,9 @@ class _ActivityCard extends StatelessWidget {
     final color = _activityStatusColor(event.status);
     final title = event.kind == ActivityKind.assessment
         ? context.tr('Assessment run')
-        : _toolDisplayName(event.toolId ?? '', context);
+        : event.kind == ActivityKind.aiRequest
+            ? context.tr('AI request')
+            : _toolDisplayName(event.toolId ?? '', context);
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
@@ -1576,7 +2191,11 @@ class _ActivityCard extends StatelessWidget {
               width: 38,
               height: 38,
               decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(12)),
-              child: Icon(event.kind == ActivityKind.assessment ? Icons.radar_rounded : _toolIcon(event.toolId ?? ''), color: color, size: 20),
+              child: Icon(event.kind == ActivityKind.assessment
+                  ? Icons.radar_rounded
+                  : event.kind == ActivityKind.aiRequest
+                      ? Icons.auto_awesome_outlined
+                      : _toolIcon(event.toolId ?? ''), color: color, size: 20),
             ),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1663,7 +2282,7 @@ class _StoredFindingCard extends StatelessWidget {
               if (finding.sourceReportKeys.isNotEmpty)
                 Align(
                   alignment: Alignment.centerRight,
-                  child: Text(context.tr('Source reports: ${finding.sourceReportKeys.length}'),
+                  child: Text('${context.tr('Source reports:')} ${finding.sourceReportKeys.length}',
                       style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
                 ),
             ]),
@@ -1706,7 +2325,7 @@ String _activityStatusLabel(ActivityStatus status, BuildContext context) => swit
 String _activitySummary(ActivityEvent event, BuildContext context) {
   final summary = event.summary ?? '';
   if (summary == 'Check cancelled.') return context.tr(summary);
-  if (summary == 'Assessment cancelled.') return context.tr(summary);
+  if (event.kind == ActivityKind.assessment || event.kind == ActivityKind.aiRequest || event.toolId == 'terminal_workspace') return activitySummaryText(event, context);
   if (event.kind == ActivityKind.tool) return _displayResultSummary(summary, context);
   return summary;
 }
@@ -1764,6 +2383,7 @@ class _FindingTag extends StatelessWidget {
 }
 
 Color _findingColor(FindingSeverity severity) => switch (severity) {
+      FindingSeverity.critical => const Color(0xFFFF3B5C),
       FindingSeverity.high => const Color(0xFFFF7070),
       FindingSeverity.medium => Colors.orangeAccent,
       FindingSeverity.low => const Color(0xFF71B7FF),
@@ -1777,13 +2397,17 @@ class SettingsScreen extends StatelessWidget {
     required this.onLocaleChanged,
     required this.onOpenAssistant,
     required this.onOpenConnections,
+    required this.onOpenAssessment,
+    required this.onOpenReports,
     required this.onOpenDiagnostics,
   });
 
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
   final VoidCallback onOpenAssistant;
-  final VoidCallback onOpenConnections;
+  final ValueChanged<ProviderCategory?> onOpenConnections;
+  final VoidCallback onOpenAssessment;
+  final VoidCallback onOpenReports;
   final VoidCallback onOpenDiagnostics;
 
   @override
@@ -1794,7 +2418,9 @@ class SettingsScreen extends StatelessWidget {
             Text(context.tr('SETTINGS'), style: _eyebrow(context)),
             const SizedBox(height: 8),
             Text(context.tr('Preferences and privacy'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
+            _SettingsSectionHeader(title: context.tr('GENERAL SETTINGS'), icon: Icons.tune_rounded),
+            const SizedBox(height: 8),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -1818,27 +2444,98 @@ class SettingsScreen extends StatelessWidget {
                 ]),
               ),
             ),
-            const SizedBox(height: 10),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.auto_awesome_rounded, color: Color(0xFFAA9AFF)),
-                title: Text(context.tr('AI & models')),
-                subtitle: Text(context.tr('Assistant is not connected. The module opens as a secondary screen, outside primary navigation.')),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: onOpenAssistant,
-              ),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('SECURITY & PRIVACY'), icon: Icons.shield_outlined),
+            const SizedBox(height: 8),
+            _SettingsInfoCard(
+              icon: Icons.lock_outline_rounded,
+              title: context.tr('Security & privacy'),
+              body: context.tr('Checks stay on-device by default. Each network assessment asks for target-specific authorization; this app does not verify legal permission.'),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('AI PROVIDERS'), icon: Icons.auto_awesome_outlined),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(children: [
+                ListTile(
+                  leading: const Icon(Icons.hub_outlined, color: _mint),
+                  title: Text(context.tr('AI provider catalog')),
+                  subtitle: Text(context.tr('Configure a supported provider and use per-request privacy consent for AI analysis.')),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => onOpenConnections(ProviderCategory.ai),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFFAA9AFF)),
+                  title: Text(context.tr('AI Assistant')),
+                  subtitle: Text(context.tr('Gemini can be used after setup; unconfigured providers remain inactive.')),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: onOpenAssistant,
+                ),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('CLOUD PROVIDERS'), icon: Icons.cloud_outlined),
+            const SizedBox(height: 8),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.hub_outlined, color: _mint),
                 title: Text(context.tr('Connections and providers')),
-                subtitle: Text(context.tr('Manage your optional endpoints and review provider guides.')),
+                subtitle: Text(context.tr('Review provider guides and endpoint test limits; cloud connectors are not active.')),
                 trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: onOpenConnections,
+                onTap: () => onOpenConnections(null),
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('RUNTIME & TOOLS'), icon: Icons.build_circle_outlined),
+            const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.radar_rounded, color: _mint),
+                title: Text(context.tr('Assessment and local tools')),
+                subtitle: Text(context.tr('Review available checks and run an authorized assessment.')),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: onOpenAssessment,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('PERMISSIONS'), icon: Icons.key_outlined),
+            const SizedBox(height: 8),
+            _SettingsInfoCard(
+              icon: Icons.fact_check_outlined,
+              title: context.tr('Authorization is confirmed per assessment'),
+              body: context.tr('There is no global permission toggle. Confirm only targets you own or are authorized to assess.'),
+            ),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('STORAGE & DATA'), icon: Icons.storage_outlined),
+            const SizedBox(height: 8),
+            Card(
+              child: Column(children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Icon(Icons.lock_outline_rounded, color: _mint),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(context.tr('Privacy and local storage'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 5),
+                      Text(context.tr('Saved reports use app-private SQLite. Data is not encrypted or synced.'),
+                          style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.45)),
+                    ])),
+                  ]),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.article_outlined, color: _mint),
+                  title: Text(context.tr('Manage reports and local data')),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: onOpenReports,
+                ),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            _SettingsSectionHeader(title: context.tr('DIAGNOSTICS'), icon: Icons.monitor_heart_outlined),
+            const SizedBox(height: 8),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.bug_report_outlined, color: _mint),
@@ -1848,22 +2545,42 @@ class SettingsScreen extends StatelessWidget {
                 onTap: onOpenDiagnostics,
               ),
             ),
-            const SizedBox(height: 10),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.lock_outline_rounded, color: _mint),
-                  const SizedBox(width: 12),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(context.tr('Privacy and local storage'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 5),
-                    Text(context.tr('Built-in checks run on this device. Saved reports use app-private SQLite and are not encrypted or synced.'),
-                        style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.45)),
-                  ])),
-                ]),
-              ),
-            ),
+          ]),
+        ),
+      );
+}
+
+class _SettingsSectionHeader extends StatelessWidget {
+  const _SettingsSectionHeader({required this.title, required this.icon});
+  final String title;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        Icon(icon, color: _mint, size: 18),
+        const SizedBox(width: 8),
+        Expanded(child: Text(title, style: TextStyle(color: Colors.white.withValues(alpha: .74), fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: .55))),
+      ]);
+}
+
+class _SettingsInfoCard extends StatelessWidget {
+  const _SettingsInfoCard({required this.icon, required this.title, required this.body});
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, color: _mint),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 5),
+              Text(body, style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.45, fontSize: 12)),
+            ])),
           ]),
         ),
       );
@@ -1897,6 +2614,7 @@ String _toolDisplayName(String toolId, BuildContext context) => switch (toolId) 
       'tls_inspector' => context.tr('Inspeksi Sertifikat TLS'),
       'http_headers' => context.tr('Pemeriksa Header HTTP'),
       'response_analyzer' => context.tr('Analisis Temuan'),
+      'terminal_workspace' => context.tr('Terminal workspace'),
       _ => toolId,
     };
 
@@ -1965,304 +2683,53 @@ String _displayFindingTitle(String title, BuildContext context) {
 }
 
 String _severityName(FindingSeverity severity, BuildContext context) => switch (severity) {
-      FindingSeverity.high => context.tr('TINGGI'),
-      FindingSeverity.medium => context.tr('SEDANG'),
-      FindingSeverity.low => context.tr('RENDAH'),
-      FindingSeverity.info => context.tr('INFO'),
+      FindingSeverity.critical => context.tr('Critical'),
+      FindingSeverity.high => context.tr('High'),
+      FindingSeverity.medium => context.tr('Medium'),
+      FindingSeverity.low => context.tr('Low'),
+      FindingSeverity.info => context.tr('Informational'),
     };
 
 String _displayRecommendation(String recommendation, BuildContext context) => context.tr(recommendation);
 
-enum _ToolsView { assessment, catalog }
-
-class ToolsScreen extends StatefulWidget {
+class ToolsScreen extends StatelessWidget {
   const ToolsScreen({
     super.key,
-    required this.recentResults,
-    required this.marketPackageManager,
-    required this.onResult,
-    required this.onOpenMarket,
-    this.activityStore,
-    this.onActivity,
-    this.findingRepository,
-    this.onFindings,
-    this.onReportSaved,
-    this.onReportSaveFailed,
+    required this.packageManager,
     required this.assessmentExecutionManager,
   });
 
-  final List<ToolRunResult> recentResults;
-  final MarketPackageManager marketPackageManager;
-  final ValueChanged<ToolRunResult> onResult;
-  final VoidCallback onOpenMarket;
-  final ActivityHistoryStore? activityStore;
-  final void Function(ActivityEvent event)? onActivity;
-  final FindingRepository? findingRepository;
-  final void Function(List<FindingRecord> findings)? onFindings;
-  final void Function(ToolRunResult result)? onReportSaved;
-  final void Function(Object error, StackTrace stack)? onReportSaveFailed;
+  final MarketPackageManager packageManager;
   final AssessmentExecutionManager assessmentExecutionManager;
 
   @override
-  State<ToolsScreen> createState() => _ToolsScreenState();
-}
-
-class _ToolsScreenState extends State<ToolsScreen> {
-  final _searchController = TextEditingController();
-  ToolCategory? _selectedCategory;
-  final Map<String, Future<ToolStatus>> _toolStatusFutures = {};
-  _ToolsView _activeView = _ToolsView.assessment;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.marketPackageManager.addListener(_refreshToolStatuses);
-  }
-
-  void _refreshToolStatuses() {
-    _toolStatusFutures.clear();
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void didUpdateWidget(covariant ToolsScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.marketPackageManager != widget.marketPackageManager) {
-      oldWidget.marketPackageManager.removeListener(_refreshToolStatuses);
-      widget.marketPackageManager.addListener(_refreshToolStatuses);
-      _toolStatusFutures.clear();
-    }
-  }
-
-  Future<ToolStatus> _statusForTool(String id) => _toolStatusFutures.putIfAbsent(
-        id,
-        () => ToolOrchestrator(packageManager: widget.marketPackageManager).statusForTool(id),
-      );
-
-  @override
-  void dispose() {
-    widget.marketPackageManager.removeListener(_refreshToolStatuses);
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final query = _searchController.text.trim().toLowerCase();
-    final filteredTools = toolRegistry.where((tool) {
-      final matchesCategory = _selectedCategory == null || tool.category == _selectedCategory;
-      final matchesQuery = query.isEmpty ||
-          _toolDisplayName(tool.id, context).toLowerCase().contains(query) ||
-          _toolDisplayDescription(tool.id, context).toLowerCase().contains(query) ||
-          _categoryLabel(tool.category, context).toLowerCase().contains(query);
-      return matchesCategory && matchesQuery;
-    }).toList();
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 960),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
-          children: [
-            Text(context.tr('SECURITY ASSESSMENT'), style: _eyebrow(context)),
-            const SizedBox(height: 8),
-            Text(context.tr('Pemeriksaan keamanan'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(context.tr('Alat bawaan berjalan di perangkat. Pemeriksaan jaringan memerlukan target dan konfirmasi izin.'),
-                style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
-            const SizedBox(height: 16),
-            SegmentedButton<_ToolsView>(
-              segments: [
-                ButtonSegment(
-                  value: _ToolsView.assessment,
-                  icon: const Icon(Icons.radar_rounded),
-                  label: Text(context.tr('Assessment')),
-                ),
-                ButtonSegment(
-                  value: _ToolsView.catalog,
-                  icon: const Icon(Icons.grid_view_rounded),
-                  label: Text(context.tr('Tool catalog')),
-                ),
-              ],
-              selected: {_activeView},
-              onSelectionChanged: (selection) => setState(() => _activeView = selection.first),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(
-                    _activeView == _ToolsView.assessment ? Icons.fact_check_outlined : Icons.touch_app_outlined,
-                    color: _mint,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      _activeView == _ToolsView.assessment
-                          ? context.tr('Run several checks in one authorized assessment.')
-                          : context.tr('Search and filter available tools, then open one to review its purpose and run it individually.'),
-                      style: TextStyle(color: Colors.white.withValues(alpha: .76), height: 1.4),
-                    ),
-                  ),
-                ]),
-              ),
-            ),
-            if (_activeView == _ToolsView.assessment) ...[
-              const SizedBox(height: 10),
+  Widget build(BuildContext context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            children: [
+              Text(context.tr('SECURITY ASSESSMENT'), style: _eyebrow(context)),
+              const SizedBox(height: 8),
+              Text(context.tr('Security Assessment'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(context.tr('Choose an authorized target, select checks, then review results and findings.'),
+                  style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
+              const SizedBox(height: 14),
               AssessmentRunner(
-                packageManager: widget.marketPackageManager,
-                executionManager: widget.assessmentExecutionManager,
+                packageManager: packageManager,
+                executionManager: assessmentExecutionManager,
               ),
-            ] else ...[
-              const SizedBox(height: 18),
-              Text(context.tr('KATALOG ALAT'), style: _eyebrow(context)),
-              const SizedBox(height: 8),
-              Wrap(spacing: 9, runSpacing: 8, children: [
-                OutlinedButton.icon(
-                  onPressed: widget.onOpenMarket,
-                  icon: const Icon(Icons.storefront_outlined),
-                  label: Text(context.tr('Open Market')),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _showReleaseCatalog(context),
-                  icon: const Icon(Icons.code_rounded),
-                  label: Text(context.tr('Lihat rilis GitHub')),
-                ),
-              ]),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _searchController,
-                onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search),
-                  hintText: context.tr('Cari alat atau kategori'),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Wrap(spacing: 8, runSpacing: 4, children: [
-                FilterChip(
-                  label: Text(context.tr('Semua')),
-                  selected: _selectedCategory == null,
-                  onSelected: (_) => setState(() => _selectedCategory = null),
-                ),
-                for (final category in toolRegistry.map((tool) => tool.category).toSet())
-                  FilterChip(
-                    label: Text(_categoryLabel(category, context)),
-                    selected: _selectedCategory == category,
-                    onSelected: (selected) => setState(() => _selectedCategory = selected ? category : null),
-                  ),
-              ]),
-              const SizedBox(height: 8),
-              if (filteredTools.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Center(child: Text(context.tr('Tidak ada alat yang cocok dengan pencarian.'))),
-                )
-              else
-                for (final tool in filteredTools) ...[
-                  Card(
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.all(16),
-                      leading: CircleAvatar(
-                        backgroundColor: _mint.withValues(alpha: .12),
-                        child: Icon(_toolIcon(tool.id), color: _mint),
-                      ),
-                      title: Text(_toolDisplayName(tool.id, context), style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: FutureBuilder<ToolStatus>(
-                          future: _statusForTool(tool.id),
-                          builder: (context, snapshot) => Text(
-                            '${_categoryLabel(tool.category, context)} · ${_toolStatusLabel(snapshot.data ?? ToolStatus.environmentRequired, context)}\n${_toolDisplayDescription(tool.id, context)}',
-                            style: const TextStyle(height: 1.4),
-                          ),
-                        ),
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      isThreeLine: true,
-                      onTap: () => _showToolRunner(
-                        context,
-                        tool,
-                        widget.recentResults,
-                        widget.onResult,
-                        activityStore: widget.activityStore,
-                        onActivity: widget.onActivity,
-                        findingRepository: widget.findingRepository,
-                        onFindings: widget.onFindings,
-                        onReportSaved: widget.onReportSaved,
-                        onReportSaveFailed: widget.onReportSaveFailed,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
             ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class AssistantScreen extends StatelessWidget {
-  const AssistantScreen({super.key, required this.onOpenConnections, required this.onOpenTools});
-
-  final VoidCallback onOpenConnections;
-  final VoidCallback onOpenTools;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(context.tr('AI assistant module'))),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: ListView(padding: const EdgeInsets.all(20), children: [
-              Text(context.tr('AI ASSISTANT'), style: _eyebrow(context)),
-              const SizedBox(height: 8),
-              Text(context.tr('AI assistance'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Icon(Icons.info_outline, color: _mint, size: 28),
-                    const SizedBox(height: 12),
-                    Text(context.tr('AI assistant is not connected'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 8),
-                    Text(context.tr('No messages are sent to an AI provider. Provider connections and AI analysis are not implemented. Do not enter API keys or sensitive data on this screen.'),
-                        style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.5)),
-                    const SizedBox(height: 14),
-                    Wrap(spacing: 10, runSpacing: 8, children: [
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          onOpenConnections();
-                        },
-                        icon: const Icon(Icons.hub_outlined),
-                        label: Text(context.tr('View connection center')),
-                      ),
-                      FilledButton.icon(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          onOpenTools();
-                        },
-                        icon: const Icon(Icons.grid_view_rounded),
-                        label: Text(context.tr('Use local tools')),
-                      ),
-                    ]),
-                  ]),
-                ),
-              ),
-            ]),
           ),
         ),
       );
 }
 
 class ConnectionsScreen extends StatefulWidget {
-  const ConnectionsScreen({super.key});
+  const ConnectionsScreen({super.key, this.initialCategory});
+
+  final ProviderCategory? initialCategory;
 
   @override
   State<ConnectionsScreen> createState() => _ConnectionsScreenState();
@@ -2277,10 +2744,21 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   bool _checking = false;
   bool? _reachable;
 
+  @override
+  void initState() {
+    super.initState();
+    _selectedProviderCategory = widget.initialCategory;
+  }
+
   List<ProviderDefinition> _visibleProviders(BuildContext context) {
     final query = _providerSearchController.text.trim().toLowerCase();
     return providerRegistry.where((provider) {
-      final matchesCategory = _selectedProviderCategory == null || provider.category == _selectedProviderCategory;
+      // Priority Cloudflare configuration and verification now live in Market;
+      // do not expose a second generic credential-only configuration surface here.
+      if (provider.id == 'cloudflare') return false;
+      final matchesCategory = _selectedProviderCategory == null ||
+          provider.category == _selectedProviderCategory ||
+          (_selectedProviderCategory == ProviderCategory.ai && provider.category == ProviderCategory.onDeviceAi);
       final matchesText = query.isEmpty ||
           provider.name.toLowerCase().contains(query) ||
           _providerDescription(provider, context).toLowerCase().contains(query) ||
@@ -2307,7 +2785,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
           const SizedBox(height: 8),
           Text(context.tr('Infrastruktur pilihan Anda'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text(context.tr('Koneksi bersifat opsional. Pemeriksaan lokal tetap berjalan tanpa akun cloud atau API key. Informasi provider di bawah adalah panduan; konektor terautentikasi belum tersedia.'),
+          Text(context.tr('Local checks work without cloud accounts. Gemini inference is available after you save a user-owned API key; each prompt and approved tool result requires explicit data-sharing consent.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
           const SizedBox(height: 18),
           _SectionTitle(title: context.tr('Uji endpoint HTTPS'), icon: Icons.link),
@@ -2367,13 +2845,13 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
           const SizedBox(height: 12),
           _ConnectionRow(name: context.tr('Backend cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.cloud_outlined),
           const SizedBox(height: 10),
-          _ConnectionRow(name: context.tr('Penyedia AI'), detail: context.tr('Belum diuji'), icon: Icons.auto_awesome_outlined),
+          _ConnectionRow(name: context.tr('Penyedia AI'), detail: context.tr('Gemini needs a saved API key; Local AI stays Not Ready until a real on-device runtime and model are integrated.'), icon: Icons.auto_awesome_outlined),
           const SizedBox(height: 10),
           _ConnectionRow(name: context.tr('Penyimpanan cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.folder_open_outlined),
           const SizedBox(height: 22),
           _SectionTitle(title: context.tr('Katalog penyedia layanan'), icon: Icons.apps_outlined),
           const SizedBox(height: 10),
-          Text(context.tr('Katalog ini berisi panduan, bukan konektor aktif. Kredensial hanya dapat disimpan lokal untuk beberapa jenis; belum ada permintaan provider yang menggunakan kredensial tersebut.'),
+          Text(context.tr('Gemini is available through the Assistant when configured. Other catalog entries remain guides unless their specific adapter is marked available.'),
               style: const TextStyle(height: 1.4)),
           const SizedBox(height: 12),
           TextField(
@@ -2392,7 +2870,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
               selected: _selectedProviderCategory == null,
               onSelected: (_) => setState(() => _selectedProviderCategory = null),
             ),
-            for (final category in ProviderCategory.values)
+            for (final category in ProviderCategory.values.where((category) => category != ProviderCategory.cloudInfrastructure))
               FilterChip(
                 label: Text(_providerCategoryName(category, context)),
                 selected: _selectedProviderCategory == category,
@@ -2530,11 +3008,14 @@ class _ProviderBrandMark extends StatelessWidget {
       'urlscan' => (Icons.travel_explore, const Color(0xFF28B8CC), 'U'),
       's3_compatible' => (Icons.cloud_queue_rounded, const Color(0xFFF59D28), 'S3'),
       'webdav' => (Icons.folder_open_rounded, const Color(0xFF28B8CC), 'W'),
+      'cloudflare' => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
       _ => switch (provider.category) {
+          ProviderCategory.cloudInfrastructure => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
           ProviderCategory.backend => (Icons.cloud_outlined, const Color(0xFF7BA8E8), 'API'),
           ProviderCategory.database => (Icons.storage_rounded, const Color(0xFF5BC0BE), 'DB'),
           ProviderCategory.storage => (Icons.folder_open_rounded, const Color(0xFF6EB6D8), 'IO'),
           ProviderCategory.ai => (Icons.auto_awesome_rounded, const Color(0xFF9A8BFF), 'AI'),
+          ProviderCategory.onDeviceAi => (Icons.phone_android_rounded, const Color(0xFF73F0C2), 'AI'),
           ProviderCategory.securityIntelligence => (Icons.security_rounded, const Color(0xFF65A9FF), 'SEC'),
           ProviderCategory.custom => (Icons.api, const Color(0xFFAAB4C5), 'API'),
         },
@@ -2642,8 +3123,9 @@ String _toolStatusLabel(ToolStatus status, BuildContext context) => switch (stat
 String _providerCategoryName(ProviderCategory category, BuildContext context) => context.tr(providerCategoryLabel(category));
 
 String _providerDescription(ProviderDefinition provider, BuildContext context) => switch (provider.id) {
+      'local_ai' => context.tr('Runtime inferensi lokal opsional di perangkat; tidak ada fallback cloud.'),
       'openai' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
-      'gemini' => context.tr('Penyedia AI Google opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
+      'gemini' => context.tr('Penyedia AI Google. Inferensi Gemini aktif setelah konfigurasi API key dan persetujuan pembagian data.'),
       'anthropic' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
       'openrouter' => context.tr('Perute model AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
       'cloudflare_workers' => context.tr('Backend edge milik pengguna. Uji ini hanya memeriksa keterjangkauan HTTPS.'),

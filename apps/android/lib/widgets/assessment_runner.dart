@@ -1,6 +1,8 @@
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/assessment_execution_manager.dart';
+import '../core/assessment_report_exporter.dart';
 import '../core/package_manager.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
@@ -201,11 +203,15 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
           ),
           Wrap(spacing: 10, runSpacing: 8, children: [
             FilledButton.icon(
-              onPressed: _running ? null : _run,
+              onPressed: _running || _selected.isEmpty ? null : _run,
               icon: _running
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.play_arrow_rounded),
-              label: Text(_running ? context.tr('Assessment already running') : context.tr('Run assessment')),
+              label: Text(_running
+                  ? context.tr('Assessment already running')
+                  : _selected.isEmpty
+                      ? context.tr('Select at least one check')
+                      : context.tr('Run assessment')),
             ),
             if (_running)
               OutlinedButton.icon(
@@ -226,6 +232,15 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
               '${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length} ${context.tr('completed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length} ${context.tr('failed')} · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.skipped).length} ${context.tr('skipped')} (partial)${_outcomes.any((outcome) => outcome.status == AssessmentCheckStatus.cancelled) ? ' · ${_outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length} ${context.tr('cancelled')}' : ''}',
               style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 12),
             ),
+            if (_outcomes.isNotEmpty)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _running ? null : _copyAssessmentReport,
+                  icon: const Icon(Icons.ios_share_rounded),
+                  label: Text(context.tr('Export assessment JSON')),
+                ),
+              ),
             for (final outcome in _outcomes) _outcomeTile(outcome, context),
           ],
         ]),
@@ -264,7 +279,49 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     );
   }
 
+  Future<void> _copyAssessmentReport() async {
+    final run = _runView;
+    if (run == null || run.isRunning || run.outcomes.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Copy assessment report?')),
+        content: Text(dialogContext.tr(
+          'The JSON includes the assessed target, check outcomes, evidence, and findings. The system clipboard may be readable by other apps. Share it only if you are comfortable disclosing this data.',
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Cancel'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Copy report'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await Clipboard.setData(ClipboardData(
+        text: buildAssessmentReportJson(
+          target: run.target,
+          selectedToolIds: run.selectedToolIds,
+          authorizationConfirmed: run.authorized,
+          privateNetworkAllowed: run.allowPrivateNetwork,
+          outcomes: run.outcomes,
+        ),
+      ));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.tr('Assessment report copied to clipboard.'))),
+        );
+      }
+    } on PlatformException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.tr('System clipboard is unavailable.'))),
+        );
+      }
+    }
+  }
+
   void _run() {
+    if (_running || _selected.isEmpty) return;
     setState(() {
       _startError = null;
       _hideStoredOutcomes = false;

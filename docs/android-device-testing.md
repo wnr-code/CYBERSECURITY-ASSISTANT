@@ -41,10 +41,20 @@ If using ADB: `adb install -r app-debug.apk`. Record Android version with `adb s
 
 Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level plus a short note. Current status for every manual case below is **NOT RUN**.
 
+### 0. APK identity and trusted-update gate (4E-2)
+
+- [ ] **Do not use the debug APK as evidence of release trust.** Debug builds intentionally report an unconfigured/untrusted release pin and skip the production gate.
+- [ ] Configure the release signer pin from the **Play App Signing** public certificate fingerprint (64 hex characters, no colons) and build with the matching signing arrangement. Do not pin the Play upload key for Play-delivered APKs. Never commit or share a private keystore/key.
+- [ ] Install the release candidate through a Google Play internal-testing track, not `adb install` or a hidden sideload path. In Developer Diagnostics, confirm package ID, version code, signer fingerprint, installed-component digest, and `APK identity and integrity` status.
+- [ ] In an isolated test build, configure a wrong signer pin and verify that release launch is blocked before Flutter starts. Restore the correct pin afterward.
+- [ ] Publish a higher-version candidate with the same Play signing identity and verify the update works through Play; confirm the reported version/component digest updates. Try a lower version only in an isolated test track and verify Play/Android rejects it; the app's secure baseline must also reject a downgrade if one reaches it.
+- [ ] Verify changed installed APK bytes at an unchanged version are rejected against the Keystore-backed baseline. Do not modify a production device; use a disposable emulator/test build.
+- [ ] Mark this stage BLOCKED until a signed release candidate, trusted fingerprint, Play internal-testing delivery, and a physical Android device are available. Generated-source/Python tests do not establish APK runtime protection.
+
 ### 1. Installation, native splash, and first launch
 
-- [ ] Install APK without package/signature/parse error. On cold launch, confirm the Android native splash appears immediately with the navy background and shield/lock mark; verify the app label is **Cybersecurity Assistant**.
-- [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 10–11 (API 29–30), verify the legacy launch-window fallback uses the same navy and shield mark.
+- [ ] Install APK without package/signature/parse error. Verify the launcher shows the selected robot-and-shield app icon and the app label is **Cybersecurity Assistant**. Check that the adaptive icon is not clipped or reduced to an unreadable thumbnail in the app drawer/home screen.
+- [ ] On Android 12+ (API 31+), verify the native SplashScreen API artwork; on Android 10–11 (API 29–30), verify the legacy launch-window fallback uses the navy and shield mark. The launcher icon is intentionally artwork-based; the splash mark remains a separate vector.
 - [ ] Confirm there is no white/black blank frame or visible mismatched icon between native splash, Flutter splash, and Dashboard. Check cold launch after force-stop as well as warm relaunch.
 - [ ] Confirm the Flutter splash is the first Flutter frame and fades/scales to Dashboard without waiting for SQLite. If the first frame is ready quickly, the splash may be brief; the app must not add a minimum-duration delay.
 - [ ] Simulate an unavailable/slow local history database if safely possible. Confirm the Dashboard appears while the query is pending, saved-history indicators update when available, and Reports can retry history after an error.
@@ -56,10 +66,13 @@ Mark each item **PASS / FAIL / BLOCKED / NOT RUN** and include device/API level 
 
 ### 2. Navigation and UI stability
 
-- [ ] Verify the compact bottom bar has four primary destinations—Home, Tools, Reports, Settings—and exactly one centered secondary Chat AI shortcut (five visible actions total). Connections must open from Settings, not as a bottom destination.
+- [ ] Verify the compact bottom bar retains exactly four primary destinations—Home, Assessment, Reports, Settings—and the existing centered secondary Chat AI shortcut. Catalog must not add a bottom-navigation destination.
+- [ ] Open Assessment and confirm it only contains target/authorization, check selection, execution, results, and Findings; no Catalog search or category filters should appear there.
+- [ ] Open Catalog from the existing Edge Panel or Dashboard shortcut. Confirm the five groups (Security Tools, Developer Tools, Cloud Integrations, AI Models, Guides), and that search/filter apply on Catalog rather than Assessment.
+- [ ] Open a built-in tool detail: it should say **Built-in**, list its actual platform/permission/runtime requirements, and route to Assessment without showing Install. Provider details should say **Connect**; Install should appear only for packages the Market manager says can be installed. AI Models should open their separate manager.
 - [ ] Verify the floating bar has fully rounded ends, stays above the Android system navigation area, and does not cover content. Try a small phone viewport and a larger tablet/emulator viewport if available.
 - [ ] Confirm functional icons and provider-specific brand marks appear in the provider catalog; provider marks are visual identifiers only and do not indicate active connections.
-- [ ] Scroll long content; open and close tool/provider dialogs using both close/cancel controls and system Back.
+- [ ] Scroll long content; open and close Catalog/provider dialogs using both close/cancel controls and system Back.
 - [ ] Exercise keyboard input, hide keyboard, rotate the device and confirm the app remains portrait-locked, background/foreground the app, and use system Back; UI remains usable.
 - [ ] Confirm no crash, blank screen, overflow, or stuck loading indicator during navigation and settings-to-connections routing.
 
@@ -126,7 +139,7 @@ The app labels findings with confidence and severity separately. Severity is a p
 
 ### 10. Market and package lifecycle (offline example)
 
-- [ ] Open Tools → **Open Market**. Confirm the page is separate from the primary four-destination navigation and shows the six categories.
+- [ ] From a Catalog package detail, open the relevant Market tab. Confirm Market remains a separate screen and the Packages tab preserves its own package search/filter and six categories.
 - [ ] Inspect one catalog-only Runtime/Plugin/AI entry. Confirm it is marked incompatible/unsupported or metadata-only and cannot be installed or run.
 - [ ] Open the **Security Assessment Evidence Guide** knowledge pack, review its CC BY-SA 4.0 license and installation guide, then accept the license. Confirm installation reaches **Installed** after Downloaded/Verifying and the registry count updates. The bundled demonstration package reads a local app asset; it makes no network request.
 - [ ] Close/reopen Market and confirm the app-private registry still marks the package installed. Its JSON is data only and must not be executed or loaded as code.

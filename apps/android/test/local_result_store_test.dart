@@ -141,15 +141,26 @@ void main() {
       databasePathProvider: () async => databasePath,
     );
     final startedAt = DateTime.utc(2026, 11, 23, 12);
+    final aiRequest = ActivityEvent(
+      eventId: 'ai-persisted-1',
+      kind: ActivityKind.aiRequest,
+      target: 'gemini',
+      status: ActivityStatus.completed,
+      startedAt: startedAt,
+      finishedAt: startedAt.add(const Duration(seconds: 5)),
+      summary: 'Assistant request completed.',
+    );
     final started = ActivityEvent(
       eventId: 'tool-persisted-1',
       kind: ActivityKind.tool,
+      parentEventId: 'ai-persisted-1',
       toolId: 'tls_inspector',
       target: 'persisted.example',
       status: ActivityStatus.started,
       startedAt: startedAt,
     );
 
+    await firstStore.upsertActivity(aiRequest);
     await firstStore.upsertActivity(started);
     await firstStore.upsertActivity(started.copyWith(status: ActivityStatus.running));
     await firstStore.upsertActivity(started.copyWith(
@@ -158,6 +169,7 @@ void main() {
       summary: 'TLS completed.',
       findingCount: 1,
       sourceResultKey: activityResultKey('tls_inspector', 'persisted.example', startedAt.add(const Duration(seconds: 4))),
+      runtimeExecutionId: 'runtime-execution-42',
     ));
     await firstStore.close();
 
@@ -182,6 +194,12 @@ void main() {
     expect(loaded.single.finishedAt, startedAt.add(const Duration(seconds: 4)));
     expect(loaded.single.findingCount, 1);
     expect(loaded.single.summary, 'TLS completed.');
+    expect(loaded.single.runtimeExecutionId, 'runtime-execution-42');
+    expect(loaded.single.parentEventId, 'ai-persisted-1');
+    final aiActivity = await reopenedStore.loadActivityById('ai-persisted-1');
+    expect(aiActivity!.kind, ActivityKind.aiRequest);
+    expect(aiActivity.target, 'gemini');
+    expect(aiActivity.summary, isNot(contains('prompt')));
     expect((await reopenedStore.loadActivityById('tool-persisted-1'))?.status, ActivityStatus.completed);
   });
 

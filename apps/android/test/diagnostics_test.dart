@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:cybersecurity_assistant/core/diagnostics.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
 import 'package:cybersecurity_assistant/core/security_tools.dart';
+import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,22 @@ class _MemoryStore implements DiagnosticQueueStore {
   }
 }
 
+class _MemorySecureBackend implements SecureStorageBackend {
+  final Map<String, String> values = {
+    'cybersecurity_assistant.diagnostics.relay_bearer': 'test-relay-token-012345678901234567890123456789',
+  };
+  @override
+  Future<void> write({required String key, required String value}) async {
+    values[key] = value;
+  }
+  @override
+  Future<String?> read({required String key}) async => values[key];
+  @override
+  Future<void> delete({required String key}) async {
+    values.remove(key);
+  }
+}
+
 class _FailingPackageDownloader implements PackageDownloader {
   @override
   Future<DownloadedPackage> download(MarketPackage package, {required int maxBytes, required Duration timeout}) async {
@@ -32,7 +49,7 @@ class _FakeUploader implements DiagnosticUploader {
   bool fail = false;
   DiagnosticUploadRequest? lastRequest;
   @override
-  Future<void> upload(DiagnosticUploadRequest request, Uri endpoint, {required Duration timeout}) async {
+  Future<void> upload(DiagnosticUploadRequest request, Uri endpoint, {required String bearerToken, required Duration timeout}) async {
     uploads++;
     lastRequest = request;
     if (fail) throw const FormatException('fixture failure');
@@ -57,6 +74,37 @@ void main() {
       expect(safe.split('\n'), hasLength(12));
       expect(safe, isNot(contains('/data/user')));
     });
+  });
+
+  test('relay sanitization redacts common credential formats and separates local-only fields', () async {
+    final safe = sanitizeDiagnosticText('Bearer abcdefghijklmnop token=secret123 github_pat_12345678901234567890');
+    expect(safe, isNot(contains('abcdefghijklmnop')));
+    expect(safe, isNot(contains('secret123')));
+    expect(safe, isNot(contains('github_pat_')));
+
+    final reporter = DiagnosticReporter(store: _MemoryStore());
+    final report = await reporter.record(
+      StateError('local error token=secret123'),
+      category: DiagnosticCategory.assessment,
+      reportType: DiagnosticReportType.assessmentError,
+      severity: DiagnosticSeverity.high,
+      component: 'assessment_manager',
+      assessmentId: 'assessment-123',
+      executionId: 'execution-456',
+      runtimeStatus: 'failed',
+      reproductionSteps: 'Run the assessment again',
+    );
+    final local = report.toJson();
+    final outbound = report.toRelayJson();
+    expect(outbound['assessmentId'], 'assessment-123');
+    expect(outbound['executionId'], 'execution-456');
+    expect(outbound['reproductionSteps'], 'Run the assessment again');
+    expect(outbound.containsKey('fingerprint'), isFalse);
+    expect(outbound.containsKey('uploadApproved'), isFalse);
+    expect(outbound.containsKey('attempts'), isFalse);
+    expect(outbound.containsKey('isLocalTest'), isFalse);
+    expect(local.containsKey('fingerprint'), isTrue);
+    reporter.dispose();
   });
 
   test('Flutter framework and uncaught platform async hooks persist sanitized reports', () async {
@@ -129,11 +177,15 @@ void main() {
     late _FakeUploader uploader;
     late DateTime now;
     late DiagnosticReporter reporter;
+    late _MemorySecureBackend secureBackend;
+    late DiagnosticRelaySecretStore secretStore;
     setUp(() {
       store = _MemoryStore();
       uploader = _FakeUploader();
       now = DateTime.utc(2026, 11, 23);
-      reporter = DiagnosticReporter(store: store, uploader: uploader, clock: () => now, wifiAvailable: () async => true);
+      secureBackend = _MemorySecureBackend();
+      secretStore = DiagnosticRelaySecretStore(backend: secureBackend);
+      reporter = DiagnosticReporter(store: store, uploader: uploader, relaySecretStore: secretStore, clock: () => now, wifiAvailable: () async => true);
     });
     tearDown(() => reporter.dispose());
 
@@ -145,6 +197,17 @@ void main() {
       await expectLater(reporter.configure(const DiagnosticSettings(autoReportingEnabled: true)), throwsStateError);
       expect(uploader.uploads, 0);
       expect(store.snapshot['reports'], isA<List>());
+    });
+
+    test('relay credentials stay in secure storage and cannot be exported', () async {
+      await reporter.configure(const DiagnosticSettings(backendEndpoint: 'https://relay.example.test/diagnostics'));
+      await reporter.clearRelayCredential();
+      expect(reporter.hasRelay, isFalse);
+      await reporter.saveRelayCredential('another-test-relay-token-01234567890123456789');
+      expect(reporter.hasRelay, isTrue);
+      expect(secureBackend.values['cybersecurity_assistant.diagnostics.relay_bearer'], 'another-test-relay-token-01234567890123456789');
+      expect(reporter.exportReport(), isNot(contains('another-test-relay-token')));
+      await expectLater(reporter.saveRelayCredential('too-short'), throwsFormatException);
     });
 
     test('local self-test persists and can never be uploaded, even when auto-reporting is enabled', () async {
@@ -160,7 +223,7 @@ void main() {
       await reporter.approveAndUpload(row.id);
       await reporter.retryPending();
       expect(uploader.uploads, 0);
-      final restored = DiagnosticReporter(store: store, uploader: uploader);
+      final restored = DiagnosticReporter(store: store, uploader: uploader, relaySecretStore: secretStore);
       await restored.initialize();
       expect(restored.reports.single.isLocalTest, isTrue);
       await restored.retryPending();
@@ -178,7 +241,7 @@ void main() {
 
     test('persists the offline queue across reporter reinitialization', () async {
       await reporter.record(StateError('local record'), category: DiagnosticCategory.startup);
-      final restored = DiagnosticReporter(store: store, uploader: uploader);
+      final restored = DiagnosticReporter(store: store, uploader: uploader, relaySecretStore: secretStore);
       await restored.initialize();
       expect(restored.pendingCount, 1);
       expect(restored.reports.single.message, contains('local record'));
@@ -227,7 +290,7 @@ void main() {
 
     test('does not send after the retry attempt limit', () async {
       final limitedUploader = _FakeUploader()..fail = true;
-      final limited = DiagnosticReporter(store: store, uploader: limitedUploader, maxAttempts: 1);
+      final limited = DiagnosticReporter(store: store, uploader: limitedUploader, relaySecretStore: secretStore, maxAttempts: 1);
       await limited.configure(const DiagnosticSettings(consentGranted: true, autoReportingEnabled: true, reviewBeforeUpload: true, backendEndpoint: 'https://relay.example.test/diagnostics'));
       final row = await limited.record(Exception('limited'), category: DiagnosticCategory.dart);
       await limited.approveAndUpload(row.id);
@@ -239,7 +302,7 @@ void main() {
 
     test('Wi-Fi-only mode waits when offline, delete removes pending reports, and export omits relay URL', () async {
       var wifi = false;
-      final local = DiagnosticReporter(store: store, uploader: uploader, wifiAvailable: () async => wifi);
+      final local = DiagnosticReporter(store: store, uploader: uploader, relaySecretStore: secretStore, wifiAvailable: () async => wifi);
       await local.configure(const DiagnosticSettings(consentGranted: true, autoReportingEnabled: true, wifiOnly: true, reviewBeforeUpload: false, backendEndpoint: 'https://relay.example.test/path'));
       await local.record(Exception('network'), category: DiagnosticCategory.network);
       await local.retryPending();

@@ -4,7 +4,10 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:cybersecurity_assistant/core/package_manager.dart';
+import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
+import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 class _FixtureDownloader implements PackageDownloader {
   _FixtureDownloader(this.bytes);
@@ -159,6 +162,29 @@ void main() {
           supportDirectoryProvider: () async => supportDirectory,
         );
 
+    testWidgets('installed packages remain removable when current catalog metadata marks them incompatible', (tester) async {
+      final bytes = _manifestBytes('knowledge.fixture', '1.0.0');
+      final original = _fixturePackage(payload: bytes);
+      final manager = managerFor([original], _FixtureDownloader(bytes));
+      addTearDown(manager.dispose);
+      await tester.runAsync(manager.initialize);
+      await tester.runAsync(() => manager.install(original, licenseAccepted: true));
+      final incompatible = _fixturePackage(payload: bytes, compatibility: PackageCompatibility.incompatible);
+      manager.replaceCatalog([incompatible]);
+
+      await tester.pumpWidget(MaterialApp(
+        locale: const Locale('en'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+        home: MarketScreen(packageManager: manager),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(manager.statusFor(incompatible), PackageStatus.incompatible);
+      expect(find.widgetWithText(OutlinedButton, 'Uninstall'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     test('installs the bundled Market example through the real offline asset source', () async {
       final package = bundledMarketCatalog.singleWhere((entry) => entry.id == 'knowledge.security-baseline');
       final manager = managerFor([package], BundledAndHttpPackageDownloader());
@@ -169,6 +195,12 @@ void main() {
       expect(installed.sha256, package.sha256);
       expect(await file.readAsString(), contains('evidence-confidence'));
       expect(await file.readAsString(), contains('potential or informational indicator'));
+      final manifest = await manager.readInstalledJsonData(package);
+      final content = manifest['content'] as Map<String, Object?>;
+      expect(content['title'], 'Security Assessment Evidence Guide');
+      expect(content['entries'], isA<List>());
+      await file.writeAsString('{"tampered":true}');
+      await expectLater(manager.readInstalledJsonData(package), throwsA(isA<PackageManagerException>()));
       manager.dispose();
     });
 
@@ -204,6 +236,24 @@ void main() {
       expect(restored.installedById(package.id)?.sha256, installed.sha256);
       manager.dispose();
       restored.dispose();
+    });
+
+    test('installer rechecks bytes even when a caller forges a VerifiedPackage wrapper', () async {
+      final bytes = _manifestBytes('knowledge.fixture', '1.0.0');
+      final package = _fixturePackage(payload: bytes);
+      final tampered = Uint8List.fromList([...bytes, 0x20]);
+      final registry = PackageRegistry(File('${supportDirectory.path}/registry.json'));
+      final installer = PackageInstaller(
+        packageDirectory: Directory('${supportDirectory.path}/market_packages'),
+        registry: registry,
+      );
+
+      await expectLater(
+        installer.install(VerifiedPackage(package: package, bytes: tampered, sha256: package.sha256!)),
+        throwsA(isA<PackageManagerException>()),
+      );
+      expect(await Directory('${supportDirectory.path}/market_packages').exists(), isFalse);
+      expect(registry.installed, isEmpty);
     });
 
     test('checksum mismatch fails closed and does not install a package', () async {

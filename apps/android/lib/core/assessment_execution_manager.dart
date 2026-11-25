@@ -172,7 +172,16 @@ class AssessmentExecutionManager extends ChangeNotifier {
       _acceptReturnedOutcomes(runId, toolIds, execution.outcomes);
     } catch (error, stack) {
       errorMessage = error.toString();
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+      DiagnosticReporter.recordGlobal(
+        error,
+        stackTrace: stack,
+        category: DiagnosticCategory.assessment,
+        reportType: DiagnosticReportType.assessmentError,
+        severity: DiagnosticSeverity.high,
+        component: 'assessment_execution_manager',
+        assessmentId: runId,
+        runtimeStatus: 'failed',
+      );
     } finally {
       _finishRun(runId, toolIds, cancellationToken, errorMessage: errorMessage);
     }

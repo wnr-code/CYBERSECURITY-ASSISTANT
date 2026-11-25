@@ -26,6 +26,7 @@ class ToolInvocation {
     this.priorResults = const [],
     this.cancellationToken,
     this.parentActivityId,
+    this.correlationId,
   });
 
   final String toolId;
@@ -35,6 +36,8 @@ class ToolInvocation {
   final List<ToolRunResult> priorResults;
   final RuntimeCancellationToken? cancellationToken;
   final String? parentActivityId;
+  /// Optional assistant request correlation; it is not an assessment identifier.
+  final String? correlationId;
 }
 
 class ToolOrchestrationException implements Exception {
@@ -271,7 +274,7 @@ class ToolOrchestrator {
     final activity = ActivityEvent(
       eventId: _newActivityId('tool'),
       kind: ActivityKind.tool,
-      parentEventId: invocation.parentActivityId,
+      parentEventId: invocation.parentActivityId ?? invocation.correlationId,
       toolId: definition.id,
       target: sanitizeActivityTarget(invocation.target),
       status: ActivityStatus.started,
@@ -305,9 +308,10 @@ class ToolOrchestrator {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result shape.');
       }
       final decodedResult = decodeToolRunResult(jsonEncode(execution.output));
-      final result = invocation.parentActivityId == null
-          ? decodedResult
-          : decodedResult.copyWith(assessmentId: invocation.parentActivityId, runtimeExecutionReport: executionReport);
+      final result = decodedResult.copyWith(
+        assessmentId: invocation.parentActivityId,
+        runtimeExecutionReport: executionReport,
+      );
       if (result.toolId != definition.id || result.target.length > 2048 || result.summary.length > 4096 ||
           result.details.length > 128 || result.findings.length > 128 ||
           result.details.any((detail) => detail.length > 8192) ||
@@ -327,6 +331,7 @@ class ToolOrchestrator {
         summary: _boundedActivitySummary('$reportStatus${result.summary}${_runtimeReportNotice(executionReport)}'),
         findingCount: result.findings.length,
         sourceResultKey: reportSaved ? activityResultKey(result.toolId, result.target, result.completedAt) : null,
+        runtimeExecutionId: executionReport?.executionId,
       ));
       return result;
     } on Exception catch (error, stack) {
@@ -345,10 +350,20 @@ class ToolOrchestrator {
         status: cancelled ? ActivityStatus.cancelled : ActivityStatus.failed,
         finishedAt: DateTime.now().toUtc(),
         summary: _boundedActivitySummary('$failureSummary${_runtimeReportNotice(report)}'),
+        runtimeExecutionId: report?.executionId,
       ));
       if (cancelled) throw RuntimeExecutionCancelled(report: report);
-      DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Tool execution failed safely; response content was excluded.'),
-          stackTrace: stack, category: DiagnosticCategory.network);
+      DiagnosticReporter.recordGlobal(
+        const ToolOrchestrationException('Tool execution failed safely; response content was excluded.'),
+        stackTrace: stack,
+        category: DiagnosticCategory.assessment,
+        reportType: DiagnosticReportType.assessmentError,
+        severity: DiagnosticSeverity.high,
+        component: 'tool_orchestrator',
+        assessmentId: invocation.parentActivityId ?? invocation.correlationId,
+        executionId: report?.executionId,
+        runtimeStatus: cancelled ? 'cancelled' : 'failed',
+      );
       if (error is RuntimeExecutionException) {
         throw ToolExecutionException(error.message, executionReport: report);
       }

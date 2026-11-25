@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
-enum ActivityKind { assessment, tool }
+enum ActivityKind { assessment, tool, aiRequest }
 enum ActivityStatus { started, running, completed, failed, cancelled }
 
 class ActivityEvent {
@@ -18,6 +18,7 @@ class ActivityEvent {
     this.summary,
     this.findingCount,
     this.sourceResultKey,
+    this.runtimeExecutionId,
   });
 
   final String eventId;
@@ -32,8 +33,11 @@ class ActivityEvent {
   final String? summary;
   final int? findingCount;
   final String? sourceResultKey;
+  /// Runtime Manager execution ID that produced this tool activity, if available.
+  final String? runtimeExecutionId;
 
   ActivityEvent copyWith({
+    String? runtimeExecutionId,
     String? target,
     ActivityStatus? status,
     DateTime? finishedAt,
@@ -52,6 +56,7 @@ class ActivityEvent {
         summary: summary ?? this.summary,
         findingCount: findingCount ?? this.findingCount,
         sourceResultKey: sourceResultKey ?? this.sourceResultKey,
+        runtimeExecutionId: runtimeExecutionId ?? this.runtimeExecutionId,
       );
 
   ActivityEvent sanitizedForStorage() => copyWith(
@@ -74,6 +79,9 @@ class ActivityEvent {
     }
     if (sourceResultKey != null && !RegExp(r'^[0-9a-f]{64}$').hasMatch(sourceResultKey!)) {
       throw const FormatException('Activity source report key is invalid.');
+    }
+    if (runtimeExecutionId != null && (runtimeExecutionId!.isEmpty || runtimeExecutionId!.length > 128)) {
+      throw const FormatException('Runtime execution ID is invalid.');
     }
     return this;
   }

@@ -4,15 +4,17 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/apk_integrity.dart';
 import '../core/diagnostics.dart';
 import '../core/package_manager.dart';
 import '../l10n/app_localizations.dart';
 
 class DiagnosticsScreen extends StatefulWidget {
-  const DiagnosticsScreen({super.key, required this.reporter, required this.marketManager});
+  const DiagnosticsScreen({super.key, required this.reporter, required this.marketManager, this.apkIntegrityReport});
 
   final DiagnosticReporter reporter;
   final MarketPackageManager marketManager;
+  final ApkIntegrityReport? apkIntegrityReport;
 
   @override
   State<DiagnosticsScreen> createState() => _DiagnosticsScreenState();
@@ -21,6 +23,8 @@ class DiagnosticsScreen extends StatefulWidget {
 class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
   final _endpoint = TextEditingController();
   final _repository = TextEditingController();
+  final _relayToken = TextEditingController();
+  bool _removeRelayToken = false;
   bool _saving = false;
   String _device = '';
   String _version = '';
@@ -49,6 +53,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     if (!mounted) return;
     _endpoint.text = reporter.settings.backendEndpoint;
     _repository.text = reporter.settings.repository;
+    _removeRelayToken = false;
     _consent = reporter.settings.consentGranted;
     _enabled = reporter.settings.autoReportingEnabled;
     _wifiOnly = reporter.settings.wifiOnly;
@@ -79,6 +84,13 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         backendEndpoint: _endpoint.text.trim(),
         repository: _repository.text.trim(),
       ));
+      if (_relayToken.text.trim().isNotEmpty) {
+        await reporter.saveRelayCredential(_relayToken.text);
+        _relayToken.clear();
+      } else if (_removeRelayToken) {
+        await reporter.clearRelayCredential();
+        _removeRelayToken = false;
+      }
       if (mounted) setState(() => _message = context.tr('Pengaturan tersimpan. Laporan tetap di ponsel kecuali Anda mengaktifkan upload dan mengatur relay.'));
     } catch (_) {
       if (mounted) setState(() => _message = context.tr('Pengaturan tidak dapat disimpan. Coba lagi.'));
@@ -110,7 +122,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
         title: Text(dialogContext.tr('Tinjau laporan error')),
         content: SingleChildScrollView(
           child: SelectableText(
-            '${report.category.name} · ${report.errorType}\n\n${report.message}\n\n${report.stack}\n\n${dialogContext.tr('Jumlah kejadian')}: ${report.occurrences}',
+            '${report.reportType?.name ?? reportTypeForCategory(report.category).name} · ${report.severity?.name ?? severityForCategory(report.category).name}\n${report.component} · ${report.appVersion} (${report.buildNumber})\nAssessment: ${report.assessmentId ?? '-'} · Execution: ${report.executionId ?? '-'} · Runtime: ${report.runtimeStatus ?? '-'}\n\n${report.message}\n\n${report.reproductionSteps.isEmpty ? '-' : report.reproductionSteps}\n\n${report.stack}\n\n${dialogContext.tr('Jumlah kejadian')}: ${report.occurrences}',
           ),
         ),
         actions: [
@@ -120,17 +132,75 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
       ),
     );
     if (approved == true) {
-      if (!reporter.settings.consentGranted || !reporter.settings.autoReportingEnabled) {
-        if (mounted) setState(() => _message = context.tr('Berikan persetujuan dan aktifkan pelaporan sebelum menyetujui upload.'));
+      if (!reporter.settings.consentGranted) {
+        if (mounted) setState(() => _message = context.tr('Berikan persetujuan sebelum menyetujui upload.'));
         return;
       }
-      await reporter.approveAndUpload(report.id);
+      try {
+        await reporter.approveAndUpload(report.id);
+        if (mounted) setState(() => _message = context.tr('Laporan disetujui dan diproses oleh antrean relay.'));
+      } catch (_) {
+        if (mounted) setState(() => _message = context.tr('Upload belum dimulai. Periksa persetujuan, relay HTTPS, dan token aman.'));
+      }
     }
+  }
+
+  Future<void> _submitBugReport() async {
+    final title = TextEditingController();
+    final description = TextEditingController();
+    final steps = TextEditingController();
+    var severity = DiagnosticSeverity.medium;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, updateDialog) => AlertDialog(
+          title: Text(dialogContext.tr('Laporan bug')),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextField(controller: title, maxLength: 120, decoration: InputDecoration(labelText: dialogContext.tr('Judul'))),
+                TextField(controller: description, minLines: 2, maxLines: 5, maxLength: 900, decoration: InputDecoration(labelText: dialogContext.tr('Apa yang terjadi?'))),
+                TextField(controller: steps, minLines: 2, maxLines: 5, maxLength: 1200, decoration: InputDecoration(labelText: dialogContext.tr('Langkah untuk mereproduksi'))),
+                DropdownButtonFormField<DiagnosticSeverity>(
+                  value: severity,
+                  decoration: InputDecoration(labelText: dialogContext.tr('Severity')),
+                  items: DiagnosticSeverity.values.map((value) => DropdownMenuItem(value: value, child: Text(value.name))).toList(),
+                  onChanged: (value) => updateDialog(() => severity = value ?? DiagnosticSeverity.medium),
+                ),
+              ]),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(dialogContext.tr('Batal'))),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(dialogContext.tr('Simpan lokal'))),
+          ],
+        ),
+      ),
+    );
+    if (result == true && title.text.trim().isNotEmpty && description.text.trim().isNotEmpty) {
+      await reporter.recordBugReport(
+        title: title.text,
+        description: description.text,
+        reproductionSteps: steps.text,
+        severity: severity,
+        component: 'user_report',
+      );
+      if (mounted) setState(() => _message = context.tr('Laporan bug disimpan lokal untuk ditinjau. Tidak ada yang dikirim otomatis.'));
+    }
+    title.dispose();
+    description.dispose();
+    steps.dispose();
   }
 
   Future<void> _createLocalTestReport() async {
     await reporter.recordLocalTestReport(message: context.tr('Laporan contoh lokal; ini bukan error aplikasi nyata.'));
     if (mounted) setState(() => _message = context.tr('Laporan uji contoh tersimpan di ponsel dan tidak akan dikirim.'));
+  }
+
+  String _shortFingerprint(String? value) {
+    if (value == null || value.length != 64) return context.tr('unavailable');
+    return '${value.substring(0, 12)}…${value.substring(value.length - 8)}';
   }
 
   void _export() {
@@ -159,6 +229,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     reporter.removeListener(_changed);
     _endpoint.dispose();
     _repository.dispose();
+    _relayToken.dispose();
     super.dispose();
   }
 
@@ -177,6 +248,21 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             ListTile(leading: const Icon(Icons.phone_android), title: Text(context.tr('Info ponsel (tanpa ID unik)')), subtitle: Text(_device.isEmpty ? context.tr('Belum tersedia') : _device)),
             ListTile(leading: const Icon(Icons.memory), title: Text(context.tr('Runtime tertanam')), subtitle: Text(context.tr('Pemeriksaan bawaan berjalan melalui adapter Dart yang ada di aplikasi. Program executable dari Market tidak dijalankan.'))),
             ListTile(
+              leading: Icon(
+                widget.apkIntegrityReport?.trusted == true ? Icons.verified_user_outlined : Icons.gpp_bad_outlined,
+                color: widget.apkIntegrityReport?.trusted == true ? Colors.greenAccent : Colors.orangeAccent,
+              ),
+              title: Text(context.tr('APK identity and integrity')),
+              subtitle: Text(widget.apkIntegrityReport == null
+                  ? context.tr('APK integrity verification is unavailable.')
+                  : '${context.tr(widget.apkIntegrityReport!.message)}\n'
+                      '${context.tr('Package ID')}: ${widget.apkIntegrityReport!.packageName ?? context.tr('unavailable')} · '
+                      '${context.tr('Version code')}: ${widget.apkIntegrityReport!.versionCode ?? context.tr('unavailable')} · '
+                      '${context.tr('Installer')}: ${widget.apkIntegrityReport!.installerPackageName ?? context.tr('unavailable')}\n'
+                      '${context.tr('Signer SHA-256')}: ${_shortFingerprint(widget.apkIntegrityReport!.signerSha256)}\n'
+                      '${context.tr('Installed components digest')}: ${_shortFingerprint(widget.apkIntegrityReport!.installedComponentsSha256)}'),
+            ),
+            ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
               title: Text(context.tr('Paket Market')),
               subtitle: Text(widget.marketManager.installedPackages.isEmpty
@@ -192,7 +278,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             ),
             SwitchListTile(
               value: _consent,
-              onChanged: (value) => setState(() => _consent = value),
+              onChanged: (value) => setState(() { _consent = value; if (!value) _enabled = false; }),
               title: Text(context.tr('Saya setuju mengirim laporan error secara opsional')),
             ),
             SwitchListTile(
@@ -233,6 +319,26 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 ),
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                controller: _relayToken,
+                obscureText: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: context.tr('Token relay (disimpan aman)'),
+                  hintText: reporter.relayCredentialConfigured ? context.tr('Token telah disimpan · kosongkan untuk mempertahankan') : context.tr('Tempel token bearer relay'),
+                  helperText: context.tr('Token hanya disimpan melalui secure storage perangkat dan tidak dimasukkan ke laporan atau JSON ekspor.'),
+                ),
+              ),
+            ),
+            if (reporter.relayCredentialConfigured)
+              SwitchListTile(
+                value: _removeRelayToken,
+                onChanged: (value) => setState(() => _removeRelayToken = value),
+                title: Text(context.tr('Hapus token relay tersimpan')),
+              ),
             ListTile(
               leading: const Icon(Icons.report_outlined),
               title: Text(context.tr('Laporan tertunda')),
@@ -282,6 +388,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
             children: [
               FilledButton.icon(onPressed: _saving ? null : _save, icon: const Icon(Icons.save_outlined), label: Text(context.tr('Simpan pengaturan'))),
               OutlinedButton.icon(onPressed: _createLocalTestReport, icon: const Icon(Icons.fact_check_outlined), label: Text(context.tr('Buat laporan uji lokal'))),
+              OutlinedButton.icon(onPressed: _saving ? null : _submitBugReport, icon: const Icon(Icons.bug_report_outlined), label: Text(context.tr('Kirim laporan bug'))),
               OutlinedButton.icon(onPressed: _saving ? null : _testConnection, icon: const Icon(Icons.wifi_tethering), label: Text(context.tr('Tes relay'))),
               OutlinedButton.icon(onPressed: _export, icon: const Icon(Icons.ios_share), label: Text(context.tr('Ekspor laporan JSON'))),
               OutlinedButton.icon(onPressed: reporter.clearLocalReports, icon: const Icon(Icons.delete_outline), label: Text(context.tr('Hapus semua laporan lokal'))),

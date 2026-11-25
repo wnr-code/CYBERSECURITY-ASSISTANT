@@ -31,7 +31,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
   static const tableName = 'scan_results';
   static const activityTableName = 'activity_events';
   static const findingTableName = 'security_findings';
-  static const _databaseVersion = 4;
+  static const _databaseVersion = 5;
   final sqflite.DatabaseFactory? _databaseFactoryOverride;
   sqflite.DatabaseFactory get _databaseFactory => _databaseFactoryOverride ?? sqflite.databaseFactory;
   final Future<String> Function() _databasePathProvider;
@@ -70,6 +70,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
           await _migrate(db, 2);
           await _migrate(db, 3);
           await _migrate(db, 4);
+          await _migrate(db, 5);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           for (var version = oldVersion + 1; version <= newVersion; version++) {
@@ -177,6 +178,8 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
             // Preserve malformed legacy metadata rather than risking data loss during upgrade.
           }
         }
+      case 5:
+        await db.execute('ALTER TABLE $activityTableName ADD COLUMN runtime_execution_id TEXT');
       default:
         throw StateError('No safe SQLite migration is registered for schema version $version.');
     }
@@ -256,6 +259,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
         'summary': validated.summary,
         'finding_count': validated.findingCount,
         'source_result_key': validated.sourceResultKey,
+        'runtime_execution_id': validated.runtimeExecutionId,
       },
       conflictAlgorithm: sqflite.ConflictAlgorithm.replace,
     );
@@ -330,6 +334,7 @@ class LocalResultStore implements ResultHistoryStore, ActivityHistoryStore, Find
         summary: row['summary'] as String?,
         findingCount: row['finding_count'] as int?,
         sourceResultKey: row['source_result_key'] as String?,
+        runtimeExecutionId: row['runtime_execution_id'] as String?,
       ).validated();
 
   @override

@@ -97,10 +97,11 @@ String _findingTitle(String title, BuildContext context) {
 }
 
 String _severityLabel(FindingSeverity severity, BuildContext context) => switch (severity) {
-      FindingSeverity.high => context.tr('TINGGI'),
-      FindingSeverity.medium => context.tr('SEDANG'),
-      FindingSeverity.low => context.tr('RENDAH'),
-      FindingSeverity.info => context.tr('INFO'),
+      FindingSeverity.critical => context.tr('Critical'),
+      FindingSeverity.high => context.tr('High'),
+      FindingSeverity.medium => context.tr('Medium'),
+      FindingSeverity.low => context.tr('Low'),
+      FindingSeverity.info => context.tr('Informational'),
     };
 
 class ToolRunnerDialog extends StatefulWidget {
@@ -108,6 +109,9 @@ class ToolRunnerDialog extends StatefulWidget {
     super.key,
     required this.tool,
     required this.recentResults,
+    this.initialTarget,
+    this.correlationId,
+    this.onExecutionFinished,
     this.orchestrator,
     this.activityStore,
     this.onActivity,
@@ -119,6 +123,10 @@ class ToolRunnerDialog extends StatefulWidget {
 
   final ToolDefinition tool;
   final List<ToolRunResult> recentResults;
+  final String? initialTarget;
+  /// AI request correlation ID when this tool is executed from an assistant turn.
+  final String? correlationId;
+  final void Function(ToolRunResult? result, bool cancelled)? onExecutionFinished;
   final ToolOrchestrator? orchestrator;
   final ActivityHistoryStore? activityStore;
   final void Function(ActivityEvent event)? onActivity;
@@ -154,6 +162,12 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
   RuntimeCancellationToken? _cancellationToken;
   String? _error;
   ToolRunResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetController.text = widget.initialTarget ?? '';
+  }
 
   @override
   void dispose() {
@@ -286,14 +300,18 @@ class _ToolRunnerDialogState extends State<ToolRunnerDialog> {
         toolId: widget.tool.id,
         target: isAnalyzer ? (_analysisInput.isEmpty ? '' : _analysisInput.first.target) : _targetController.text,
         authorized: _authorized,
+        correlationId: widget.correlationId,
         priorResults: _analysisInput,
         cancellationToken: cancellationToken,
       ));
       if (mounted) setState(() => _result = result);
+      widget.onExecutionFinished?.call(result, false);
     } on RuntimeExecutionCancelled {
       if (mounted) setState(() => _error = context.tr('Check cancelled.'));
+      widget.onExecutionFinished?.call(null, true);
     } on Exception catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = context.tr(error.toString()));
+      widget.onExecutionFinished?.call(null, false);
     } finally {
       if (mounted) {
         setState(() {

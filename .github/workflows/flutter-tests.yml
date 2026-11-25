@@ -71,7 +71,7 @@ jobs:
         run: python3 tool/run_flutter_test.py
 
       - name: Upload Flutter test evidence
-        if: always()
+        if: always() && steps.flutter_tests.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: flutter-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}

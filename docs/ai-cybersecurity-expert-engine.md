@@ -197,11 +197,11 @@ Before describing any AI capability as implemented, verify at minimum:
 
 | Area | Current repository state | Blueprint status |
 |---|---|---|
-| Assistant interface | Secondary Assistant screen and entry points exist. | UI placeholder only; no active AI. |
+| Assistant interface | Secondary Assistant now has opt-in Gemini chat after a user-owned API key is saved; every request discloses provider data sharing. | Narrow live provider integration; not the full expert engine. |
 | Knowledge Base / citations | No source ingestion, versioned retrieval, or citation engine. | Planned. |
-| Tool Registry and orchestration | Small in-app registry and registry-ID-only orchestration boundary exist; active checks have scope and explicit self-attestation gates. | Early foundation; no AI planner is connected. |
+| Tool Registry and orchestration | Registered-tool AI proposals pass the strict bridge, ready check, explicit proposal review, existing scope policy, and a second Tool Runner authorization step. Tool activities correlate to AI request IDs. | Narrow, bounded planner loop; no free-form commands or Market code execution. |
 | Result analysis | Local rule-based analyzer operates on existing results; reports/session/SQLite foundations exist. | Not AI reasoning; evidence-correlated AI analysis is planned. |
-| Provider catalog / credentials | Catalog is guidance; credential UI/storage wrapper exists but saved credentials are not used by connectors. | No Gemini/OpenAI/Claude/OpenRouter/custom API connector. |
+| Provider catalog / credentials | Provider Manager uses a user-owned Gemini key from secure storage; fixed-origin HTTPS adapter sends prompts only after explicit per-request consent. Other cloud providers remain catalog-only. | Gemini connected; Local AI adapter contract is ready but no local runtime is bundled or activated. |
 | Local inference / models | No local model runtime, model manager, or router. | Planned only. |
 | Code, malware, exploit, CVE analysis | No AI engines or dynamic sandbox. | Planned only; execution constraints apply. |
 | Remediation / report intelligence | Existing report/export foundation is not AI-generated. | AI draft/review intelligence is planned. |

@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'policy_engine.dart';
 
-enum FindingSeverity { high, medium, low, info }
+enum FindingSeverity { critical, high, medium, low, info }
 enum FindingConfidence { confirmed, potential, informational, error }
 
 class SecurityFinding {
@@ -481,10 +481,11 @@ class SecurityTools {
   ToolRunResult analyze(List<ToolRunResult> results, {required String target}) {
     final findings = results.expand((result) => result.findings).toList();
     final severityOrder = <FindingSeverity, int>{
-      FindingSeverity.high: 0,
-      FindingSeverity.medium: 1,
-      FindingSeverity.low: 2,
-      FindingSeverity.info: 3,
+      FindingSeverity.critical: 0,
+      FindingSeverity.high: 1,
+      FindingSeverity.medium: 2,
+      FindingSeverity.low: 3,
+      FindingSeverity.info: 4,
     };
     findings.sort((a, b) => severityOrder[a.severity]!.compareTo(severityOrder[b.severity]!));
     final summary = findings.isEmpty
