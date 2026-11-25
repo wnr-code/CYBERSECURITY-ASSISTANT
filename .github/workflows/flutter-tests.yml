@@ -31,7 +31,7 @@ jobs:
       - name: Install pinned Android SDK, NDK, and CMake
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
-          packages: 'platform-tools, platforms;android-36, build-tools;36.0.0, ndk;27.0.12077973, cmake;3.22.1'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.0.12077973 cmake;3.22.1'
           accept-android-sdk-licenses: true
 
       - name: Generate Android Gradle scaffold
