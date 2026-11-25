@@ -286,8 +286,18 @@ Future<void> _openCatalogFromEdgePanel(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _tapPrimaryDestination(WidgetTester tester, int index) async {
+  final bottomItem = find.byKey(ValueKey('bottom-navigation-$index'));
+  if (bottomItem.evaluate().isNotEmpty) {
+    await tester.tap(bottomItem);
+    return;
+  }
+  const labels = ['Beranda', 'Assessment', 'Laporan', 'Pengaturan'];
+  await tester.tap(find.descendant(of: find.byType(NavigationRail), matching: find.text(labels[index])));
+}
+
 Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
-  await tester.tap(find.byKey(const ValueKey('bottom-navigation-3')));
+  await _tapPrimaryDestination(tester, 3);
   await tester.pumpAndSettle();
   final settingsScroll = find.descendant(
     of: find.byKey(const ValueKey('settings-scroll-view')),
@@ -513,7 +523,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await _tapPrimaryDestination(tester, 1);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'owned.example');
     await tester.tap(find.byType(CheckboxListTile).first);
@@ -537,13 +547,13 @@ void main() {
     expect(rejected.accepted, isFalse);
     expect(orchestrator.calls, 1, reason: 'A second active Assessment must not create another Orchestrator run.');
 
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-0')));
+    await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
     expect(manager.activeRun?.runId, originalRunId);
     expect(find.textContaining('owned.example · 0 / 1 pemeriksaan'), findsOneWidget,
         reason: 'The status visual uses the active run target and live progress from the application-owned manager.');
 
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await _tapPrimaryDestination(tester, 1);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 260));
     expect(manager.activeRun?.runId, originalRunId);
@@ -583,7 +593,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await _tapPrimaryDestination(tester, 1);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'owned.example');
     await tester.tap(find.byType(CheckboxListTile).first);
@@ -1093,7 +1103,7 @@ void main() {
     var severityFilter = tester.widget<DropdownButton<FindingSeverity?>>(find.byKey(const ValueKey('finding-severity-filter')));
     expect(severityFilter.value, isNull);
 
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-0')));
+    await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
     final homeScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
     await tester.scrollUntilVisible(find.text('TINGGI  1'), 280, scrollable: homeScroll);
@@ -1148,7 +1158,7 @@ void main() {
 
   testWidgets('settings changes language without changing primary navigation', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-3')));
+    await _tapPrimaryDestination(tester, 3);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bahasa Indonesia'));
     await tester.pumpAndSettle();
@@ -1166,7 +1176,7 @@ void main() {
   testWidgets('Assessment is clean and Catalog is a separate destination', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await _tapPrimaryDestination(tester, 1);
     await tester.pumpAndSettle();
 
     expect(find.text('Jalankan assessment'), findsOneWidget);
@@ -1183,7 +1193,7 @@ void main() {
   testWidgets('filters the tool registry by search text', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
+    await _tapPrimaryDestination(tester, 1);
     await tester.pumpAndSettle();
     await _openCatalogFromEdgePanel(tester);
 
@@ -1312,7 +1322,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Perintah yang didukung: help'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('bottom-navigation-2')));
+    await _tapPrimaryDestination(tester, 2);
     await tester.pumpAndSettle();
     expect(find.byType(FloatingTerminal), findsOneWidget);
     expect(find.textContaining('Perintah yang didukung: help'), findsOneWidget);

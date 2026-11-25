@@ -490,6 +490,7 @@ class RuntimeManager extends ChangeNotifier {
   bool _registryMutation = false;
   Future<void>? _initialization;
   bool _busy = false;
+  Future<void> _persistenceTail = Future<void>.value();
   List<RuntimeState> get states => List.unmodifiable(_states.values);
   List<Map<String, Object?>> get auditEvents => List.unmodifiable(_audit.map((entry) => Map<String, Object?>.unmodifiable(entry)));
   /// Rolling history containing at most [persistenceFailureHistoryLimit] most recent failures.
@@ -840,6 +841,7 @@ class RuntimeManager extends ChangeNotifier {
       try {
         // Uninstall adapters may fail after partial removal. Reinstall is the
         // only adapter-supported compensation and also restores its workspace.
+        await directory.create(recursive: true);
         await adapter.install(directory);
       } catch (compensationError, compensationStack) {
         DiagnosticReporter.recordGlobal(compensationError, stackTrace: compensationStack, category: DiagnosticCategory.runtime);
@@ -1295,42 +1297,90 @@ class RuntimeManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<RuntimeState> _set(String id, RuntimeLifecycle lifecycle, {String? version, String? error, DateTime? health}) async {
-    final prior = _states[id];
-    final next = RuntimeState(id: id, lifecycle: lifecycle, installedVersion: version ?? prior?.installedVersion,
-        updatedAt: _clock().toUtc(), lastHealthCheck: health ?? prior?.lastHealthCheck, lastError: error);
-    _states[id] = next;
-    try {
-      await _record(lifecycle.name, id);
-    } catch (error) {
-      if (prior == null) {
-        _states.remove(id);
-      } else {
-        _states[id] = prior;
+  Future<RuntimeState> _set(String id, RuntimeLifecycle lifecycle, {String? version, String? error, DateTime? health}) {
+    final isRegistryMutation = _registryMutation;
+    final executionId = !isRegistryMutation && _activeRuntimeId == id ? _activeExecutionId : null;
+    final toolId = executionId == null ? null : _activeToolId;
+    return _serializePersistence(() async {
+      final prior = _states[id];
+      final next = RuntimeState(
+        id: id,
+        lifecycle: lifecycle,
+        installedVersion: version ?? prior?.installedVersion,
+        updatedAt: _clock().toUtc(),
+        lastHealthCheck: health ?? prior?.lastHealthCheck,
+        lastError: error,
+      );
+      _states[id] = next;
+      try {
+        await _recordLocked(lifecycle.name, id, executionId: executionId, toolId: toolId, registryMutation: isRegistryMutation);
+      } catch (saveError) {
+        if (prior == null) {
+          _states.remove(id);
+        } else {
+          _states[id] = prior;
+        }
+        _rememberPersistenceFailure(
+          RuntimePersistenceKind.state,
+          lifecycle.name,
+          saveError,
+          executionId: executionId,
+          runtimeId: id,
+          toolId: toolId,
+          registryMutation: isRegistryMutation,
+          captureActiveExecution: false,
+        );
+        rethrow;
       }
-      _rememberPersistenceFailure(RuntimePersistenceKind.state, lifecycle.name, error);
-      rethrow;
-    }
-    notifyListeners();
-    return next;
+      notifyListeners();
+      return next;
+    });
   }
 
-  Future<void> _record(String action, String id, {String? toolId}) async {
+  Future<void> _record(String action, String id, {String? toolId}) {
+    final isRegistryMutation = _registryMutation;
+    final executionId = !isRegistryMutation && _activeRuntimeId == id ? _activeExecutionId : null;
+    final eventToolId = toolId ?? (executionId == null ? null : _activeToolId);
+    return _serializePersistence(() => _recordLocked(
+          action,
+          id,
+          executionId: executionId,
+          toolId: eventToolId,
+          registryMutation: isRegistryMutation,
+        ));
+  }
+
+  Future<void> _recordLocked(
+    String action,
+    String id, {
+    required String? executionId,
+    required String? toolId,
+    required bool registryMutation,
+  }) async {
     final at = _clock().toUtc();
     final event = <String, Object?>{
       'eventId': 'runtime-${at.microsecondsSinceEpoch}-${++_auditSequence}',
       'at': at.toIso8601String(),
       'action': sanitizeDiagnosticText(action),
       'runtimeId': sanitizeDiagnosticText(id),
-      if (_activeExecutionId != null && !_registryMutation) 'executionId': _activeExecutionId,
+      if (executionId != null && !registryMutation) 'executionId': executionId,
       if (toolId != null) 'toolId': sanitizeDiagnosticText(toolId),
     };
     _audit.insert(0, event);
     try {
-      await _persist();
+      await _persistSnapshot();
     } catch (error) {
       _audit.remove(event);
-      _rememberPersistenceFailure(RuntimePersistenceKind.audit, action, error);
+      _rememberPersistenceFailure(
+        RuntimePersistenceKind.audit,
+        action,
+        error,
+        executionId: executionId,
+        runtimeId: id,
+        toolId: toolId,
+        registryMutation: registryMutation,
+        captureActiveExecution: false,
+      );
       rethrow;
     }
   }
@@ -1342,27 +1392,43 @@ class RuntimeManager extends ChangeNotifier {
     String? executionId,
     String? runtimeId,
     String? toolId,
+    bool? registryMutation,
+    bool captureActiveExecution = true,
   }) {
-    final failureKind = _registryMutation ? RuntimePersistenceKind.registry : kind;
+    final failureKind = (registryMutation ?? _registryMutation) ? RuntimePersistenceKind.registry : kind;
     _persistenceFailures.add(RuntimePersistenceFailure(
       sequence: ++_persistenceFailureSequence,
       kind: failureKind,
       operation: sanitizeDiagnosticText(operation),
       errorType: sanitizeDiagnosticText(error.runtimeType.toString()),
       at: _clock().toUtc(),
-      executionId: executionId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeExecutionId),
-      runtimeId: runtimeId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeRuntimeId),
-      toolId: toolId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeToolId),
+      executionId: executionId ?? (failureKind == RuntimePersistenceKind.registry || !captureActiveExecution ? null : _activeExecutionId),
+      runtimeId: runtimeId ?? (failureKind == RuntimePersistenceKind.registry || !captureActiveExecution ? null : _activeRuntimeId),
+      toolId: toolId ?? (failureKind == RuntimePersistenceKind.registry || !captureActiveExecution ? null : _activeToolId),
     ));
     if (_persistenceFailures.length > persistenceFailureHistoryLimit) _persistenceFailures.removeAt(0);
   }
 
-  Future<void> _persist() async {
+  Future<T> _serializePersistence<T>(Future<T> Function() transaction) {
+    final result = Completer<T>();
+    _persistenceTail = _persistenceTail.then((_) async {
+      try {
+        result.complete(await transaction());
+      } catch (error, stack) {
+        result.completeError(error, stack);
+      }
+    });
+    return result.future;
+  }
+
+  Future<void> _persist() => _serializePersistence(_persistSnapshot);
+
+  Future<void> _persistSnapshot() async {
     try {
       await store.save({
-        'states': _states.values.map((state) => state.toJson()).toList(),
-        'grants': _grants.map((id, capabilities) => MapEntry(id, capabilities.map((capability) => capability.name).toList())),
-        'audit': _audit,
+        'states': _states.values.map((state) => state.toJson()).toList(growable: false),
+        'grants': _grants.map((id, capabilities) => MapEntry(id, capabilities.map((capability) => capability.name).toList(growable: false))),
+        'audit': _audit.map((event) => Map<String, Object?>.from(event)).toList(growable: false),
       });
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.database);

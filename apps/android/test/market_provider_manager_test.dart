@@ -130,6 +130,10 @@ void main() {
   });
 
   testWidgets('provider detail screens separate configuration and accurately label unavailable Local AI actions', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 1400);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await manager.initialize();
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),

@@ -135,7 +135,10 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
             : _statusLabel(status, context);
     final centerProgress = active ? progress!.fraction : 0.0;
 
-    return Card(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 380;
+        return Card(
       key: const ValueKey('security-status-hero'),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -144,7 +147,7 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
         child: AnimatedContainer(
           duration: MediaQuery.of(context).disableAnimations ? Duration.zero : const Duration(milliseconds: 320),
           curve: Curves.easeInOutCubic,
-          height: MediaQuery.sizeOf(context).width < 380 ? 336 : 300,
+          height: compact ? 336 : 300,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             gradient: const LinearGradient(
@@ -157,7 +160,7 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
             child: Column(children: [
-              if (MediaQuery.sizeOf(context).width < 380) ...[
+              if (compact) ...[
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -189,8 +192,8 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
                     ),
                     child: Center(
                       child: SizedBox(
-                        width: MediaQuery.sizeOf(context).width < 380 ? 112 : 148,
-                        height: MediaQuery.sizeOf(context).width < 380 ? 112 : 148,
+                        width: compact ? 112 : 148,
+                        height: compact ? 112 : 148,
                         child: Stack(alignment: Alignment.center, children: [
                           TweenAnimationBuilder<double>(
                             tween: Tween<double>(begin: 0, end: centerProgress),
@@ -231,6 +234,8 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
           ),
         ),
       ),
+        );
+      },
     );
   }
 
