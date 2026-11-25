@@ -92,7 +92,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      localizationsDelegates: const [
+        AppLocalizationsDelegate(),
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: AssistantScreen(
         providers: providers,
         marketProviders: marketProviders,
