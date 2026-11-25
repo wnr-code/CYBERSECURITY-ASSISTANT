@@ -1,5 +1,5 @@
-/// Fail-closed compatibility checks for a verified, installed LiteRT-LM model.
-/// This policy does not inspect files or infer support from a filename: a future
+/// Fail-closed compatibility checks for a verified, installed local model.
+/// This policy does not inspect files or infer support from a filename: the
 /// Android runtime adapter must supply trustworthy metadata and runtime facts.
 enum LocalAiCompatibilityState { compatible, incompatible, unknown }
 

@@ -60,9 +60,11 @@ class MarketProviderDetailScreen extends StatelessWidget {
       _ => context.tr('Offline AI Provider'),
     };
     final detail = switch (status) {
-      ManagedProviderStatus.installed => context.tr('Installed; no active connection has been verified.'),
-      ManagedProviderStatus.connected => context.tr('Connection test succeeded for the implemented capability only.'),
-      ManagedProviderStatus.disconnected => context.tr('Configured but not verified in this app session.'),
+      ManagedProviderStatus.installed => context.tr('Integration available; no credential is configured.'),
+      ManagedProviderStatus.connected => context.tr(providerId == 'cloudflare'
+          ? 'Cloudflare token is verified; account and zone read permissions are checked separately.'
+          : 'Connection test succeeded for the implemented capability only.'),
+      ManagedProviderStatus.disconnected => context.tr('Configured · not tested'),
       ManagedProviderStatus.error => context.tr('The latest provider test failed. Review the error and try again.'),
       ManagedProviderStatus.notReady => context.tr('Not Ready: the runtime, compatible model, and successful local inference are not all available.'),
     };
@@ -76,6 +78,15 @@ class MarketProviderDetailScreen extends StatelessWidget {
             Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
             const SizedBox(height: 6),
             _statusBadge(context, status),
+            if (providerId == 'gemini' || providerId == 'cloudflare') ...[
+              const SizedBox(height: 7),
+              Text(
+                context.tr((providerId == 'gemini' ? manager.geminiConfigured : manager.cloudflareConfigured)
+                    ? 'Credential saved on this device. Run Test Connection to verify it.'
+                    : 'No credential saved yet. Open Configuration to enter it.'),
+                style: const TextStyle(fontSize: 12, height: 1.4),
+              ),
+            ],
             const SizedBox(height: 8),
             Text(detail, style: const TextStyle(fontSize: 12, height: 1.4)),
             if (manager.messageFor(providerId) case final message?) ...[
@@ -121,7 +132,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
         _sectionCard(context, 'Data & Privacy', [
-          Text(context.tr('Assistant prompts and approved tool results are sent to Google only after the existing explicit data-sharing approval. Review current Google terms and pricing before use.'),
+          Text(context.tr('Conversation data is sent to Google only after provider-specific consent is saved locally. Revoke it in Privacy Settings to be asked again; tool execution requires separate review. Review current Google terms and pricing before use.'),
               style: const TextStyle(fontSize: 12, height: 1.4)),
         ]),
       ]);
@@ -143,20 +154,26 @@ class MarketProviderDetailScreen extends StatelessWidget {
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Runtime Information', [
-        Text(context.tr('Google AI Edge / LiteRT-LM is the planned Android runtime. It is not integrated in this build.'),
+        Text(context.tr('The app uses official llama.cpp source pinned to a commit and builds a single CPU-only JNI library from source. The opt-in NDK build and bridge are implemented but have not been compiled or validated on an Android device.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
-        _referenceLink(context, 'Google AI Edge LiteRT-LM guide', MarketProviderManager.localAiDocs),
+        _detailLine(context, 'Pinned llama.cpp source commit', MarketProviderManager.localAiRuntimeCommit),
+        _detailLine(context, 'Official source archive SHA-256', MarketProviderManager.localAiSourceArchiveSha256),
+        _detailLine(context, 'Native target', 'Android NDK · arm64-v8a · CPU-only · JNI'),
+        _referenceLink(context, 'Pinned llama.cpp source', MarketProviderManager.localAiRuntimeSource),
+        _referenceLink(context, 'Upstream Android build guide', MarketProviderManager.localAiBuildDocs),
+        _referenceLink(context, 'Upstream license', MarketProviderManager.localAiLicenseDocs),
+        Text(context.tr('The source archive hash is verified locally, but the Android native build has not run here. This does not establish that an APK contains the library or that inference works.'),
+            style: const TextStyle(fontSize: 12, height: 1.4)),
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Model Catalog', [
-        Text(context.tr('No model catalog is connected. Hugging Face and Kaggle are references only; this app does not query or download models from them.'),
+        Text(context.tr('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
-        _referenceLink(context, 'Hugging Face Models', MarketProviderManager.localAiHuggingFaceModelsDocs),
-        _referenceLink(context, 'Kaggle Models', MarketProviderManager.localAiKaggleModelsDocs),
+        _referenceLink(context, 'Qwen2.5 model source (reference only)', MarketProviderManager.localAiModelsDocs),
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Storage Management', [
-        Text(context.tr('No model is installed. Model storage, verification, installation, and removal are not implemented.'),
+        Text(context.tr('No model is installed and no download action is enabled. Before install is implemented, unknown RAM/storage or any missing or mismatched checksum/license must fail closed.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
       ]),
       const SizedBox(height: 10),
@@ -173,7 +190,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
         : providerId == 'gemini'
             ? manager.geminiConfigured
             : false;
-    final connectLabel = status == ManagedProviderStatus.connected ? 'Test Connection' : 'Connect';
+    const connectLabel = 'Test Connection';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -277,11 +294,11 @@ class MarketProviderDetailScreen extends StatelessWidget {
   Widget _statusBadge(BuildContext context, ManagedProviderStatus status) {
     final color = _statusColor(status);
     final label = context.tr(switch (status) {
-      ManagedProviderStatus.installed => 'Installed',
-      ManagedProviderStatus.connected => 'Connected',
-      ManagedProviderStatus.disconnected => 'Disconnected',
-      ManagedProviderStatus.error => 'Error',
-      ManagedProviderStatus.notReady => 'Not Ready',
+      ManagedProviderStatus.installed => 'Available',
+      ManagedProviderStatus.connected => providerId == 'cloudflare' ? 'Token verified' : 'Connected',
+      ManagedProviderStatus.disconnected => 'Configured · not tested',
+      ManagedProviderStatus.error => 'Error · retry',
+      ManagedProviderStatus.notReady => 'Not Ready — integration in progress',
     });
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

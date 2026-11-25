@@ -290,10 +290,15 @@ Future<void> _pumpApp(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-Future<void> _openCatalogFromEdgePanel(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Buka Edge Panel'));
+Future<void> _openCatalogFromDashboard(WidgetTester tester) async {
+  await _tapPrimaryDestination(tester, 0);
   await tester.pumpAndSettle();
-  await tester.tap(find.text('Katalog').last);
+  final dashboardScroll = find.descendant(
+    of: find.byKey(const ValueKey('dashboard-scroll-view')),
+    matching: find.byType(Scrollable),
+  ).first;
+  await tester.scrollUntilVisible(find.text('Buka Katalog'), 260, scrollable: dashboardScroll);
+  await tester.tap(find.text('Buka Katalog').first);
   await tester.pumpAndSettle();
 }
 
@@ -314,8 +319,8 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
     of: find.byKey(const ValueKey('settings-scroll-view')),
     matching: find.byType(Scrollable),
   );
-  await tester.scrollUntilVisible(find.text('Koneksi dan provider'), 240, scrollable: settingsScroll);
-  await tester.tap(find.text('Koneksi dan provider'));
+  await tester.scrollUntilVisible(find.text('Tes keterjangkauan endpoint'), 240, scrollable: settingsScroll);
+  await tester.tap(find.text('Tes keterjangkauan endpoint'));
   await tester.pumpAndSettle();
 }
 
@@ -370,7 +375,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Market keeps the package catalog in an internal tab with six honest categories', (tester) async {
+  testWidgets('Market exposes provider readiness, the Local AI integration candidate, and installable data packages', (tester) async {
+    await _pumpApp(tester);
+    await tester.tap(find.byKey(const ValueKey('open-market-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Provider'), findsWidgets);
+    expect(find.text('Paket'), findsOneWidget);
+    expect(find.text('AI Models'), findsNothing);
+    expect(find.byKey(const ValueKey('priority-provider-gemini')), findsOneWidget);
+    expect(find.byKey(const ValueKey('priority-provider-cloudflare')), findsOneWidget);
+    expect(find.byKey(const ValueKey('priority-provider-local_ai')), findsOneWidget);
+    expect(find.text('Local AI'), findsOneWidget);
+    expect(find.text('Not Ready — proses integrasi'), findsOneWidget);
+
+    await tester.tap(find.text('Paket'));
+    await tester.pumpAndSettle();
+    expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
+    expect(find.text('External Runtime Package (unsupported)'), findsNothing);
+    expect(find.text('Sample Plugin (planned)'), findsNothing);
+    expect(find.text('Local AI Model (planned)'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Market only lists packages with a real installable artifact and hides unavailable features', (tester) async {
     final directory = (await tester.runAsync(() => Directory.systemTemp.createTemp('market-widget-')))!;
     final manager = MarketPackageManager(
       catalog: bundledMarketCatalog,
@@ -391,16 +419,13 @@ void main() {
 
       expect(find.text('Market'), findsOneWidget);
       expect(find.byType(TabBar), findsOneWidget);
-      expect(find.text('Provider'), findsWidgets);
+      expect(find.text('Provider'), findsNothing);
       expect(find.text('Paket'), findsWidgets);
-      for (final category in ['Alat Keamanan', 'Runtime', 'Plugin', 'Model AI', 'Paket Pengetahuan', 'Konektor Cloud/API']) {
-        expect(find.text(category), findsWidgets);
-      }
-      final marketScrollView = find.descendant(of: find.byKey(const ValueKey('market-packages-list')), matching: find.byType(Scrollable)).first;
-      await tester.scrollUntilVisible(find.text('External Runtime Package (unsupported)'), 360, scrollable: marketScrollView);
-      expect(find.text('External Runtime Package (unsupported)'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Security Assessment Evidence Guide'), 360, scrollable: marketScrollView);
+      expect(find.text('AI Models'), findsNothing);
       expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
+      expect(find.text('External Runtime Package (unsupported)'), findsNothing);
+      expect(find.text('Sample Plugin (planned)'), findsNothing);
+      expect(find.text('Local AI Model (planned)'), findsNothing);
       expect(tester.takeException(), isNull);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
@@ -453,6 +478,7 @@ void main() {
       ],
       home: Scaffold(body: SingleChildScrollView(child: AssessmentRunner(executionManager: manager))),
     ));
+    await tester.pumpAndSettle();
 
     expect(find.text('Assessment keamanan'), findsOneWidget);
     expect(find.text('Domain target atau URL HTTPS'), findsOneWidget);
@@ -1208,13 +1234,16 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await _pumpApp(tester);
     expect(find.text('Chat AI'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-market-button')), findsOneWidget,
+        reason: 'Market is directly reachable from the app bar without opening a catalog first.');
 
     await tester.tap(find.byKey(const ValueKey('bottom-navigation-ai-chat')));
     await tester.pumpAndSettle();
 
     expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
     expect(find.byKey(const ValueKey('assistant-avatar-not-connected')), findsOneWidget);
-    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.check_rounded), findsNothing,
+        reason: 'No green check is shown unless the selected provider passed its connection test.');
   });
 
   testWidgets('AI assistant is a secondary module, not a primary navigation destination', (tester) async {
@@ -1225,7 +1254,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
-    expect(find.text('Lihat pusat koneksi'), findsOneWidget);
+    expect(find.text('Kelola provider AI di Market'), findsOneWidget);
     expect(find.text('Asisten'), findsNothing);
   });
 
@@ -1254,11 +1283,15 @@ void main() {
 
     expect(find.text('Jalankan assessment'), findsOneWidget);
     expect(find.text('Katalog'), findsNothing);
-    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsNothing);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat keamanan'), findsNothing);
 
-    await _openCatalogFromEdgePanel(tester);
-    expect(find.text('TEMUKAN KAPABILITAS'), findsOneWidget);
-    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsOneWidget);
+    await _openCatalogFromDashboard(tester);
+    expect(find.text('ALAT KEAMANAN BAWAAN'), findsOneWidget);
+    expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat keamanan'), findsOneWidget);
+    expect(find.text('Google Gemini'), findsNothing);
+    expect(find.text('Cloudflare'), findsNothing);
+    expect(find.text('Security Assessment Evidence Guide'), findsNothing,
+        reason: 'Packages and provider setup now have one home: Market.');
     expect(find.text('Katalog alat'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -1268,10 +1301,10 @@ void main() {
     await _pumpApp(tester);
     await _tapPrimaryDestination(tester, 1);
     await tester.pumpAndSettle();
-    await _openCatalogFromEdgePanel(tester);
+    await _openCatalogFromDashboard(tester);
 
     final catalogSearch = find.byWidgetPredicate(
-      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog',
+      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat keamanan',
     );
     await tester.enterText(catalogSearch, 'TLS');
     await tester.pump();
@@ -1283,7 +1316,7 @@ void main() {
   testWidgets('built-in catalog details use Built-in capability and hand off to Assessment', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await _openCatalogFromEdgePanel(tester);
+    await _openCatalogFromDashboard(tester);
     await tester.tap(find.text('DNS Lookup'));
     await tester.pumpAndSettle();
 
@@ -1296,32 +1329,19 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('provider catalog search opens an explicitly unconnected guide', (tester) async {
+  testWidgets('Settings endpoint page contains only the working unauthenticated reachability check', (tester) async {
     await _pumpApp(tester);
     await _openConnectionsFromSettings(tester);
 
-    final providerSearch = find.byWidgetPredicate(
-      (widget) => widget is TextField && widget.decoration?.hintText == 'Cari penyedia layanan',
-    );
-    final connectionsScroll = find.descendant(
-      of: find.byType(ConnectionsScreen),
-      matching: find.byType(Scrollable),
-    ).first;
-    await tester.scrollUntilVisible(providerSearch, 300, scrollable: connectionsScroll);
-    await tester.enterText(providerSearch, 'OpenAI');
-    await tester.pump();
-    final openAiTile = find.widgetWithText(ListTile, 'OpenAI');
-    expect(openAiTile, findsOneWidget);
-    expect(find.text('OAI'), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Supabase'), findsNothing);
-
-    await tester.scrollUntilVisible(openAiTile, 300, scrollable: connectionsScroll);
-    await tester.tap(openAiTile);
-    await tester.pumpAndSettle();
-    expect(find.text('Status: Panduan saja · belum terhubung'), findsOneWidget);
-    expect(find.text('Autentikasi: Memerlukan API key milik pengguna'), findsOneWidget);
-    expect(find.text('Status penyimpanan kredensial: belum diperiksa'), findsOneWidget);
-    expect(find.text('Kredensial tersimpan belum dikirim ke provider. Permintaan terautentikasi dan uji koneksi khusus provider belum dibuat.'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('Keterjangkauan endpoint'), findsOneWidget);
+    expect(find.text('Uji endpoint HTTPS'), findsOneWidget);
+    expect(find.byKey(const ValueKey('connections-open-market')), findsNothing);
+    expect(find.text('Google Gemini'), findsNothing);
+    expect(find.text('OpenAI'), findsNothing);
+    expect(find.text('Local AI'), findsNothing);
+    expect(find.text('Other provider references'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('provider details stores a masked credential without making a provider request', (tester) async {
@@ -1385,7 +1405,12 @@ void main() {
     await tester.tap(find.byTooltip('Buka Edge Panel'));
     await tester.pumpAndSettle();
     expect(find.text('Edge Panel'), findsOneWidget);
-    expect(find.textContaining('Pintasan provider belum diaktifkan'), findsOneWidget);
+    expect(find.textContaining('Belum ada provider yang terhubung'), findsOneWidget);
+    expect(find.text('Assessment'), findsOneWidget);
+    expect(find.text('Laporan'), findsNothing);
+    expect(find.text('Pengaturan'), findsNothing);
+    expect(find.text('Katalog alat keamanan'), findsNothing);
+    expect(find.text('Market · provider dan paket'), findsNothing);
 
     await tester.tap(find.text('Terminal Mengambang'));
     await tester.pumpAndSettle();

@@ -7,6 +7,7 @@ import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/widgets/cloudflare_dashboard_screen.dart';
 import 'package:cybersecurity_assistant/widgets/market_provider_detail_screen.dart';
+import 'package:cybersecurity_assistant/widgets/market_provider_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -144,16 +145,17 @@ void main() {
     expect(find.text('Account Configuration'), findsWidgets);
     expect(find.text('Permissions & Capabilities'), findsOneWidget);
     expect(find.textContaining('Read-only capabilities: GET /user/tokens/verify, GET /accounts, GET /zones, and GET /zones/{zone_id}.'), findsOneWidget);
-    expect(find.text('Connect'), findsOneWidget);
-    final connectBeforeConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'));
+    expect(find.text('Test Connection'), findsOneWidget);
+    final connectBeforeConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Test Connection'));
     expect(connectBeforeConfiguration.onPressed, isNull);
     expect(find.text('Open Dashboard'), findsNothing);
 
     await manager.saveCloudflareConfiguration(token: 'cloudflare-user-token-secret');
     await tester.pumpAndSettle();
-    final connectAfterConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'));
+    final connectAfterConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Test Connection'));
     expect(connectAfterConfiguration.onPressed, isNotNull);
-    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    expect(find.text('Credential saved on this device. Run Test Connection to verify it.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Test Connection'));
     await tester.pumpAndSettle();
     expect(manager.statusFor('cloudflare'), ManagedProviderStatus.connected);
     expect(find.text('Test Connection'), findsOneWidget);
@@ -176,9 +178,69 @@ void main() {
     for (final section in ['Device Compatibility', 'Runtime Information', 'Model Catalog', 'Storage Management']) {
       expect(find.text(section), findsOneWidget);
     }
+    expect(find.text('Not Ready — the official llama.cpp source/JNI build path is implemented as an opt-in, but has not been built or device-tested. No verified model is enabled; inference and cloud fallback are unavailable.'), findsOneWidget);
+    expect(find.text('Pinned llama.cpp source commit'), findsOneWidget);
+    expect(find.text('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'), findsOneWidget);
     expect(find.text('Offline Inference Test'), findsWidgets);
     final inferenceButton = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Offline Inference Test'));
     expect(inferenceButton.onPressed, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Market configuration dialogs persist Cloudflare token and Gemini key before testing connections', (tester) async {
+    await manager.initialize();
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('en'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(
+        body: Builder(builder: (context) => Column(children: [
+          TextButton(
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => MarketProviderDialog(providerId: 'cloudflare', manager: manager),
+            ),
+            child: const Text('Open Cloudflare configuration'),
+          ),
+          TextButton(
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => MarketProviderDialog(providerId: 'gemini', manager: manager),
+            ),
+            child: const Text('Open Gemini configuration'),
+          ),
+        ])),
+      ),
+    ));
+
+    await tester.tap(find.text('Open Cloudflare configuration'));
+    await tester.pumpAndSettle();
+    final cloudflareFields = find.byType(TextField);
+    expect(cloudflareFields, findsNWidgets(2));
+    await tester.enterText(cloudflareFields.at(0), 'cloudflare-user-token-secret');
+    await tester.enterText(cloudflareFields.at(1), 'aabbccddeeff00112233445566778899');
+    await tester.tap(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    expect(await credentials.read(providerId: 'cloudflare', kind: SecureCredentialKind.accessToken), 'cloudflare-user-token-secret');
+    expect(manager.cloudflareAccountId, 'aabbccddeeff00112233445566778899');
+    expect(manager.statusFor('cloudflare'), ManagedProviderStatus.disconnected,
+        reason: 'Saving is local; the provider must still pass its separate connection test.');
+    expect(cloudflare.requests, 0);
+    expect(find.text('Credential saved securely. No provider request was made.'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open Gemini configuration'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'AIzaSyExample_Key-0123456789');
+    await tester.tap(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    expect(await credentials.read(providerId: 'gemini', kind: SecureCredentialKind.apiKey), 'AIzaSyExample_Key-0123456789');
+    expect(manager.geminiConfigured, isTrue);
+    expect(manager.statusFor('gemini'), ManagedProviderStatus.disconnected,
+        reason: 'Saving is local; the Gemini model-access check is separate.');
+    expect(geminiTransport.getRequests, 0);
+    expect(geminiTransport.postRequests, 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -485,10 +547,14 @@ void main() {
     expect(manager.geminiConfigured, isTrue);
   });
 
-  test('Local AI source links distinguish the Android runtime from model catalogs', () {
-    expect(MarketProviderManager.localAiDocs.host, 'ai.google.dev');
-    expect(MarketProviderManager.localAiHuggingFaceModelsDocs.toString(), 'https://huggingface.co/models');
-    expect(MarketProviderManager.localAiKaggleModelsDocs.toString(), 'https://www.kaggle.com/models');
+  test('Local AI source and source archive digest are pinned to official llama.cpp', () {
+    expect(MarketProviderManager.localAiRuntimeCommit, 'ea722948146befb23c9529c1ec7f59fb2f34911f');
+    expect(MarketProviderManager.localAiRuntimeSource.toString(),
+        'https://github.com/ggml-org/llama.cpp/tree/ea722948146befb23c9529c1ec7f59fb2f34911f');
+    expect(MarketProviderManager.localAiBuildDocs.toString(), contains('/docs/android.md'));
+    expect(MarketProviderManager.localAiLicenseDocs.toString(), endsWith('/LICENSE'));
+    expect(MarketProviderManager.localAiSourceArchiveSha256, '05b362e97564f2e449440f13878c43991a13b6029214dbcb0d1b116b20365ec2');
+    expect(MarketProviderManager.localAiModelsDocs.toString(), 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF');
   });
 
   test('Local AI remains Not Ready and never invokes cloud or a fake inference', () async {

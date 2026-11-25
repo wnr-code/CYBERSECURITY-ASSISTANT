@@ -1,29 +1,19 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../core/market_provider_manager.dart';
 import '../core/package_manager.dart';
-import '../core/provider_registry.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
-import 'market_provider_detail_screen.dart';
-import 'market_screen.dart';
-
-enum _CatalogGroup { securityTools, developerTools, cloudIntegrations, aiModels, guides }
 
 class CatalogScreen extends StatefulWidget {
   const CatalogScreen({
     super.key,
     required this.packageManager,
-    required this.providerManager,
     required this.onOpenAssessment,
-    this.onOpenCloudflareDashboard,
   });
 
   final MarketPackageManager packageManager;
-  final MarketProviderManager providerManager;
   final VoidCallback onOpenAssessment;
-  final VoidCallback? onOpenCloudflareDashboard;
 
   @override
   State<CatalogScreen> createState() => _CatalogScreenState();
@@ -31,14 +21,16 @@ class CatalogScreen extends StatefulWidget {
 
 class _CatalogScreenState extends State<CatalogScreen> {
   final _searchController = TextEditingController();
-  _CatalogGroup? _selectedGroup;
-  final Map<String, Future<ToolStatus>> _toolStatuses = {};
+  Set<String> _readyToolIds = const {};
+  bool _readinessBusy = true;
+  bool _readinessErrorOccurred = false;
+  int _readinessGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     widget.packageManager.addListener(_refresh);
-    widget.providerManager.addListener(_refresh);
+    _refresh();
   }
 
   @override
@@ -47,92 +39,64 @@ class _CatalogScreenState extends State<CatalogScreen> {
     if (oldWidget.packageManager != widget.packageManager) {
       oldWidget.packageManager.removeListener(_refresh);
       widget.packageManager.addListener(_refresh);
-      _toolStatuses.clear();
-    }
-    if (oldWidget.providerManager != widget.providerManager) {
-      oldWidget.providerManager.removeListener(_refresh);
-      widget.providerManager.addListener(_refresh);
+      _refresh();
     }
   }
 
-  void _refresh() {
-    _toolStatuses.clear();
-    if (mounted) setState(() {});
+  Future<void> _refresh() async {
+    final generation = ++_readinessGeneration;
+    if (mounted) setState(() => _readinessBusy = true);
+    final orchestrator = ToolOrchestrator(packageManager: widget.packageManager);
+    final ready = <String>{};
+    var hadReadinessError = false;
+    for (final tool in toolRegistry.where((item) => item.id != 'response_analyzer')) {
+      try {
+        final capability = await orchestrator.availabilityForTool(tool.id);
+        if (capability.ready) ready.add(tool.id);
+        if (capability.status == ToolStatus.error) hadReadinessError = true;
+      } catch (_) {
+        hadReadinessError = true;
+      }
+    }
+    if (!mounted || generation != _readinessGeneration) return;
+    setState(() {
+      _readyToolIds = Set.unmodifiable(ready);
+      _readinessErrorOccurred = hadReadinessError;
+      _readinessBusy = false;
+    });
   }
 
   @override
   void dispose() {
     widget.packageManager.removeListener(_refresh);
-    widget.providerManager.removeListener(_refresh);
     _searchController.dispose();
     super.dispose();
   }
 
-  List<_CatalogEntry> _entries() {
-    final entries = <_CatalogEntry>[];
-    for (final tool in toolRegistry) {
-      entries.add(_CatalogEntry(
-        id: 'tool.${tool.id}',
-        title: tool.name,
-        description: tool.description,
-        group: _CatalogGroup.securityTools,
-        tool: tool,
-      ));
-    }
-    for (final providerId in const ['cloudflare', 'gemini']) {
-      final matchingProviders = providerRegistry.where((entry) => entry.id == providerId).toList(growable: false);
-      if (matchingProviders.isEmpty) continue;
-      final provider = matchingProviders.first;
-      entries.add(_CatalogEntry(
-        id: 'provider.$providerId',
-        title: provider.name,
-        description: provider.description,
-        group: providerId == 'gemini' ? _CatalogGroup.aiModels : _CatalogGroup.cloudIntegrations,
-        providerId: providerId,
-        provider: provider,
-      ));
-    }
-    for (final package in widget.packageManager.catalog) {
-      final group = switch (package.category) {
-        MarketCategory.runtime || MarketCategory.plugins => _CatalogGroup.developerTools,
-        MarketCategory.aiModels => _CatalogGroup.aiModels,
-        MarketCategory.knowledgePacks => _CatalogGroup.guides,
-        MarketCategory.cloudApiConnectors => _CatalogGroup.cloudIntegrations,
-        MarketCategory.securityTools => null,
-      };
-      if (group == null) continue; // Built-in security tools are represented by their actual tool definitions.
-      entries.add(_CatalogEntry(
-        id: package.id,
-        title: package.name,
-        description: package.description,
-        group: group,
-        package: package,
-      ));
-    }
+  List<ToolDefinition> _visibleTools() {
     final query = _searchController.text.trim().toLowerCase();
-    return entries.where((entry) {
-      final groupMatches = _selectedGroup == null || entry.group == _selectedGroup;
-      final textMatches = query.isEmpty || '${entry.title} ${entry.description} ${_groupName(entry.group)}'.toLowerCase().contains(query);
-      return groupMatches && textMatches;
+    return toolRegistry.where((tool) {
+      if (tool.id == 'response_analyzer' || !_readyToolIds.contains(tool.id)) return false;
+      return query.isEmpty || '${tool.name} ${tool.description}'.toLowerCase().contains(query);
     }).toList(growable: false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final entries = _entries();
+    final tools = _visibleTools();
     return Scaffold(
-      appBar: AppBar(title: Text(context.tr('Catalog'))),
+      appBar: AppBar(title: Text(context.tr('Security tool catalog'))),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 980),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 30),
             children: [
-              Text(context.tr('DISCOVER CAPABILITIES'), style: _eyebrow(context)),
+              Text(context.tr('BUILT-IN SECURITY TOOLS'), style: _eyebrow(context)),
               const SizedBox(height: 7),
-              Text(context.tr('Catalog'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+              Text(context.tr('Security tool catalog'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
-              Text(context.tr('Learn what the app supports, check requirements, then open the relevant workspace or Market manager.'),
+              Text(context.tr('This list shows built-in checks that passed readiness on this device. Configure Gemini and Cloudflare in Market.'),
                   style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.4)),
               const SizedBox(height: 14),
               TextField(
@@ -140,23 +104,33 @@ class _CatalogScreenState extends State<CatalogScreen> {
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.search_rounded),
-                  hintText: context.tr('Search catalog capabilities'),
+                  hintText: context.tr('Search security tools'),
                   isDense: true,
                 ),
               ),
-              const SizedBox(height: 10),
-              Wrap(spacing: 7, runSpacing: 6, children: [
-                _groupChip(context, null, 'All'),
-                for (final group in _CatalogGroup.values) _groupChip(context, group, _groupName(group)),
-              ]),
               const SizedBox(height: 14),
-              if (entries.isEmpty)
-                Card(child: Padding(padding: const EdgeInsets.all(20), child: Text(context.tr('No catalog entries match this search.'))))
-              else
-                for (final entry in entries) ...[
-                  _entryCard(context, entry),
+              if (_readinessBusy)
+                const LinearProgressIndicator()
+              else if (tools.isEmpty)
+                Card(child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(_readyToolIds.isEmpty
+                      ? context.tr(_readinessErrorOccurred
+                          ? 'Readiness checks failed; affected checks are hidden.'
+                          : 'No checks are currently available on this device.')
+                      : context.tr('No catalog entries match this search.')),
+                ))
+              else ...[
+                if (_readinessErrorOccurred)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(context.tr('Some checks could not be verified and are hidden.'), style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+                  ),
+                for (final tool in tools) ...[
+                  _toolCard(context, tool),
                   const SizedBox(height: 8),
                 ],
+              ],
             ],
           ),
         ),
@@ -164,180 +138,68 @@ class _CatalogScreenState extends State<CatalogScreen> {
     );
   }
 
-  Widget _groupChip(BuildContext context, _CatalogGroup? group, String label) => FilterChip(
-        label: Text(context.tr(label)),
-        selected: _selectedGroup == group,
-        onSelected: (_) => setState(() => _selectedGroup = group),
-      );
-
-  Widget _entryCard(BuildContext context, _CatalogEntry entry) {
-    final typeLabel = _typeLabel(entry);
-    final status = _statusLabel(entry, context);
-    return Card(
-      key: ValueKey('catalog-${entry.id}'),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        leading: CircleAvatar(
-          backgroundColor: const Color(0xFF73F0C2).withValues(alpha: .13),
-          child: Icon(_iconFor(entry), color: const Color(0xFF73F0C2)),
-        ),
-        title: Text(entry.title, style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 5),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${context.tr(_groupName(entry.group))} · ${context.tr(typeLabel)}', style: const TextStyle(fontSize: 11)),
-            const SizedBox(height: 2),
-            if (entry.tool != null)
-              FutureBuilder<ToolStatus>(
-                future: _toolStatuses.putIfAbsent(entry.tool!.id, () => ToolOrchestrator(packageManager: widget.packageManager).statusForTool(entry.tool!.id)),
-                builder: (context, snapshot) {
-                  final readiness = snapshot.connectionState != ConnectionState.done
-                      ? 'Checking readiness…'
-                      : snapshot.hasError || snapshot.data == null
-                          ? 'Readiness error'
-                          : _toolStatusLabel(snapshot.data!);
-                  return Text(
-                    '${context.tr('Built-in')} · ${context.tr(readiness)}',
-                    style: TextStyle(color: snapshot.data == ToolStatus.ready ? const Color(0xFF73F0C2) : Colors.white70, fontSize: 11),
-                  );
-                },
-              )
-            else
-              Text(context.tr(status), style: const TextStyle(fontSize: 11)),
-            const SizedBox(height: 3),
-            Text(context.tr(entry.description), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.35)),
-          ]),
-        ),
-        trailing: const Icon(Icons.chevron_right_rounded),
-        isThreeLine: true,
-        onTap: () => _showDetails(entry),
-      ),
-    );
-  }
-
-  Future<void> _showDetails(_CatalogEntry entry) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(entry.title),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              Wrap(spacing: 8, runSpacing: 6, children: [
-                Chip(label: Text(context.tr(_typeLabel(entry)))),
-                Chip(label: Text(context.tr(_statusLabel(entry, context)))),
-              ]),
-              const SizedBox(height: 8),
-              Text(context.tr(entry.description), style: const TextStyle(height: 1.45)),
-              const SizedBox(height: 14),
-              Text(context.tr('Purpose & requirements'), style: const TextStyle(fontWeight: FontWeight.w700)),
-              const SizedBox(height: 6),
-              ..._details(entry, context).map((line) => Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: Text(line, style: const TextStyle(fontSize: 12, height: 1.4)),
-                  )),
+  Widget _toolCard(BuildContext context, ToolDefinition tool) => Card(
+        key: ValueKey('catalog-tool-${tool.id}'),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          leading: CircleAvatar(
+            backgroundColor: const Color(0xFF73F0C2).withValues(alpha: .13),
+            child: Icon(_iconFor(tool), color: const Color(0xFF73F0C2)),
+          ),
+          title: Text(tool.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 5),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${context.tr('Built-in')} · ${context.tr('Available')}',
+                  style: const TextStyle(color: Color(0xFF73F0C2), fontSize: 11)),
+              const SizedBox(height: 3),
+              Text(context.tr(tool.description), maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(height: 1.35)),
             ]),
           ),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          isThreeLine: true,
+          onTap: () => _showDetails(tool),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(dialogContext.tr('Close'))),
-          ..._actions(entry, dialogContext),
-        ],
-      ),
-    );
-  }
+      );
 
-  List<Widget> _actions(_CatalogEntry entry, BuildContext dialogContext) {
-    if (entry.tool != null) {
-      return [
-        FilledButton.icon(
-          onPressed: () {
-            Navigator.pop(dialogContext);
-            Navigator.pop(context);
-            widget.onOpenAssessment();
-          },
-          icon: const Icon(Icons.radar_rounded),
-          label: Text(dialogContext.tr('Open Assessment')),
-        ),
-      ];
-    }
-    if (entry.providerId != null) {
-      final providerId = entry.providerId!;
-      if (providerId == 'local_ai') {
-        return [
-          FilledButton.icon(
-            onPressed: () => _openMarket(dialogContext, initialIndex: 2),
-            icon: const Icon(Icons.memory_rounded),
-            label: Text(dialogContext.tr('Open AI Models')),
+  Future<void> _showDetails(ToolDefinition tool) => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(tool.name),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Wrap(spacing: 8, runSpacing: 6, children: [
+                  Chip(label: Text(dialogContext.tr('Built-in'))),
+                  Chip(label: Text(dialogContext.tr('Available'))),
+                ]),
+                const SizedBox(height: 8),
+                Text(dialogContext.tr(tool.description), style: const TextStyle(height: 1.45)),
+                const SizedBox(height: 14),
+                Text(dialogContext.tr('Purpose & requirements'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 6),
+                for (final line in _toolDetails(tool, dialogContext))
+                  Padding(padding: const EdgeInsets.only(bottom: 5), child: Text(line, style: const TextStyle(fontSize: 12, height: 1.4))),
+              ]),
+            ),
           ),
-        ];
-      }
-      return [
-        FilledButton.icon(
-          onPressed: () {
-            Navigator.pop(dialogContext);
-            Navigator.of(context).push<void>(MaterialPageRoute<void>(
-              builder: (_) => MarketProviderDetailScreen(
-                providerId: providerId,
-                manager: widget.providerManager,
-                onOpenCloudflareDashboard: providerId == 'cloudflare' ? widget.onOpenCloudflareDashboard : null,
-              ),
-            ));
-          },
-          icon: const Icon(Icons.link_rounded),
-          label: Text(dialogContext.tr('Connect')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(dialogContext.tr('Close'))),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                Navigator.pop(context);
+                widget.onOpenAssessment();
+              },
+              icon: const Icon(Icons.radar_rounded),
+              label: Text(dialogContext.tr('Open Assessment')),
+            ),
+          ],
         ),
-      ];
-    }
-    final package = entry.package!;
-    final packageStatus = widget.packageManager.statusFor(package);
-    final installableNow = packageStatus != PackageStatus.installed &&
-        packageStatus != PackageStatus.updateAvailable &&
-        widget.packageManager.canInstall(package);
-    if (package.category != MarketCategory.aiModels && installableNow) {
-      return [
-        FilledButton.icon(
-          onPressed: () => _openMarket(dialogContext, initialIndex: 1),
-          icon: const Icon(Icons.storefront_outlined),
-          label: Text(dialogContext.tr('Install')),
-        ),
-      ];
-    }
-    if (package.category == MarketCategory.aiModels) {
-      return [
-        FilledButton.icon(
-          onPressed: () => _openMarket(dialogContext, initialIndex: 2),
-          icon: const Icon(Icons.memory_rounded),
-          label: Text(dialogContext.tr('Open AI Models')),
-        ),
-      ];
-    }
-    return [
-      OutlinedButton.icon(
-        onPressed: () => _openMarket(dialogContext, initialIndex: 1),
-        icon: const Icon(Icons.storefront_outlined),
-        label: Text(dialogContext.tr('View in Market')),
-      ),
-    ];
-  }
+      );
 
-  void _openMarket(BuildContext dialogContext, {required int initialIndex}) {
-    Navigator.pop(dialogContext);
-    Navigator.of(context).push<void>(MaterialPageRoute<void>(
-      builder: (_) => MarketScreen(
-        packageManager: widget.packageManager,
-        providerManager: widget.providerManager,
-        initialIndex: initialIndex,
-        onOpenCloudflareDashboard: widget.onOpenCloudflareDashboard,
-      ),
-    ));
-  }
-
-  List<String> _details(_CatalogEntry entry, BuildContext context) {
-    final tool = entry.tool;
-    if (tool != null) {
-      return [
+  List<String> _toolDetails(ToolDefinition tool, BuildContext context) => [
         '${context.tr('Availability')}: ${context.tr('Built-in; not a Market install')}',
         '${context.tr('Platforms')}: ${tool.supportedPlatforms.join(', ')}',
         '${context.tr('Compatibility')}: ${context.tr(_toolCompatibilityLabel(tool.platformCompatibility))}',
@@ -345,93 +207,15 @@ class _CatalogScreenState extends State<CatalogScreen> {
         '${context.tr('Required capabilities')}: ${tool.requiredCapabilities.isEmpty ? context.tr('None') : tool.requiredCapabilities.join(', ')}',
         '${context.tr('Runtime')}: ${tool.runtimeId ?? context.tr('None')}',
         '${context.tr('Dependencies')}: ${tool.dependencies.isEmpty ? context.tr('None') : tool.dependencies.join(', ')}',
-        '${context.tr('Runtime readiness')}: ${context.tr('Current status is checked when the Assessment workspace opens.')}',
+        '${context.tr('Current readiness')}: ${context.tr('Passed on this device; Assessment verifies readiness again before execution.')}',
         '${context.tr('Documentation')}: ${tool.documentationUrl ?? context.tr('Not published')}',
-        '${context.tr('Current readiness')}: ${context.tr('Readiness is resolved by the bundled runtime when Assessment opens.')}',
       ];
-    }
-    if (entry.providerId != null) {
-      final providerId = entry.providerId!;
-      final providerStatus = widget.providerManager.statusFor(providerId);
-      return [
-        '${context.tr('Connection status')}: ${context.tr(_providerStatusLabel(providerStatus))}',
-        if (entry.provider != null) '${context.tr('Authentication')}: ${context.tr(entry.provider!.authType.name)}',
-        if (entry.provider != null) '${context.tr('Setup requirements')}: ${context.tr(entry.provider!.setupGuidance)}',
-        '${context.tr('Action')}: ${context.tr(providerId == 'local_ai' ? 'Not Ready; inference unavailable' : 'Connect in Provider Manager')}',
-        if (providerId == 'cloudflare') context.tr('Only account and zone read endpoints are available; no service write operations are exposed.'),
-        if (providerId == 'gemini') context.tr('Uses the existing Gemini adapter; prompt data still requires explicit approval.'),
-        if (providerId == 'local_ai') context.tr('No runtime, model download, or inference is implemented.'),
-      ];
-    }
-    final package = entry.package!;
-    final compatibility = widget.packageManager.compatibilityFor(package);
-    final status = widget.packageManager.statusFor(package);
-    return [
-      '${context.tr('Market status')}: ${context.tr(_packageStatusLabel(status))}',
-      '${context.tr('Compatibility')}: ${context.tr(_packageCompatibilityLabel(compatibility.status))}',
-      '${context.tr('Platforms')}: ${package.platforms.join(', ')}',
-      '${context.tr('Architectures')}: ${package.architectures.isEmpty ? context.tr('Any') : package.architectures.join(', ')}',
-      '${context.tr('Requirements')}: ${package.runtimeRequirements.isEmpty ? context.tr('None') : package.runtimeRequirements.join(', ')}',
-      '${context.tr('Permissions')}: ${package.permissions.isEmpty ? context.tr('None') : package.permissions.join(', ')}',
-      '${context.tr('License')}: ${package.license ?? context.tr('Not published')}',
-      if (compatibility.reasons.isNotEmpty) '${context.tr('Compatibility note')}: ${compatibility.reasons.join(' ')}',
-      if (package.installationGuide.isNotEmpty) '${context.tr('Guide')}: ${package.installationGuide}',
-    ];
-  }
 
-  String _typeLabel(_CatalogEntry entry) {
-    if (entry.tool != null) return 'Built-in';
-    if (entry.providerId != null && entry.providerId != 'local_ai') return 'Provider';
-    if (entry.providerId == 'local_ai') return 'AI Model';
-    final package = entry.package!;
-    if (package.category == MarketCategory.knowledgePacks) return 'Guide';
-    if (package.category == MarketCategory.aiModels) return 'AI Model';
-    if (package.category == MarketCategory.cloudApiConnectors) return 'Connector preview';
-    final status = widget.packageManager.statusFor(package);
-    final canInstallNow = status != PackageStatus.installed && status != PackageStatus.updateAvailable && widget.packageManager.canInstall(package);
-    return package.hasArtifact && canInstallNow ? 'Installable package' : 'Planned; unavailable';
-  }
-
-  String _statusLabel(_CatalogEntry entry, BuildContext context) {
-    if (entry.tool != null) return 'Built-in';
-    if (entry.providerId != null) return _providerStatusLabel(widget.providerManager.statusFor(entry.providerId!));
-    final package = entry.package!;
-    if (package.category == MarketCategory.aiModels) return 'Not Ready';
-    return _packageStatusLabel(widget.packageManager.statusFor(package));
-  }
-
-  String _providerStatusLabel(ManagedProviderStatus status) => switch (status) {
-        ManagedProviderStatus.installed => 'Not connected',
-        ManagedProviderStatus.connected => 'Connected',
-        ManagedProviderStatus.disconnected => 'Disconnected',
-        ManagedProviderStatus.error => 'Error',
-        ManagedProviderStatus.notReady => 'Not Ready',
-      };
-
-  String _packageStatusLabel(PackageStatus status) => switch (status) {
-        PackageStatus.available => 'Available',
-        PackageStatus.downloading => 'Downloading',
-        PackageStatus.downloaded => 'Downloaded',
-        PackageStatus.verifying => 'Verifying',
-        PackageStatus.installed => 'Installed',
-        PackageStatus.updateAvailable => 'Update Available',
-        PackageStatus.incompatible => 'Incompatible',
-        PackageStatus.failed => 'Failed',
-      };
-
-  String _toolStatusLabel(ToolStatus status) => switch (status) {
-        ToolStatus.ready => 'Ready',
-        ToolStatus.installed => 'Built-in; readiness not confirmed',
-        ToolStatus.downloadRequired => 'Download required; unavailable from Market',
-        ToolStatus.runtimeRequired => 'Runtime required',
-        ToolStatus.dependencyRequired => 'Dependency required',
-        ToolStatus.permissionRequired => 'Permission required',
-        ToolStatus.notInstalled => 'Not installed',
-        ToolStatus.environmentRequired => 'Environment required',
-        ToolStatus.limitedCompatibility => 'Limited compatibility',
-        ToolStatus.unsupported => 'Unsupported',
-        ToolStatus.disabled => 'Disabled',
-        ToolStatus.error => 'Readiness error',
+  IconData _iconFor(ToolDefinition tool) => switch (tool.id) {
+        'dns_lookup' => Icons.hub_outlined,
+        'tls_inspector' => Icons.lock_outline,
+        'http_headers' => Icons.http_outlined,
+        _ => Icons.analytics_outlined,
       };
 
   String _toolCompatibilityLabel(ToolPlatformCompatibility compatibility) => switch (compatibility) {
@@ -445,56 +229,6 @@ class _CatalogScreenState extends State<CatalogScreen> {
         ToolPlatformCompatibility.unsupported => 'Unsupported',
         ToolPlatformCompatibility.notVerified => 'Not verified',
       };
-
-  String _packageCompatibilityLabel(PackageCompatibility status) => switch (status) {
-        PackageCompatibility.compatible => 'Compatible',
-        PackageCompatibility.limitedCompatibility => 'Limited Compatibility',
-        PackageCompatibility.incompatible => 'Incompatible',
-        PackageCompatibility.unsupported => 'Unsupported',
-      };
-
-  IconData _iconFor(_CatalogEntry entry) {
-    if (entry.tool != null) return entry.tool!.id == 'dns_lookup' ? Icons.hub_outlined : entry.tool!.id == 'tls_inspector' ? Icons.lock_outline : Icons.analytics_outlined;
-    if (entry.providerId == 'cloudflare') return Icons.cloud_rounded;
-    if (entry.providerId == 'gemini') return Icons.auto_awesome_rounded;
-    if (entry.providerId == 'local_ai') return Icons.memory_rounded;
-    return switch (entry.group) {
-      _CatalogGroup.securityTools => Icons.security_rounded,
-      _CatalogGroup.developerTools => Icons.code_rounded,
-      _CatalogGroup.cloudIntegrations => Icons.hub_outlined,
-      _CatalogGroup.aiModels => Icons.memory_rounded,
-      _CatalogGroup.guides => Icons.menu_book_outlined,
-    };
-  }
-
-  String _groupName(_CatalogGroup group) => switch (group) {
-        _CatalogGroup.securityTools => 'Security Tools',
-        _CatalogGroup.developerTools => 'Developer Tools',
-        _CatalogGroup.cloudIntegrations => 'Cloud Integrations',
-        _CatalogGroup.aiModels => 'AI Models',
-        _CatalogGroup.guides => 'Guides',
-      };
-}
-
-class _CatalogEntry {
-  const _CatalogEntry({
-    required this.id,
-    required this.title,
-    required this.description,
-    required this.group,
-    this.tool,
-    this.providerId,
-    this.provider,
-    this.package,
-  });
-  final String id;
-  final String title;
-  final String description;
-  final _CatalogGroup group;
-  final ToolDefinition? tool;
-  final String? providerId;
-  final ProviderDefinition? provider;
-  final MarketPackage? package;
 }
 
 TextStyle _eyebrow(BuildContext context) => TextStyle(

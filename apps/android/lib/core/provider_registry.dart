@@ -136,7 +136,7 @@ const providerRegistry = <ProviderDefinition>[
     category: ProviderCategory.ai,
     description: 'Optional cloud AI provider using a user-owned key.',
     authType: ProviderAuthType.apiKey,
-    setupGuidance: 'Save a user-owned API key in Android secure storage, then use the Assistant. Prompts and approved tool results are sent to Google only after explicit per-request consent. Never send secrets or personal data.',
+    setupGuidance: 'Save a user-owned API key in Android secure storage, then use the Assistant. Conversation data is sent to Google only after provider-specific consent is saved locally. Revoke consent in Privacy Settings to be asked again. Tool actions still require separate review. Never send secrets or personal data.',
     integrationImplemented: true,
   ),
   ProviderDefinition(

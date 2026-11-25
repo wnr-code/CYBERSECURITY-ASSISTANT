@@ -173,6 +173,15 @@ void main() {
     expect((await adapter.complete([AiChatMessage.user('local only')])).text, 'local response');
   });
 
+  test('Local AI provider is not ready without an explicit runtime readiness proof', () async {
+    final credentials = SecureCredentialStore(backend: _MemorySecureStore());
+    final manager = AiProviderManager(
+      credentialStore: credentials,
+      adapters: [LocalAiProviderAdapter(_FakeLocalInference())],
+    );
+    expect(await manager.isReady('local_ai'), isFalse);
+  });
+
   test('Gemini readiness is false without a stored user key', () async {
     final credentials = SecureCredentialStore(backend: _MemorySecureStore());
     final manager = AiProviderManager(

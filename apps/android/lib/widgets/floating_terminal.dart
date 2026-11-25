@@ -108,7 +108,7 @@ class _FloatingTerminalState extends State<FloatingTerminal> {
               child: Row(children: [
                 const Icon(Icons.drag_indicator_rounded, size: 18, color: _terminalMint),
                 const SizedBox(width: 6),
-                Expanded(child: Text(context.tr('Floating Terminal'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13))),
+                Expanded(child: Text(context.tr('App Terminal · safe commands'), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13))),
                 _SessionStatus(status: widget.session.status),
                 IconButton(
                   tooltip: context.tr('Minimize terminal'),

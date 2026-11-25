@@ -634,7 +634,121 @@ def _configure_java_native_crash_capture(activity_file: Path, source: str) -> No
     activity_file.write_text(source, encoding="utf-8")
 
 
-def configure_project(android_root: Path) -> None:
+def configure_local_ai_native(android_root: Path, project_root: Path) -> None:
+    """Wire the opt-in llama.cpp source build and JNI channel into a Flutter scaffold."""
+    app_root = android_root / "app"
+    source_root = project_root / ".dart_tool" / "llama.cpp"
+    source_lock = source_root / ".csa-source-lock"
+    if not source_lock.is_file() or source_lock.read_text(encoding="utf-8").strip() != "ea722948146befb23c9529c1ec7f59fb2f34911f":
+        raise RuntimeError("Pinned llama.cpp source is not prepared; run tool/prepare_llama_cpp_source.py first.")
+    gradle_file = app_root / "build.gradle.kts"
+    if not gradle_file.is_file():
+        raise RuntimeError("The pinned llama.cpp integration currently requires the Kotlin DSL app Gradle template.")
+
+    main_root = app_root / "src" / "main"
+    activities = list(main_root.rglob("MainActivity.kt"))
+    if len(activities) != 1:
+        raise RuntimeError("Expected one generated Kotlin MainActivity for the llama.cpp bridge.")
+    activity = activities[0]
+    activity_source = activity.read_text(encoding="utf-8")
+    package_match = re.search(r"(?m)^package\s+([\w.]+)\s*$", activity_source)
+    if package_match is None:
+        raise RuntimeError("Could not identify the Android package for the Local AI bridge.")
+    package_name = package_match.group(1)
+
+    native_dir = main_root / "cpp"
+    native_dir.mkdir(parents=True, exist_ok=True)
+    templates = Path(__file__).resolve().parent / "native" / "llama_cpp"
+    for name in ("CMakeLists.txt", "llama_jni.cpp"):
+        target = native_dir / name
+        rendered = (templates / name).read_text(encoding="utf-8")
+        if name == "llama_jni.cpp":
+            rendered = rendered.replace("__ANDROID_PACKAGE__", package_name.replace(".", "/"))
+        if target.exists() and target.read_text(encoding="utf-8") != rendered:
+            raise RuntimeError(f"Refusing to overwrite unrecognized native source: {target}")
+        target.write_text(rendered, encoding="utf-8")
+
+    bridge_template = Path(__file__).resolve().parent / "native" / "LocalAiInferenceBridge.kt"
+    bridge_target = activity.parent / "LocalAiInferenceBridge.kt"
+    bridge_source = bridge_template.read_text(encoding="utf-8").replace("__ANDROID_PACKAGE__", package_name)
+    if bridge_target.exists() and bridge_target.read_text(encoding="utf-8") != bridge_source:
+        raise RuntimeError(f"Refusing to overwrite unrecognized Local AI bridge: {bridge_target}")
+    bridge_target.write_text(bridge_source, encoding="utf-8")
+
+    upstream_license = source_root / "LICENSE"
+    if not upstream_license.is_file():
+        raise RuntimeError("Pinned llama.cpp source is missing its upstream MIT license notice.")
+    notice_target = app_root / "src" / "main" / "assets" / "local_ai" / "llama.cpp-LICENSE.txt"
+    notice_target.parent.mkdir(parents=True, exist_ok=True)
+    notice_text = upstream_license.read_text(encoding="utf-8")
+    if notice_target.exists() and notice_target.read_text(encoding="utf-8") != notice_text:
+        raise RuntimeError(f"Refusing to overwrite an unrecognized Local AI license notice: {notice_target}")
+    notice_target.write_text(notice_text, encoding="utf-8")
+
+    attach = "LocalAiInferenceBridge.attachChannel(this, flutterEngine)"
+    if attach not in activity_source:
+        pattern = r"(?m)^(\s*)LocalAiCapabilityProbe\.attachChannel\(this, flutterEngine\)\s*$"
+        activity_source, count = re.subn(pattern, lambda match: f"{match.group(0)}\n{match.group(1)}{attach}", activity_source, count=1)
+        if count != 1:
+            raise RuntimeError("Could not attach the Local AI runtime bridge to MainActivity.")
+        activity.write_text(activity_source, encoding="utf-8")
+
+    gradle = gradle_file.read_text(encoding="utf-8")
+    marker = "// CSA_LLAMA_CPP_NATIVE_BUILD"
+    if marker not in gradle:
+        default_config = re.search(r"(?m)^([ \t]*)defaultConfig\s*\{", gradle)
+        if default_config is None:
+            raise RuntimeError("Could not find app defaultConfig block for NDK ABI configuration.")
+        opening = gradle.find("{", default_config.start())
+        depth, closing = 1, None
+        for index in range(opening + 1, len(gradle)):
+            if gradle[index] == "{": depth += 1
+            elif gradle[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    closing = index
+                    break
+        if closing is None:
+            raise RuntimeError("Unclosed app defaultConfig block in Gradle file.")
+        indent = default_config.group(1) + "    "
+        default_block = (
+            f"\n{indent}{marker}\n"
+            f'{indent}ndk {{ abiFilters += listOf("arm64-v8a") }}\n'
+            f"{indent}externalNativeBuild {{\n"
+            f"{indent}    cmake {{\n"
+            f'{indent}        cppFlags += "-std=c++17"\n'
+            f'{indent}        arguments += "-DLLAMA_CPP_SOURCE_DIR=${{rootProject.projectDir.parentFile}}/.dart_tool/llama.cpp"\n'
+            f"{indent}    }}\n{indent}}}\n"
+        )
+        closing_line_start = gradle.rfind("\n", 0, closing) + 1
+        gradle = gradle[:closing_line_start] + default_block + gradle[closing_line_start:]
+        android_block = re.search(r"(?m)^android\s*\{", gradle)
+        if android_block is None:
+            raise RuntimeError("Could not find app android block for externalNativeBuild configuration.")
+        android_opening = gradle.find("{", android_block.start())
+        depth, android_closing = 1, None
+        for index in range(android_opening + 1, len(gradle)):
+            if gradle[index] == "{": depth += 1
+            elif gradle[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    android_closing = index
+                    break
+        if android_closing is None:
+            raise RuntimeError("Unclosed app android block in Gradle file.")
+        external_block = (
+            '\n    externalNativeBuild {\n'
+            '        cmake {\n'
+            '            path = file("src/main/cpp/CMakeLists.txt")\n'
+            '            version = "3.22.1"\n'
+            '        }\n'
+            '    }\n'
+        )
+        android_line_start = gradle.rfind("\n", 0, android_closing) + 1
+        gradle = gradle[:android_line_start] + external_block + gradle[android_line_start:]
+        gradle_file.write_text(gradle, encoding="utf-8")
+
+def configure_project(android_root: Path, *, local_ai_native: bool = False) -> None:
     app_root = android_root / "app"
     gradle_candidates = [app_root / "build.gradle.kts", app_root / "build.gradle"]
     gradle_files = [path for path in gradle_candidates if path.is_file()]
@@ -653,6 +767,8 @@ def configure_project(android_root: Path) -> None:
     _write_backup_rules(android_root)
     configure_splash_resources(android_root)
     configure_launcher_icon(android_root)
+    if local_ai_native:
+        configure_local_ai_native(android_root, android_root.parent)
 
 
 def main() -> int:
@@ -665,7 +781,12 @@ def main() -> int:
         )
         return 2
     try:
-        configure_project(android_root)
+        native_enabled = os.environ.get("LOCAL_AI_NATIVE_BUILD", "").strip() == "1"
+        if native_enabled:
+            from prepare_llama_cpp_source import prepare_source
+
+            prepare_source(project_root)
+        configure_project(android_root, local_ai_native=native_enabled)
     except (OSError, ET.ParseError, RuntimeError) as error:
         print(f"Android hardening configuration failed: {error}", file=sys.stderr)
         return 1

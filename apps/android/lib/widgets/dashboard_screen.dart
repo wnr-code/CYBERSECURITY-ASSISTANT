@@ -97,7 +97,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<List<ToolAvailability?>> _resolveToolAvailability() async {
     final orchestrator = ToolOrchestrator(packageManager: widget.marketPackageManager);
-    return Future.wait(toolRegistry.map((definition) async {
+    return Future.wait(toolRegistry.where((definition) => definition.id != 'response_analyzer').map((definition) async {
       try {
         return await orchestrator.availabilityForTool(definition.id);
       } catch (_) {
@@ -222,11 +222,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _recentResultsCard(context),
             const SizedBox(height: 10),
             Row(children: [
-              Expanded(child: _CompactMetric(
-                value: '${toolRegistry.length}',
-                label: context.tr('Registry entries'),
-                icon: Icons.grid_view_rounded,
-                onTap: widget.onOpenCatalog,
+              Expanded(child: FutureBuilder<List<ToolAvailability?>>(
+                future: _toolAvailability,
+                builder: (context, snapshot) {
+                  final readyCount = snapshot.data?.whereType<ToolAvailability>().where((item) => item.ready).length;
+                  return _CompactMetric(
+                    value: readyCount?.toString() ?? '…',
+                    label: context.tr('Ready checks'),
+                    icon: Icons.grid_view_rounded,
+                    onTap: widget.onOpenCatalog,
+                  );
+                },
               )),
               const SizedBox(width: 8),
               Expanded(child: _CompactMetric(
@@ -378,15 +384,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 if (snapshot.hasError || data == null) {
                   return _DashboardInlineState(label: context.tr('Could not determine tool status.'), icon: Icons.error_outline_rounded);
                 }
-                final executable = data.whereType<ToolAvailability>().where((item) => item.adapterRegistered).length;
                 final ready = data.whereType<ToolAvailability>().where((item) => item.ready).length;
                 final unresolved = data.where((item) => item == null).length;
                 return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(context.tr('Readiness is resolved on device'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 7),
                   Wrap(spacing: 7, runSpacing: 7, children: [
-                    _RegistryCount(label: context.tr('Registry entries'), value: toolRegistry.length, color: _dashboardBlue),
-                    _RegistryCount(label: context.tr('Executable'), value: executable, color: const Color(0xFF8AB8FF)),
+                    _RegistryCount(label: context.tr('Assessment checks'), value: data.length, color: _dashboardBlue),
                     _RegistryCount(label: context.tr('Ready'), value: ready, color: _dashboardMint),
                   ]),
                   if (unresolved > 0) ...[
@@ -394,7 +398,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Text('$unresolved ${context.tr('tool status unresolved')}', style: _scopeText()),
                   ],
                   const SizedBox(height: 3),
-                  Text(context.tr('Registry entries are not the same as executable or ready tools.'), style: _scopeText()),
+                  Text(context.tr('Only ready checks appear in Assessment. Response analysis is added automatically after checks finish.'), style: _scopeText()),
                 ]);
               },
             ),

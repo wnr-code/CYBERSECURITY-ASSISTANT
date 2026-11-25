@@ -25,8 +25,9 @@ class AssessmentRunner extends StatefulWidget {
 class _AssessmentRunnerState extends State<AssessmentRunner> {
   final _targetController = TextEditingController();
   final Set<String> _selected = {};
-  final Map<String, Future<ToolAvailability>> _readinessFutures = {};
+  late Future<List<ToolAvailability>> _checkCapabilities;
   bool _authorized = false;
+  bool _checkingReadiness = false;
   bool _allowPrivateNetwork = false;
   bool _hideStoredOutcomes = false;
   String? _startError;
@@ -40,12 +41,29 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   String? get _error => _startError ?? (_hideStoredOutcomes ? null : _runView?.error);
   String? get _assessmentTarget => _hideStoredOutcomes ? null : _runView?.target;
 
-  Future<ToolAvailability> _readinessFor(String id) =>
-      _readinessFutures.putIfAbsent(id, () => widget.executionManager.availabilityForTool(id));
+  Future<List<ToolAvailability>> _resolveCheckCapabilities() async {
+    final capabilities = <ToolAvailability>[];
+    for (final tool in toolRegistry.where((item) => item.id != 'response_analyzer')) {
+      try {
+        capabilities.add(await widget.executionManager.availabilityForTool(tool.id));
+      } catch (_) {
+        capabilities.add(ToolAvailability(
+          definition: tool,
+          status: ToolStatus.error,
+          compatibility: tool.platformCompatibility,
+          adapterRegistered: false,
+          installed: false,
+          reason: 'Readiness could not be verified.',
+        ));
+      }
+    }
+    return List.unmodifiable(capabilities);
+  }
 
   @override
   void initState() {
     super.initState();
+    _checkCapabilities = _resolveCheckCapabilities();
     final previousRun = widget.executionManager.currentRun;
     if (previousRun != null) {
       _syncedRunId = previousRun.runId;
@@ -74,7 +92,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
   }
 
   void _refreshReadiness() {
-    _readinessFutures.clear();
+    _checkCapabilities = _resolveCheckCapabilities();
     if (mounted) setState(() {});
   }
 
@@ -84,7 +102,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     if (oldWidget.executionManager != widget.executionManager) {
       oldWidget.executionManager.removeListener(_executionChanged);
       widget.executionManager.addListener(_executionChanged);
-      _readinessFutures.clear();
+      _checkCapabilities = _resolveCheckCapabilities();
       final run = widget.executionManager.currentRun;
       if (run != null) {
         _syncedRunId = run.runId;
@@ -99,7 +117,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     if (oldWidget.packageManager != widget.packageManager) {
       oldWidget.packageManager?.removeListener(_refreshReadiness);
       widget.packageManager?.addListener(_refreshReadiness);
-      _readinessFutures.clear();
+      _checkCapabilities = _resolveCheckCapabilities();
     }
   }
 
@@ -113,7 +131,6 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
 
   @override
   Widget build(BuildContext context) {
-    final checks = toolRegistry.where((tool) => tool.id != 'response_analyzer');
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -143,7 +160,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
           const SizedBox(height: 14),
           TextField(
             controller: _targetController,
-            enabled: !_running,
+            enabled: !_running && !_checkingReadiness,
             keyboardType: TextInputType.url,
             autocorrect: false,
             onChanged: (_) => setState(() {
@@ -160,43 +177,67 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
           ),
           const SizedBox(height: 8),
           Text(context.tr('Checks to run'), style: const TextStyle(fontWeight: FontWeight.w600)),
-          for (final check in checks)
-            FutureBuilder<ToolAvailability>(
-              future: _readinessFor(check.id),
-              builder: (context, snapshot) {
-                final availability = snapshot.data;
-                final status = availability?.status ?? (snapshot.hasError ? ToolStatus.error : null);
-                final ready = status == ToolStatus.ready;
-                final readinessText = status == null || ready ? null : '${context.tr('Unavailable')}: ${status.name}';
-                return CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  value: ready && _selected.contains(check.id),
-                  onChanged: _running || !ready
-                      ? null
-                      : (selected) => setState(() {
-                            if (selected == true) {
-                              _selected.add(check.id);
-                            } else {
-                              _selected.remove(check.id);
-                            }
-                          }),
-                  title: Text(_selectionName(check.id, context)),
-                  subtitle: Text(
-                    readinessText == null
-                        ? _toolDescription(check.id, context)
-                        : '${_toolDescription(check.id, context)} · $readinessText',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  controlAffinity: ListTileControlAffinity.leading,
+          FutureBuilder<List<ToolAvailability>>(
+            future: _checkCapabilities,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(context.tr('Checking which checks are ready on this device…')),
                 );
-              },
-            ),
+              }
+              if (snapshot.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(context.tr('Could not verify available checks. Reopen Assessment to retry.'), style: const TextStyle(color: Colors.orangeAccent)),
+                );
+              }
+              final capabilities = snapshot.data ?? const <ToolAvailability>[];
+              final checks = capabilities.where((item) => item.ready).map((item) => item.definition).toList(growable: false);
+              final errors = capabilities.where((item) => item.status == ToolStatus.error).length;
+              if (checks.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Text(context.tr(errors > 0
+                      ? 'Readiness checks failed; affected checks are hidden.'
+                      : 'No checks are currently available on this device.')),
+                );
+              }
+              return Column(children: [
+                if (errors > 0)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(context.tr('Some checks could not be verified and are hidden.'), style: const TextStyle(color: Colors.orangeAccent, fontSize: 11)),
+                    ),
+                  ),
+                for (final check in checks)
+                  CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    value: _selected.contains(check.id),
+                    onChanged: _running || _checkingReadiness
+                        ? null
+                        : (selected) => setState(() {
+                              if (selected == true) {
+                                _selected.add(check.id);
+                              } else {
+                                _selected.remove(check.id);
+                              }
+                            }),
+                    title: Text(_selectionName(check.id, context)),
+                    subtitle: Text(_toolDescription(check.id, context), style: const TextStyle(fontSize: 11)),
+                    controlAffinity: ListTileControlAffinity.leading,
+                  ),
+              ]);
+            },
+          ),
           CheckboxListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
             value: _authorized,
-            onChanged: _running ? null : (value) => setState(() => _authorized = value ?? false),
+            onChanged: _running || _checkingReadiness ? null : (value) => setState(() => _authorized = value ?? false),
             title: Text(context.tr('I own this target or have permission to assess it.'), style: const TextStyle(fontSize: 12)),
             controlAffinity: ListTileControlAffinity.leading,
           ),
@@ -204,7 +245,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             dense: true,
             contentPadding: EdgeInsets.zero,
             value: _allowPrivateNetwork,
-            onChanged: _running ? null : (value) => setState(() => _allowPrivateNetwork = value ?? false),
+            onChanged: _running || _checkingReadiness ? null : (value) => setState(() => _allowPrivateNetwork = value ?? false),
             title: Text(context.tr('Allow local/private network targets'), style: const TextStyle(fontSize: 12)),
             subtitle: Text(
               context.tr('Off by default. Enable only when you are authorized to assess a loopback, private, or link-local system.'),
@@ -214,11 +255,15 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
           ),
           Wrap(spacing: 10, runSpacing: 8, children: [
             FilledButton.icon(
-              onPressed: _running || _selected.isEmpty ? null : _run,
-              icon: _running
+              onPressed: _running || _checkingReadiness || _selected.isEmpty ? null : _run,
+              icon: _running || _checkingReadiness
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.play_arrow_rounded),
-              label: Text(_running ? context.tr('Assessment already running') : context.tr('Run assessment')),
+              label: Text(_running
+                  ? context.tr('Assessment already running')
+                  : _checkingReadiness
+                      ? context.tr('Checking readiness…')
+                      : context.tr('Run assessment')),
             ),
           ]),
           if (_error != null) ...[
@@ -321,20 +366,35 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
     }
   }
 
-  void _run() {
-    if (_running || _selected.isEmpty) return;
+  Future<void> _run() async {
+    if (_running || _checkingReadiness || _selected.isEmpty) return;
     setState(() {
       _startError = null;
       _hideStoredOutcomes = false;
+      _checkingReadiness = true;
     });
-    final result = widget.executionManager.startAssessment(
-      target: _targetController.text,
-      toolIds: List<String>.of(_selected),
-      authorized: _authorized,
-      allowPrivateNetwork: _allowPrivateNetwork,
-    );
-    if (!result.accepted && mounted) {
-      setState(() => _startError = context.tr('Another assessment is already running.'));
+    try {
+      final capabilities = await _resolveCheckCapabilities();
+      _checkCapabilities = Future.value(capabilities);
+      if (!mounted) return;
+      final selectedIds = _selected.intersection(capabilities.where((item) => item.ready).map((item) => item.definition.id).toSet());
+      if (selectedIds.isEmpty) {
+        setState(() => _startError = context.tr('Select at least one check that is ready on this device.'));
+        return;
+      }
+      final result = widget.executionManager.startAssessment(
+        target: _targetController.text,
+        toolIds: selectedIds.toList(growable: false),
+        authorized: _authorized,
+        allowPrivateNetwork: _allowPrivateNetwork,
+      );
+      if (!result.accepted) {
+        setState(() => _startError = context.tr('Another assessment is already running.'));
+      }
+    } catch (_) {
+      if (mounted) setState(() => _startError = context.tr('Could not verify available checks. Reopen Assessment to retry.'));
+    } finally {
+      if (mounted) setState(() => _checkingReadiness = false);
     }
   }
 

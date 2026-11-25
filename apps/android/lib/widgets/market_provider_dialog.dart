@@ -92,7 +92,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
           maxLength: 8192,
           decoration: InputDecoration(
             labelText: context.tr('Cloudflare API Token'),
-            helperText: context.tr('Token secret stays masked and is saved only in Android secure storage.'),
+            helperText: context.tr('Required: paste only the raw Cloudflare API token, without “Bearer ”. Account ID below is optional and does not replace the token.'),
             suffixIcon: IconButton(
               onPressed: () => setState(() => _hideSecret = !_hideSecret),
               icon: Icon(_hideSecret ? Icons.visibility_outlined : Icons.visibility_off_outlined),
@@ -139,7 +139,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
           maxLength: 512,
           decoration: InputDecoration(
             labelText: context.tr('Gemini API Key'),
-            helperText: context.tr('Only this app/device secure store receives the key; saving it sends no request.'),
+            helperText: context.tr('Required: paste only the raw Gemini API key, not a URL or “Bearer ” value. It is saved on this device; saving sends no request.'),
             suffixIcon: IconButton(
               onPressed: () => setState(() => _hideSecret = !_hideSecret),
               icon: Icon(_hideSecret ? Icons.visibility_outlined : Icons.visibility_off_outlined),
@@ -160,45 +160,37 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
   Widget _localAiContent(BuildContext context) {
     final capabilities = widget.manager.localAiCapabilities;
     const gib = 1024 * 1024 * 1024;
-    String size(int? value) => value == null ? context.tr('Unavailable') : '${(value / gib).toStringAsFixed(2)} GiB';
+    String size(int? value) => value == null ? context.tr('Unknown') : '${(value / gib).toStringAsFixed(2)} GiB';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(context.tr('On-device AI Provider · Local only'), style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
-      Text(context.tr('Status stays Not Ready: no LiteRT-LM runtime, model downloader, model storage manager, or installed model is integrated in this app. No request is sent to a cloud provider and no hidden fallback exists.')),
+      Text(context.tr('Not Ready — the official llama.cpp source/JNI build path is implemented as an opt-in, but has not been built or device-tested. No verified model is enabled; inference and cloud fallback are unavailable.')),
       const SizedBox(height: 12),
       Text(context.tr('Device capability (reported by Android)'), style: const TextStyle(fontWeight: FontWeight.w700)),
       const SizedBox(height: 5),
       Text(capabilities == null
           ? context.tr('Android capability probe is unavailable in this build or platform. RAM, free storage, and supported ABI have not been detected.')
-          : '${context.tr('Supported ABIs')}: ${capabilities.supportedAbis.join(', ')}\n'
+          : '${context.tr('Supported ABIs')}: ${capabilities.supportedAbis.isEmpty ? context.tr('Unknown') : capabilities.supportedAbis.join(', ')}\n'
               '${context.tr('Total RAM')}: ${size(capabilities.totalRamBytes)} · ${context.tr('Available RAM')}: ${size(capabilities.availableRamBytes)}\n'
-              '${context.tr('Internal storage free')}: ${size(capabilities.availableStorageBytes)} of ${size(capabilities.totalStorageBytes)}\n'
-              '${context.tr('Installed local models')}: ${capabilities.installedModelCount} · ${context.tr('Inference runtime')}: ${capabilities.runtimeAvailable ? context.tr('Detected') : context.tr('Not installed')}',
+              '${context.tr('Internal storage free')}: ${size(capabilities.availableStorageBytes)} of ${size(capabilities.totalStorageBytes)}',
           style: const TextStyle(fontSize: 12, height: 1.5)),
       const SizedBox(height: 10),
-      Text(context.tr('Official Android inference runtime'), style: const TextStyle(fontWeight: FontWeight.w700)),
-      const SizedBox(height: 4),
-      _officialLink(context, MarketProviderManager.localAiDocs),
-      const SizedBox(height: 5),
-      Text(context.tr('Gemma model and memory reference'), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+      Text(context.tr('Pinned llama.cpp source commit: ea722948146befb23c9529c1ec7f59fb2f34911f. Source archive SHA-256: 05b362e97564f2e449440f13878c43991a13b6029214dbcb0d1b116b20365ec2.'),
+          style: const TextStyle(fontSize: 12, height: 1.4)),
+      _officialLink(context, MarketProviderManager.localAiRuntimeSource),
+      _officialLink(context, MarketProviderManager.localAiBuildDocs),
+      _officialLink(context, MarketProviderManager.localAiLicenseDocs),
+      const SizedBox(height: 8),
+      Text(context.tr('Qwen2.5 1.5B Q4 remains unverified. Model license, immutable source revision, exact size, and SHA-256 must be established before any install option is enabled.'),
+          style: const TextStyle(fontSize: 12, height: 1.4)),
       _officialLink(context, MarketProviderManager.localAiModelsDocs),
-      const SizedBox(height: 8),
-      Text(context.tr('Additional model discovery catalogs (reference only)'), style: const TextStyle(fontWeight: FontWeight.w700)),
-      const SizedBox(height: 4),
-      Text(context.tr('Hugging Face and Kaggle are model discovery sources, not connected providers in this app. No catalog query, download, install, or model execution is implemented.'),
-          style: const TextStyle(fontSize: 12, height: 1.4)),
-      _officialLink(context, MarketProviderManager.localAiHuggingFaceModelsDocs),
-      _officialLink(context, MarketProviderManager.localAiKaggleModelsDocs),
-      const SizedBox(height: 8),
-      Text(context.tr('Model candidates from Google documentation (not installed or offered for download here): Gemma 4 E2B mobile is listed at about 1.1 GB inference memory; E4B at about 2.5 GB. Quantization, runtime overhead, free storage, and device thermals affect compatibility. Exact model artifact storage sizes must be verified from the publisher before downloading.'),
-          style: const TextStyle(fontSize: 12, height: 1.4)),
       const SizedBox(height: 10),
       OutlinedButton.icon(
         onPressed: null,
         icon: const Icon(Icons.play_arrow_rounded),
-        label: Text(context.tr('Test Inference · unavailable until runtime/model exist')),
+        label: Text(context.tr('Offline Inference Test')),
       ),
-      Text(context.tr('Model download, selection, deletion, and inference are unavailable rather than simulated.'),
+      Text(context.tr('Unknown or insufficient ABI, RAM, or storage must fail closed. Runtime/model checksums and licenses are still pending; no Local AI package is marked Ready.'),
           style: const TextStyle(fontSize: 11, height: 1.4)),
     ]);
   }
@@ -238,6 +230,10 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
       if (mounted) setState(() => _message = 'Credential saved securely. No provider request was made.');
     } on MarketProviderException catch (error) {
       if (mounted) setState(() => _message = error.message);
+    } on PlatformException catch (error) {
+      if (mounted) {
+        setState(() => _message = '${context.tr('Secure storage failed')} (${error.code}). ${context.tr('The key was not sent to the provider.')}');
+      }
     } catch (_) {
       if (mounted) setState(() => _message = 'Could not save configuration in secure storage.');
     } finally {

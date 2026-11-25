@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../core/capability_status.dart';
 import '../core/market_provider_manager.dart';
 import '../core/package_manager.dart';
 import '../l10n/app_localizations.dart';
@@ -65,18 +66,19 @@ class _MarketScreenState extends State<MarketScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-        length: 3,
-        initialIndex: widget.providerManager == null ? 1 : widget.initialIndex.clamp(0, 2).toInt(),
+  Widget build(BuildContext context) {
+    final providersAvailable = widget.providerManager != null;
+    return DefaultTabController(
+        length: providersAvailable ? 2 : 1,
+        initialIndex: providersAvailable ? widget.initialIndex.clamp(0, 1).toInt() : 0,
         child: Builder(builder: (context) => Scaffold(
               appBar: AppBar(
                 title: Text(context.tr('Market')),
                 bottom: TabBar(
                   isScrollable: true,
                   tabs: [
-                    Tab(text: context.tr('Providers')),
+                    if (providersAvailable) Tab(text: context.tr('Providers')),
                     Tab(text: context.tr('Packages')),
-                    Tab(text: context.tr('AI Models')),
                   ],
                 ),
               ),
@@ -93,143 +95,83 @@ class _MarketScreenState extends State<MarketScreen> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   return TabBarView(children: [
-                    _providersContents(context),
+                    if (providersAvailable) _providersContents(context),
                     _marketContents(context),
-                    _aiModelsContents(context),
                   ]);
                 },
               ),
             )),
       );
+  }
 
   Widget _providersContents(BuildContext context) {
-    if (widget.providerManager == null) {
+    final manager = widget.providerManager;
+    if (manager == null) {
       return Center(child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(context.tr('Provider management is unavailable because the shared Market Provider Manager was not supplied.')),
       ));
     }
-    final installedPackages = widget.packageManager.installedPackages.length +
-        widget.packageManager.catalog.where((package) => package.isBundledCore).length;
     return Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1040),
+        constraints: const BoxConstraints(maxWidth: 920),
         child: ListView(padding: const EdgeInsets.fromLTRB(18, 18, 18, 28), children: [
-          Text(context.tr('MARKET'), style: const TextStyle(color: Color(0xFF73F0C2), letterSpacing: 1.5, fontSize: 11, fontWeight: FontWeight.w700)),
+          Text(context.tr('Providers'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
-          Text(context.tr('Provider & Security Tools'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 14),
+          Text(context.tr('Provider integrations and candidates are listed here. Availability reflects verified capabilities; Local AI remains Not Ready while runtime and model integrity work continues.'),
+              style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
+          const SizedBox(height: 16),
           _priorityProviderSection(context),
-          const SizedBox(height: 22),
-          Row(children: [
-            const Icon(Icons.grid_view_rounded, color: Color(0xFF73F0C2)),
-            const SizedBox(width: 10),
-            Expanded(child: Text(context.tr('Explore Market'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700))),
-            TextButton.icon(onPressed: () => DefaultTabController.of(context).animateTo(1), icon: const Icon(Icons.arrow_forward), label: Text(context.tr('View All'))),
-          ]),
-          const SizedBox(height: 8),
-          LayoutBuilder(builder: (context, constraints) {
-            final width = ((constraints.maxWidth - 10) / 2).clamp(120.0, 380.0).toDouble();
-            return Wrap(spacing: 10, runSpacing: 10, children: [
-              _exploreCard(context, width, Icons.security_rounded, 'Security Tools', 'Security testing and review tools', const Color(0xFF73F0C2),
-                  () => _openPackages(context, MarketCategory.securityTools)),
-              _exploreCard(context, width, Icons.terminal_rounded, 'Developer Tools', 'Runtime and plugin catalog', const Color(0xFF168DFF),
-                  () => _openPackages(context)),
-              _exploreCard(context, width, Icons.psychology_rounded, 'AI Models', 'Local model catalog and readiness', const Color(0xFFCB7BFF),
-                  () => DefaultTabController.of(context).animateTo(2)),
-              _exploreCard(context, width, Icons.cloud_outlined, 'Cloud Services', 'Provider integrations and guides', const Color(0xFF18CDE0),
-                  () => _openPackages(context, MarketCategory.cloudApiConnectors)),
-            ]);
-          }),
-          const SizedBox(height: 22),
-          Row(children: [
-            const Icon(Icons.inventory_2_outlined, color: Color(0xFF20C8FF)),
-            const SizedBox(width: 10),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(context.tr('Installed Tools'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-              Text(context.tr('Tools currently included or installed in this app'), style: TextStyle(color: Colors.white.withValues(alpha: .65), fontSize: 12)),
-            ])),
-            TextButton.icon(onPressed: () => _openPackages(context), icon: const Icon(Icons.arrow_forward), label: Text(context.tr('View All'))),
-          ]),
-          const SizedBox(height: 8),
-          Card(child: ListTile(
-            leading: const Icon(Icons.inventory_2_rounded, color: Color(0xFF73F0C2)),
-            title: Text(context.tr('Installed Packages')),
-            subtitle: Text('$installedPackages ${context.tr('packages installed')}'),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => _openPackages(context),
-          )),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: () => _openPackages(context),
+            icon: const Icon(Icons.inventory_2_outlined),
+            label: Text(context.tr('Browse installable packages')),
+          ),
         ]),
       ),
     );
   }
 
-  Widget _exploreCard(BuildContext context, double width, IconData icon, String title, String subtitle, Color color, VoidCallback onTap) => SizedBox(
-        width: width,
-        child: Card(
-          child: InkWell(
-            borderRadius: BorderRadius.circular(18),
-            onTap: onTap,
-            child: Padding(padding: const EdgeInsets.all(14), child: Row(children: [
-              Icon(icon, color: color, size: 26),
-              const SizedBox(width: 10),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(context.tr(title), style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                const SizedBox(height: 3),
-                Text(context.tr(subtitle), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 11)),
-              ])),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF8DB7FF)),
-            ])),
-          ),
-        ),
-      );
+  Widget _priorityProviderSection(BuildContext context) {
+    final manager = widget.providerManager!;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      for (final providerId in MarketProviderManager.priorityProviderIds) ...[
+        _priorityProviderCard(providerId, manager, context),
+        const SizedBox(height: 8),
+      ],
+    ]);
+  }
 
   void _openPackages(BuildContext context, [MarketCategory? category]) {
     setState(() => _selectedCategory = category);
-    DefaultTabController.of(context).animateTo(1);
+    DefaultTabController.of(context).animateTo(widget.providerManager == null ? 0 : 1);
   }
 
-  Widget _aiModelsContents(BuildContext context) {
-    final manager = widget.providerManager;
-    final modelPackages = widget.packageManager.catalog.where((package) => package.category == MarketCategory.aiModels).toList(growable: false);
-    final localStatus = manager?.statusFor('local_ai') ?? ManagedProviderStatus.notReady;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1040),
-        child: ListView(padding: const EdgeInsets.fromLTRB(18, 18, 18, 30), children: [
-          Text(context.tr('AI Models'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 5),
-          Text(context.tr('Local AI models are separate from cloud AI providers. This catalog does not imply a model is compatible, installed, or runnable.'),
-              style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 12, height: 1.4)),
-          const SizedBox(height: 12),
-          Card(child: ListTile(
-            leading: const Icon(Icons.memory_rounded, color: Color(0xFF20C8FF)),
-            title: Text(context.tr('Local AI')),
-            subtitle: Text(context.tr('Google AI Edge / LiteRT-LM runtime and a verified compatible model are not installed.')),
-            trailing: _providerStatusBadge(localStatus, context),
-            onTap: manager == null ? null : () => _openProviderDetail(context, 'local_ai', manager),
-          )),
-          const SizedBox(height: 12),
-          Text(context.tr('Model Catalog'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
-          Text(context.tr('Hugging Face and Kaggle are discovery references only. Market does not query or download models from those catalogs.'),
-              style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12, height: 1.4)),
-          const SizedBox(height: 10),
-          if (modelPackages.isEmpty)
-            Text(context.tr('No Local AI model metadata is currently listed.'))
-          else
-            for (final package in modelPackages) ...[
-              _packageCard(package, context),
-              const SizedBox(height: 10),
-            ],
-        ]),
-      ),
-    );
+  bool _isMarketPackageVisible(MarketPackage package) {
+    if (package.isBundledCore ||
+        package.category == MarketCategory.runtime ||
+        package.category == MarketCategory.plugins ||
+        package.category == MarketCategory.aiModels ||
+        package.category == MarketCategory.cloudApiConnectors ||
+        !package.hasArtifact ||
+        !package.canBeInstalledAsData) {
+      return false;
+    }
+    final status = widget.packageManager.statusFor(package);
+    return widget.packageManager.canInstall(package) ||
+        status == PackageStatus.installed ||
+        status == PackageStatus.updateAvailable ||
+        status == PackageStatus.downloading ||
+        status == PackageStatus.downloaded ||
+        status == PackageStatus.verifying;
   }
 
   Widget _marketContents(BuildContext context) {
     final query = _searchController.text.trim().toLowerCase();
-    final packages = widget.packageManager.catalog.where((package) {
+    final visibleCatalog = widget.packageManager.catalog.where(_isMarketPackageVisible).toList(growable: false);
+    final visibleCategories = visibleCatalog.map((package) => package.category).toSet();
+    final packages = visibleCatalog.where((package) {
       final categoryMatches = _selectedCategory == null || package.category == _selectedCategory;
       final searchable = '${package.name} ${package.description} ${package.officialSource} ${package.license ?? ''}'.toLowerCase();
       return categoryMatches && (query.isEmpty || searchable.contains(query));
@@ -249,7 +191,7 @@ class _MarketScreenState extends State<MarketScreen> {
             Text(context.tr('Packages'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 6),
             Text(
-              context.tr('Browse reviewed declarative packages. Downloaded executable code is never run or loaded by Market.'),
+              context.tr('Only packages with a verified installable data artifact are listed. Data packs do not run as programs or plugins.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45),
             ),
             const SizedBox(height: 14),
@@ -260,7 +202,7 @@ class _MarketScreenState extends State<MarketScreen> {
                   const Icon(Icons.inventory_2_outlined, color: Color(0xFF73F0C2)),
                   const SizedBox(width: 10),
                   Expanded(child: Text(
-                    '${widget.packageManager.installedPackages.length + widget.packageManager.catalog.where((package) => package.isBundledCore).length} ${context.tr('packages installed')} · ${context.tr('Local-only registry; no developer account or cloud required')}',
+                    '${widget.packageManager.installedPackages.length} ${context.tr('installable data packages installed')} · ${context.tr('Stored in app-private storage')}',
                     style: const TextStyle(fontSize: 12),
                   )),
                 ]),
@@ -283,7 +225,7 @@ class _MarketScreenState extends State<MarketScreen> {
                 selected: _selectedCategory == null,
                 onSelected: (_) => setState(() => _selectedCategory = null),
               ),
-              for (final category in MarketCategory.values)
+              for (final category in visibleCategories)
                 FilterChip(
                   label: Text(_categoryName(category, context)),
                   selected: _selectedCategory == category,
@@ -318,28 +260,13 @@ class _MarketScreenState extends State<MarketScreen> {
             ],
             const SizedBox(height: 8),
             Text(
-              context.tr('Market runtime/plugin loading and Local AI inference are not implemented. Gemini and Cloudflare are separate providers with only the capabilities shown in Providers.'),
+              context.tr('Executable runtimes and local-model inference are not available in this build. Provider connections are managed in Providers.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .58), fontSize: 11, height: 1.4),
             ),
           ],
         ),
       ),
     );
-  }
-
-  Widget _priorityProviderSection(BuildContext context) {
-    final manager = widget.providerManager!;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Text(context.tr('Priority Providers'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-      const SizedBox(height: 4),
-      Text(context.tr('Manage the three supported provider entries here. Capabilities and status reflect what this build actually implements. Provider adapters are bundled with the app, so they cannot be uninstalled separately; use Disconnect only to remove that provider credential.'),
-          style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12, height: 1.4)),
-      const SizedBox(height: 10),
-      for (final providerId in MarketProviderManager.priorityProviderIds) ...[
-        _priorityProviderCard(providerId, manager, context),
-        const SizedBox(height: 8),
-      ],
-    ]);
   }
 
   Widget _priorityProviderCard(String providerId, MarketProviderManager manager, BuildContext context) {
@@ -349,11 +276,11 @@ class _MarketScreenState extends State<MarketScreen> {
       _ => 'Local AI',
     };
     final subtitle = switch (providerId) {
-      'cloudflare' => context.tr('Cloud infrastructure · token check only; service APIs are not integrated.'),
-      'gemini' => context.tr('Cloud AI · existing Gemini adapter with explicit prompt-data approval.'),
-      _ => context.tr('On-device AI · runtime and model inference are not integrated.'),
+      'cloudflare' => context.tr('Cloudflare token verification is separate from per-permission account/zone reads; no write actions.'),
+      'gemini' => context.tr('Cloud AI · provider-scoped conversation consent is saved locally; tool proposals still require review.'),
+      _ => context.tr('On-device AI · candidate runtime pinned for prototype; model verification and inference are not available yet.'),
     };
-    final status = manager.statusFor(providerId);
+    final status = _providerCapabilityStatus(providerId, manager);
     return Card(
       key: ValueKey('priority-provider-$providerId'),
       child: InkWell(
@@ -370,7 +297,7 @@ class _MarketScreenState extends State<MarketScreen> {
               Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 11, height: 1.35)),
             ])),
             const SizedBox(width: 8),
-            _providerStatusBadge(status, context),
+            _providerStatusBadge(status, context, providerId),
             const SizedBox(width: 6),
             const Icon(Icons.chevron_right_rounded, color: Color(0xFF8DB7FF)),
           ]),
@@ -379,26 +306,30 @@ class _MarketScreenState extends State<MarketScreen> {
     );
   }
 
-  Widget _providerStatusBadge(ManagedProviderStatus status, BuildContext context) {
+  CapabilityStatus _providerCapabilityStatus(String providerId, MarketProviderManager manager) => switch (manager.statusFor(providerId)) {
+        ManagedProviderStatus.connected => CapabilityStatus.connected,
+        ManagedProviderStatus.error => CapabilityStatus.error,
+        ManagedProviderStatus.notReady => CapabilityStatus.notReady,
+        ManagedProviderStatus.disconnected => CapabilityStatus.configured,
+        ManagedProviderStatus.installed => CapabilityStatus.available,
+      };
+
+  Widget _providerStatusBadge(CapabilityStatus status, BuildContext context, String providerId) {
     final color = switch (status) {
-      ManagedProviderStatus.installed => const Color(0xFF8DB7FF),
-      ManagedProviderStatus.connected => const Color(0xFF73F0C2),
-      ManagedProviderStatus.disconnected => Colors.orangeAccent,
-      ManagedProviderStatus.error => Colors.redAccent,
-      ManagedProviderStatus.notReady => Colors.orangeAccent,
+      CapabilityStatus.available => const Color(0xFF8DB7FF),
+      CapabilityStatus.configured => Colors.orangeAccent,
+      CapabilityStatus.connected => const Color(0xFF73F0C2),
+      CapabilityStatus.unavailable || CapabilityStatus.notReady => Colors.white54,
+      CapabilityStatus.error => Colors.redAccent,
     };
-    final label = context.tr(switch (status) {
-      ManagedProviderStatus.installed => 'Installed',
-      ManagedProviderStatus.connected => 'Connected',
-      ManagedProviderStatus.disconnected => 'Disconnected',
-      ManagedProviderStatus.error => 'Error',
-      ManagedProviderStatus.notReady => 'Not Ready',
-    });
     return DecoratedBox(
       decoration: BoxDecoration(color: color.withValues(alpha: .12), borderRadius: BorderRadius.circular(18), border: Border.all(color: color.withValues(alpha: .42))),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+        child: Text(
+          context.tr(status == CapabilityStatus.connected && providerId == 'cloudflare' ? 'Token verified' : status.sourceLabel),
+          style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }
@@ -680,7 +611,7 @@ class _MarketScreenState extends State<MarketScreen> {
         MarketCategory.securityTools => 'Security Tools',
         MarketCategory.runtime => 'Runtime',
         MarketCategory.plugins => 'Plugins',
-        MarketCategory.aiModels => 'AI Models',
+        MarketCategory.aiModels => 'Unavailable',
         MarketCategory.knowledgePacks => 'Knowledge Packs',
         MarketCategory.cloudApiConnectors => 'Cloud/API Connectors',
       });

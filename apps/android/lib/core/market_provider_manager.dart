@@ -334,10 +334,12 @@ class MarketProviderManager extends ChangeNotifier {
   static final geminiModelsDocs = Uri.parse('https://ai.google.dev/gemini-api/docs/models');
   static final geminiPricingDocs = Uri.parse('https://ai.google.dev/gemini-api/docs/pricing');
   static final geminiTermsDocs = Uri.parse('https://ai.google.dev/gemini-api/terms');
-  static final localAiDocs = Uri.parse('https://ai.google.dev/edge/litert-lm/android');
-  static final localAiModelsDocs = Uri.parse('https://ai.google.dev/gemma/docs/core');
-  static final localAiHuggingFaceModelsDocs = Uri.parse('https://huggingface.co/models');
-  static final localAiKaggleModelsDocs = Uri.parse('https://www.kaggle.com/models');
+  static const localAiRuntimeCommit = 'ea722948146befb23c9529c1ec7f59fb2f34911f';
+  static const localAiSourceArchiveSha256 = '05b362e97564f2e449440f13878c43991a13b6029214dbcb0d1b116b20365ec2';
+  static final localAiRuntimeSource = Uri.parse('https://github.com/ggml-org/llama.cpp/tree/ea722948146befb23c9529c1ec7f59fb2f34911f');
+  static final localAiBuildDocs = Uri.parse('https://github.com/ggml-org/llama.cpp/blob/ea722948146befb23c9529c1ec7f59fb2f34911f/docs/android.md');
+  static final localAiLicenseDocs = Uri.parse('https://github.com/ggml-org/llama.cpp/blob/ea722948146befb23c9529c1ec7f59fb2f34911f/LICENSE');
+  static final localAiModelsDocs = Uri.parse('https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF');
 
   bool get isBusy => _busy;
   bool get isInitialized => _initialized;

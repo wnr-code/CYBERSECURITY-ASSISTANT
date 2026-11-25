@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 
 import '../l10n/app_localizations.dart';
@@ -17,10 +19,6 @@ class EdgePanel extends StatelessWidget {
     required this.onClose,
     required this.onOpenTerminal,
     required this.onOpenAssessment,
-    required this.onOpenCatalog,
-    required this.onOpenReports,
-    required this.onOpenSettings,
-    required this.onOpenConnections,
   });
 
   final bool cloudflareConnected;
@@ -30,10 +28,6 @@ class EdgePanel extends StatelessWidget {
   final VoidCallback onClose;
   final VoidCallback onOpenTerminal;
   final VoidCallback onOpenAssessment;
-  final VoidCallback onOpenCatalog;
-  final VoidCallback onOpenReports;
-  final VoidCallback onOpenSettings;
-  final VoidCallback onOpenConnections;
 
   @override
   Widget build(BuildContext context) => Material(
@@ -41,7 +35,7 @@ class EdgePanel extends StatelessWidget {
         elevation: 18,
         child: SafeArea(
           child: SizedBox(
-            width: MediaQuery.sizeOf(context).width < 360 ? MediaQuery.sizeOf(context).width : 328,
+            width: math.min(328.0, math.max(0.0, MediaQuery.sizeOf(context).width - 24)),
             child: ListView(padding: EdgeInsets.zero, children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 14, 8, 12),
@@ -62,10 +56,10 @@ class EdgePanel extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                 child: Text(
                   context.tr(cloudflareConnected
-                      ? 'Cloudflare account and zone reads are available after token verification. DNS records, Workers, and all write operations remain unavailable.'
+                      ? 'Cloudflare token verified. Account and zone read access must be checked separately in the Dashboard; DNS records, Workers, and write operations remain unavailable.'
                       : geminiConnected
                           ? 'Gemini connection is verified. Prompts and approved tool results still require explicit data-sharing approval in Assistant.'
-                          : 'No provider shortcut is enabled until its implemented connection test succeeds.'),
+                          : 'No provider is connected yet. Market setup and local assessment tools remain available.'),
                   style: TextStyle(color: Colors.white.withValues(alpha: .7), fontSize: 12, height: 1.4),
                 ),
               ),
@@ -81,17 +75,10 @@ class EdgePanel extends StatelessWidget {
                 ListTile(
                   leading: const Icon(Icons.auto_awesome_rounded, color: Color(0xFF9A8BFF)),
                   title: Text(context.tr('Gemini Details')),
-                  subtitle: Text(context.tr('Verified connection · explicit prompt approval required')),
+                  subtitle: Text(context.tr('Provider-scoped sharing consent · tool actions still need separate review')),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: onOpenGeminiDetails,
                 ),
-              ListTile(
-                leading: const Icon(Icons.hub_outlined, color: _edgePanelMint),
-                title: Text(context.tr('Provider connection catalog')),
-                subtitle: Text(context.tr('Review available connection guides')),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: onOpenConnections,
-              ),
               const Divider(height: 1),
               Padding(
                 padding: const EdgeInsets.fromLTRB(18, 16, 18, 7),
@@ -101,14 +88,11 @@ class EdgePanel extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.terminal_rounded, color: _edgePanelMint),
                 title: Text(context.tr('Floating Terminal')),
-                subtitle: Text(context.tr('App-local safe command workspace')),
+                subtitle: Text(context.tr('Built-in safe commands · not Termux or a system shell')),
                 trailing: const Icon(Icons.open_in_new_rounded),
                 onTap: onOpenTerminal,
               ),
               ListTile(leading: const Icon(Icons.radar_rounded), title: Text(context.tr('Assessment')), onTap: onOpenAssessment),
-              ListTile(leading: const Icon(Icons.grid_view_rounded), title: Text(context.tr('Catalog')), onTap: onOpenCatalog),
-              ListTile(leading: const Icon(Icons.article_outlined), title: Text(context.tr('Reports')), onTap: onOpenReports),
-              ListTile(leading: const Icon(Icons.settings_outlined), title: Text(context.tr('Settings')), onTap: onOpenSettings),
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(context.tr('The terminal accepts registered commands only; it is not a system shell.'),

@@ -8,6 +8,7 @@ from verify_android_splash import _parse_signer_fingerprints, _validate_apk_sign
 from configure_android import (
     configure_gradle,
     configure_launcher_icon,
+    configure_local_ai_native,
     configure_manifest,
     configure_project,
     configure_splash_activity,
@@ -349,6 +350,59 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertIn("native:activity-onCreate", activity_text)
             self.assertIn("native:splash-installed", activity_text)
             self.assertIn("ApplicationInfo.FLAG_DEBUGGABLE", activity_text)
+
+    def test_opt_in_llama_cpp_native_build_generates_arm64_cpu_only_jni_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            android = project / "android"
+            app = android / "app"
+            main = app / "src/main"
+            activity = main / "kotlin/org/example/MainActivity.kt"
+            activity.parent.mkdir(parents=True)
+            activity.write_text(
+                "package org.example\n"
+                "import io.flutter.embedding.android.FlutterActivity\n"
+                "class MainActivity : FlutterActivity() {\n"
+                "    fun attach(flutterEngine: FlutterEngine) {\n"
+                "        LocalAiCapabilityProbe.attachChannel(this, flutterEngine)\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            gradle = app / "build.gradle.kts"
+            gradle.parent.mkdir(parents=True, exist_ok=True)
+            gradle.write_text(
+                "android {\n    defaultConfig {\n        minSdk = 29\n    }\n}\n",
+                encoding="utf-8",
+            )
+            source = project / ".dart_tool/llama.cpp"
+            source.mkdir(parents=True)
+            (source / ".csa-source-lock").write_text("ea722948146befb23c9529c1ec7f59fb2f34911f\n", encoding="utf-8")
+            (source / "LICENSE").write_text("MIT License\n", encoding="utf-8")
+
+            configure_local_ai_native(android, project)
+            first_gradle = gradle.read_text(encoding="utf-8")
+            configure_local_ai_native(android, project)
+
+            self.assertEqual(gradle.read_text(encoding="utf-8"), first_gradle)
+            self.assertIn('abiFilters += listOf("arm64-v8a")', first_gradle)
+            self.assertIn("GGML_OPENMP OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
+            self.assertIn("GGML_CPU_KLEIDIAI OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
+            self.assertIn("GGML_VULKAN OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
+            generated_bridge = activity.parent / "LocalAiInferenceBridge.kt"
+            self.assertIn("emptyMap<String, String>()", generated_bridge.read_text(encoding="utf-8"))
+            generated_jni = (app / "src/main/cpp/llama_jni.cpp").read_text(encoding="utf-8")
+            self.assertIn('FindClass("org/example/LocalAiInferenceBridge")', generated_jni)
+            self.assertIn("LocalAiInferenceBridge.attachChannel(this, flutterEngine)", activity.read_text(encoding="utf-8"))
+            self.assertIn("add_library(csa_localai SHARED", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
+            self.assertEqual((app / "src/main/assets/local_ai/llama.cpp-LICENSE.txt").read_text(encoding="utf-8"), "MIT License\n")
+
+    def test_native_config_refuses_unpinned_source_or_gradle_template(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            android = project / "android"
+            with self.assertRaisesRegex(RuntimeError, "source is not prepared"):
+                configure_local_ai_native(android, project)
 
 
 if __name__ == "__main__":

@@ -6,12 +6,13 @@ import '../l10n/app_localizations.dart';
 import 'ai_shield_robot_mark.dart';
 
 /// Animated assistant identity mark used beside assistant copy in Chat AI.
-/// The check is a decorative brand accent, not a claim that the response or
-/// its security conclusions have been independently verified.
+/// A green check is shown only after the provider's explicit connection test
+/// succeeds; it says nothing about the correctness of generated responses.
 class AiAssistantAvatar extends StatefulWidget {
-  const AiAssistantAvatar({super.key, this.diameter = 40});
+  const AiAssistantAvatar({super.key, this.diameter = 40, this.connectionVerified = false});
 
   final double diameter;
+  final bool connectionVerified;
 
   @override
   State<AiAssistantAvatar> createState() => _AiAssistantAvatarState();
@@ -42,7 +43,9 @@ class _AiAssistantAvatarState extends State<AiAssistantAvatar> with SingleTicker
   @override
   Widget build(BuildContext context) => Semantics(
         image: true,
-        label: context.tr('AI assistant avatar; check mark is decorative and does not verify responses.'),
+        label: context.tr(widget.connectionVerified
+            ? 'AI provider connection test succeeded.'
+            : 'AI provider connection has not been verified.'),
         child: SizedBox(
           width: widget.diameter,
           height: widget.diameter,
@@ -69,21 +72,22 @@ class _AiAssistantAvatarState extends State<AiAssistantAvatar> with SingleTicker
                 );
               },
             ),
-            Positioned(
-              right: -1,
-              bottom: -1,
-              child: Container(
-                width: widget.diameter * .38,
-                height: widget.diameter * .38,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF73F0C2),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: const Color(0xFF0B1020), width: 1.5),
-                  boxShadow: [BoxShadow(color: const Color(0xFF73F0C2).withValues(alpha: .35), blurRadius: 5)],
+            if (widget.connectionVerified)
+              Positioned(
+                right: -1,
+                bottom: -1,
+                child: Container(
+                  width: widget.diameter * .38,
+                  height: widget.diameter * .38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF73F0C2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFF0B1020), width: 1.5),
+                    boxShadow: [BoxShadow(color: const Color(0xFF73F0C2).withValues(alpha: .35), blurRadius: 5)],
+                  ),
+                  child: Icon(Icons.check_rounded, size: widget.diameter * .27, color: const Color(0xFF0B1020)),
                 ),
-                child: Icon(Icons.check_rounded, size: widget.diameter * .27, color: const Color(0xFF0B1020)),
               ),
-            ),
           ]),
         ),
       );

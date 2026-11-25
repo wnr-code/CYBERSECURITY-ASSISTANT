@@ -12,14 +12,15 @@ import 'package:path_provider/path_provider.dart';
 import 'core/activity_timeline.dart';
 import 'core/apk_integrity.dart';
 import 'core/ai_assistant_coordinator.dart';
+import 'core/ai_data_sharing_consent.dart';
 import 'core/ai_provider_manager.dart';
 import 'core/ai_terminal_execution_bridge.dart';
 import 'core/assessment_execution_manager.dart';
 import 'core/diagnostics.dart';
 import 'core/local_result_store.dart';
+import 'core/local_ai_inference_runtime.dart';
 import 'core/market_provider_manager.dart';
 import 'core/package_manager.dart';
-import 'core/provider_registry.dart';
 import 'core/report_exporter.dart';
 import 'core/runtime_manager.dart';
 import 'core/security_findings.dart';
@@ -43,9 +44,9 @@ import 'widgets/assessment_runner.dart';
 import 'widgets/catalog_screen.dart';
 import 'widgets/dashboard_screen.dart';
 import 'widgets/market_provider_detail_screen.dart';
+import 'widgets/market_screen.dart';
 import 'widgets/cloudflare_dashboard_screen.dart';
 import 'widgets/security_overview_screen.dart';
-import 'widgets/provider_details_dialog.dart';
 import 'widgets/tool_runner_dialog.dart';
 
 final DiagnosticReporter _diagnostics = DiagnosticReporter(store: FileDiagnosticQueueStore());
@@ -251,6 +252,7 @@ class MainShell extends StatefulWidget {
     this.assessmentExecutionManager,
     this.marketProviderManager,
     this.aiProviderManager,
+    this.aiDataSharingConsentStore,
     this.initialSavedResults,
     this.initialStorageError,
     this.locale = const Locale('id'),
@@ -264,6 +266,7 @@ class MainShell extends StatefulWidget {
   final AssessmentExecutionManager? assessmentExecutionManager;
   final MarketProviderManager? marketProviderManager;
   final AiProviderManager? aiProviderManager;
+  final AiDataSharingConsentStore? aiDataSharingConsentStore;
   final List<ToolRunResult>? initialSavedResults;
   final String? initialStorageError;
   final Locale locale;
@@ -285,6 +288,7 @@ class _MainShellState extends State<MainShell> {
   late final AssessmentExecutionManager _assessmentExecutionManager;
   late final AiProviderManager _aiProviderManager;
   late final MarketProviderManager _marketProviderManager;
+  late final AiDataSharingConsentStore _aiDataSharingConsentStore;
   late final bool _ownsAiProviderManager;
   late final bool _ownsMarketProviderManager;
   late final ToolOrchestrator _terminalOrchestrator;
@@ -319,10 +323,14 @@ class _MainShellState extends State<MainShell> {
         (_resultStore is FindingRepository ? _resultStore as FindingRepository : MemoryFindingRepository());
     final secureBackend = FlutterSecureStorageBackend();
     final credentials = SecureCredentialStore(backend: secureBackend);
+    _aiDataSharingConsentStore = widget.aiDataSharingConsentStore ?? AiDataSharingConsentStore(backend: secureBackend);
     _ownsAiProviderManager = widget.aiProviderManager == null && widget.marketProviderManager == null;
     _aiProviderManager = widget.aiProviderManager ?? widget.marketProviderManager?.aiProviders ?? AiProviderManager(
       credentialStore: credentials,
-      adapters: [GeminiAiProviderAdapter(credentialStore: credentials)],
+      adapters: [
+        GeminiAiProviderAdapter(credentialStore: credentials),
+        LocalAiProviderAdapter(const AndroidLlamaCppInferenceRuntime()),
+      ],
     );
     _ownsMarketProviderManager = widget.marketProviderManager == null;
     _marketProviderManager = widget.marketProviderManager ?? MarketProviderManager(
@@ -601,20 +609,63 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  void _openConnections({ProviderCategory? initialCategory}) {
+  Future<void> _openMarket({int initialIndex = 0}) async {
     final reduceMotion = MediaQuery.of(context).disableAnimations;
-    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+    await Navigator.of(context).push<void>(PageRouteBuilder<void>(
       transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
       reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
-      pageBuilder: (_, __, ___) => Scaffold(
-        appBar: AppBar(title: Text(context.tr('Connections and providers'))),
-        body: ConnectionsScreen(initialCategory: initialCategory),
+      pageBuilder: (_, __, ___) => MarketScreen(
+        packageManager: _marketPackageManager,
+        providerManager: _marketProviderManager,
+        initialIndex: initialIndex,
+        onOpenCloudflareDashboard: _openCloudflareDashboard,
       ),
       transitionsBuilder: (_, animation, __, child) => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
         child: child,
       ),
     ));
+  }
+
+  void _openConnections() {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    Navigator.of(context).push<void>(PageRouteBuilder<void>(
+      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
+      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
+      pageBuilder: (_, __, ___) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('Endpoint reachability test'))),
+        body: const ConnectionsScreen(),
+      ),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+        child: child,
+      ),
+    ));
+  }
+
+  Future<void> _revokeAiDataSharingConsent() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Revoke AI data-sharing consent?')),
+        content: Text(dialogContext.tr('This removes saved consent for every AI provider. You will be asked again before the next message is sent to each provider.')),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Batal'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Revoke consent'))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _aiDataSharingConsentStore.revokeAll();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('AI data-sharing consent revoked.'))));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Could not update AI privacy consent. No messages were sent.'))));
+      }
+    }
   }
 
   void _openCatalog() {
@@ -624,9 +675,7 @@ class _MainShellState extends State<MainShell> {
       reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
       pageBuilder: (_, __, ___) => CatalogScreen(
         packageManager: _marketPackageManager,
-        providerManager: _marketProviderManager,
         onOpenAssessment: () => _selectDestination(1),
-        onOpenCloudflareDashboard: _openCloudflareDashboard,
       ),
       transitionsBuilder: (_, animation, __, child) => FadeTransition(
         opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
@@ -692,9 +741,11 @@ class _MainShellState extends State<MainShell> {
         );
         return AssistantScreen(
           providers: _aiProviderManager,
+          marketProviders: _marketProviderManager,
+          consentStore: _aiDataSharingConsentStore,
           coordinator: coordinator,
           reviewTool: _reviewAiTool,
-          onOpenConnections: () => _openConnections(initialCategory: ProviderCategory.ai),
+          onOpenMarket: () => _openMarket(initialIndex: 0),
           onOpenTools: () => _selectDestination(1),
         );
       },
@@ -1164,10 +1215,8 @@ class _MainShellState extends State<MainShell> {
       SettingsScreen(
         locale: widget.locale,
         onLocaleChanged: widget.onLocaleChanged,
-        onOpenAssistant: _openAssistantModule,
-        onOpenConnections: (category) => _openConnections(initialCategory: category),
-        onOpenAssessment: () => _selectDestination(1),
-        onOpenReports: () => _selectDestination(2),
+        onOpenConnections: _openConnections,
+        onRevokeAiConsent: () => unawaited(_revokeAiDataSharingConsent()),
         onOpenDiagnostics: _openDiagnostics,
       ),
     ];
@@ -1206,6 +1255,12 @@ class _MainShellState extends State<MainShell> {
           ],
         ),
         actions: [
+          IconButton(
+            key: const ValueKey('open-market-button'),
+            tooltip: context.tr('Open Market'),
+            onPressed: () => _openMarket(initialIndex: 0),
+            icon: const Icon(Icons.storefront_outlined, color: _mint),
+          ),
           IconButton(
             tooltip: context.tr('Open Edge Panel'),
             onPressed: () => setState(() => _edgePanelOpen = true),
@@ -1250,42 +1305,29 @@ class _MainShellState extends State<MainShell> {
                     child: ColoredBox(color: Colors.black.withValues(alpha: .52)),
                   ),
                   Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    child: EdgePanel(
-                      cloudflareConnected: _marketProviderManager.statusFor('cloudflare') == ManagedProviderStatus.connected,
-                      geminiConnected: _marketProviderManager.statusFor('gemini') == ManagedProviderStatus.connected,
-                      onOpenCloudflareDashboard: () {
-                        setState(() => _edgePanelOpen = false);
-                        _openCloudflareDashboard();
-                      },
-                      onOpenGeminiDetails: () {
-                        setState(() => _edgePanelOpen = false);
-                        _openGeminiProviderDetails();
-                      },
-                      onClose: () => setState(() => _edgePanelOpen = false),
-                      onOpenTerminal: _openTerminalWorkspace,
-                      onOpenAssessment: () {
-                        setState(() => _edgePanelOpen = false);
-                        _selectDestination(1);
-                      },
-                      onOpenCatalog: () {
-                        setState(() => _edgePanelOpen = false);
-                        _openCatalog();
-                      },
-                      onOpenReports: () {
-                        setState(() => _edgePanelOpen = false);
-                        _selectDestination(2);
-                      },
-                      onOpenSettings: () {
-                        setState(() => _edgePanelOpen = false);
-                        _selectDestination(3);
-                      },
-                      onOpenConnections: () {
-                        setState(() => _edgePanelOpen = false);
-                        _openConnections();
-                      },
+                    right: 12,
+                    top: 12,
+                    bottom: 12,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: EdgePanel(
+                        cloudflareConnected: _marketProviderManager.statusFor('cloudflare') == ManagedProviderStatus.connected,
+                        geminiConnected: _marketProviderManager.statusFor('gemini') == ManagedProviderStatus.connected,
+                        onOpenCloudflareDashboard: () {
+                          setState(() => _edgePanelOpen = false);
+                          _openCloudflareDashboard();
+                        },
+                        onOpenGeminiDetails: () {
+                          setState(() => _edgePanelOpen = false);
+                          _openGeminiProviderDetails();
+                        },
+                        onClose: () => setState(() => _edgePanelOpen = false),
+                        onOpenTerminal: _openTerminalWorkspace,
+                        onOpenAssessment: () {
+                          setState(() => _edgePanelOpen = false);
+                          _selectDestination(1);
+                        },
+                      ),
                     ),
                   ),
                 ]),
@@ -1647,7 +1689,7 @@ class ReportsScreen extends StatefulWidget {
 }
 
 class _ReportsScreenState extends State<ReportsScreen> {
-  _ReportFilter _filter = _ReportFilter.all;
+  _ReportFilter _filter = _ReportFilter.saved;
   _ReportContent _content = _ReportContent.reports;
   final _activityTargetController = TextEditingController();
   final _findingQueryController = TextEditingController();
@@ -1805,7 +1847,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           const SizedBox(height: 8),
           Text(context.tr('Reports and history'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text(context.tr('Review current session checks and results saved in private on-device SQLite.'),
+          Text(context.tr('Saved reports and local activity are shown by default. Session-only results stay in a separate filter.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.45)),
           const SizedBox(height: 16),
           SegmentedButton<_ReportContent>(
@@ -2416,19 +2458,15 @@ class SettingsScreen extends StatelessWidget {
     super.key,
     required this.locale,
     required this.onLocaleChanged,
-    required this.onOpenAssistant,
     required this.onOpenConnections,
-    required this.onOpenAssessment,
-    required this.onOpenReports,
+    required this.onRevokeAiConsent,
     required this.onOpenDiagnostics,
   });
 
   final Locale locale;
   final ValueChanged<Locale>? onLocaleChanged;
-  final VoidCallback onOpenAssistant;
-  final ValueChanged<ProviderCategory?> onOpenConnections;
-  final VoidCallback onOpenAssessment;
-  final VoidCallback onOpenReports;
+  final VoidCallback onOpenConnections;
+  final VoidCallback onRevokeAiConsent;
   final VoidCallback onOpenDiagnostics;
 
   @override
@@ -2476,50 +2514,25 @@ class SettingsScreen extends StatelessWidget {
               title: context.tr('Security & privacy'),
               body: context.tr('Checks stay on-device by default. Each network assessment asks for target-specific authorization; this app does not verify legal permission.'),
             ),
-            const SizedBox(height: 16),
-            _SettingsSectionHeader(title: context.tr('AI PROVIDERS'), icon: Icons.auto_awesome_outlined),
             const SizedBox(height: 8),
             Card(
-              child: Column(children: [
-                ListTile(
-                  leading: const Icon(Icons.hub_outlined, color: _mint),
-                  title: Text(context.tr('AI provider catalog')),
-                  subtitle: Text(context.tr('Configure a supported provider and use per-request privacy consent for AI analysis.')),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => onOpenConnections(ProviderCategory.ai),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.chat_bubble_outline_rounded, color: Color(0xFFAA9AFF)),
-                  title: Text(context.tr('AI Assistant')),
-                  subtitle: Text(context.tr('Gemini can be used after setup; unconfigured providers remain inactive.')),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: onOpenAssistant,
-                ),
-              ]),
+              child: ListTile(
+                leading: const Icon(Icons.privacy_tip_outlined, color: Color(0xFFAA9AFF)),
+                title: Text(context.tr('AI data-sharing consent')),
+                subtitle: Text(context.tr('Consent is saved locally for each provider. Revoke it here to require consent again before the next message.')),
+                trailing: TextButton(onPressed: onRevokeAiConsent, child: Text(context.tr('Revoke'))),
+              ),
             ),
             const SizedBox(height: 16),
-            _SettingsSectionHeader(title: context.tr('CLOUD PROVIDERS'), icon: Icons.cloud_outlined),
+            _SettingsSectionHeader(title: context.tr('ENDPOINT TESTS'), icon: Icons.cloud_outlined),
             const SizedBox(height: 8),
             Card(
               child: ListTile(
                 leading: const Icon(Icons.hub_outlined, color: _mint),
-                title: Text(context.tr('Connections and providers')),
-                subtitle: Text(context.tr('Review provider guides and endpoint test limits; cloud connectors are not active.')),
+                title: Text(context.tr('Endpoint reachability test')),
+                subtitle: Text(context.tr('One unauthenticated HTTPS reachability check. Provider credentials are managed in Market.')),
                 trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => onOpenConnections(null),
-              ),
-            ),
-            const SizedBox(height: 16),
-            _SettingsSectionHeader(title: context.tr('RUNTIME & TOOLS'), icon: Icons.build_circle_outlined),
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.radar_rounded, color: _mint),
-                title: Text(context.tr('Assessment and local tools')),
-                subtitle: Text(context.tr('Review available checks and run an authorized assessment.')),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: onOpenAssessment,
+                onTap: onOpenConnections,
               ),
             ),
             const SizedBox(height: 16),
@@ -2547,13 +2560,6 @@ class SettingsScreen extends StatelessWidget {
                           style: TextStyle(color: Colors.white.withValues(alpha: .68), height: 1.45)),
                     ])),
                   ]),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.article_outlined, color: _mint),
-                  title: Text(context.tr('Manage reports and local data')),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: onOpenReports,
                 ),
               ]),
             ),
@@ -2739,7 +2745,7 @@ class ToolsScreen extends StatelessWidget {
               const SizedBox(height: 8),
               Text(context.tr('Security Assessment'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text(context.tr('Choose an authorized target, select checks, then review results and findings.'),
+              Text(context.tr('Choose one authorized domain or URL per assessment, select multiple checks for that target, then review results and findings.'),
                   style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
               const SizedBox(height: 14),
               AssessmentRunner(
@@ -2753,9 +2759,7 @@ class ToolsScreen extends StatelessWidget {
 }
 
 class ConnectionsScreen extends StatefulWidget {
-  const ConnectionsScreen({super.key, this.initialCategory});
-
-  final ProviderCategory? initialCategory;
+  const ConnectionsScreen({super.key});
 
   @override
   State<ConnectionsScreen> createState() => _ConnectionsScreenState();
@@ -2763,40 +2767,14 @@ class ConnectionsScreen extends StatefulWidget {
 
 class _ConnectionsScreenState extends State<ConnectionsScreen> {
   final _endpointController = TextEditingController();
-  final _providerSearchController = TextEditingController();
-  ProviderCategory? _selectedProviderCategory;
   String? _status;
   bool _endpointAuthorized = false;
   bool _checking = false;
   bool? _reachable;
 
   @override
-  void initState() {
-    super.initState();
-    _selectedProviderCategory = widget.initialCategory;
-  }
-
-  List<ProviderDefinition> _visibleProviders(BuildContext context) {
-    final query = _providerSearchController.text.trim().toLowerCase();
-    return providerRegistry.where((provider) {
-      // Priority Cloudflare configuration and verification now live in Market;
-      // do not expose a second generic credential-only configuration surface here.
-      if (provider.id == 'cloudflare') return false;
-      final matchesCategory = _selectedProviderCategory == null ||
-          provider.category == _selectedProviderCategory ||
-          (_selectedProviderCategory == ProviderCategory.ai && provider.category == ProviderCategory.onDeviceAi);
-      final matchesText = query.isEmpty ||
-          provider.name.toLowerCase().contains(query) ||
-          _providerDescription(provider, context).toLowerCase().contains(query) ||
-          _providerCategoryName(provider.category, context).toLowerCase().contains(query);
-      return matchesCategory && matchesText;
-    }).toList();
-  }
-
-  @override
   void dispose() {
     _endpointController.dispose();
-    _providerSearchController.dispose();
     super.dispose();
   }
 
@@ -2807,12 +2785,13 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-          Text(context.tr('PUSAT KONEKSI'), style: _eyebrow(context)),
+          Text(context.tr('ENDPOINT CHECK'), style: _eyebrow(context)),
           const SizedBox(height: 8),
-          Text(context.tr('Infrastruktur pilihan Anda'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          Text(context.tr('Endpoint reachability'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text(context.tr('Local checks work without cloud accounts. Gemini inference is available after you save a user-owned API key; each prompt and approved tool result requires explicit data-sharing consent.'),
+          Text(context.tr('This check tests only whether an authorized HTTPS endpoint responds. It does not configure credentials or verify provider authentication.'),
               style: TextStyle(color: Colors.white.withValues(alpha: .72), height: 1.45)),
+          const SizedBox(height: 10),
           const SizedBox(height: 18),
           _SectionTitle(title: context.tr('Uji endpoint HTTPS'), icon: Icons.link),
           const SizedBox(height: 12),
@@ -2868,57 +2847,8 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
               ]),
             ),
           ),
-          const SizedBox(height: 12),
-          _ConnectionRow(name: context.tr('Backend cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.cloud_outlined),
-          const SizedBox(height: 10),
-          _ConnectionRow(name: context.tr('Penyedia AI'), detail: context.tr('Gemini needs a saved API key; Local AI stays Not Ready until a real on-device runtime and model are integrated.'), icon: Icons.auto_awesome_outlined),
-          const SizedBox(height: 10),
-          _ConnectionRow(name: context.tr('Penyimpanan cloud'), detail: context.tr('Belum dikonfigurasi'), icon: Icons.folder_open_outlined),
-          const SizedBox(height: 22),
-          _SectionTitle(title: context.tr('Katalog penyedia layanan'), icon: Icons.apps_outlined),
-          const SizedBox(height: 10),
-          Text(context.tr('Gemini is available through the Assistant when configured. Other catalog entries remain guides unless their specific adapter is marked available.'),
-              style: const TextStyle(height: 1.4)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _providerSearchController,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              prefixIcon: const Icon(Icons.search),
-              hintText: context.tr('Cari penyedia layanan'),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(spacing: 8, runSpacing: 4, children: [
-            FilterChip(
-              label: Text(context.tr('Semua')),
-              selected: _selectedProviderCategory == null,
-              onSelected: (_) => setState(() => _selectedProviderCategory = null),
-            ),
-            for (final category in ProviderCategory.values.where((category) => category != ProviderCategory.cloudInfrastructure))
-              FilterChip(
-                label: Text(_providerCategoryName(category, context)),
-                selected: _selectedProviderCategory == category,
-                onSelected: (selected) => setState(() => _selectedProviderCategory = selected ? category : null),
-              ),
-          ]),
-          const SizedBox(height: 8),
-          if (_visibleProviders(context).isEmpty)
-            _EmptyState(icon: Icons.search_off, title: context.tr('Tidak ada penyedia yang cocok'), detail: context.tr('Ubah kata kunci atau pilih kategori lain.')),
-          for (final provider in _visibleProviders(context)) ...[
-            Card(
-              child: ListTile(
-                leading: _ProviderBrandMark(provider: provider),
-                title: Text(provider.name),
-                subtitle: Text('${_providerCategoryName(provider.category, context)} · ${context.tr('Belum terhubung')}\n${_providerDescription(provider, context)}'),
-                trailing: const Icon(Icons.info_outline),
-                isThreeLine: true,
-                onTap: () => _showProviderDetails(context, provider),
-              ),
-            ),
-            const SizedBox(height: 8),
-            ],
+          const SizedBox(height: 18),
+          Text(context.tr('Use Market for the supported Gemini and Cloudflare integrations.'), style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
             ],
           ),
         ),
@@ -3013,77 +2943,6 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   }
 }
 
-class _ProviderBrandMark extends StatelessWidget {
-  const _ProviderBrandMark({required this.provider});
-
-  final ProviderDefinition provider;
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color, mark) = switch (provider.id) {
-      'cloudflare_workers' || 'cloudflare_d1' || 'cloudflare_r2' => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
-      'firebase_auth' || 'firebase_functions' || 'firebase_firestore' || 'firebase_storage' =>
-        (Icons.local_fire_department_rounded, const Color(0xFFFFB300), 'F'),
-      'supabase' => (Icons.storage_rounded, const Color(0xFF3ECF8E), 'S'),
-      'openai' => (Icons.auto_awesome_rounded, const Color(0xFF10A37F), 'OAI'),
-      'gemini' => (Icons.auto_awesome_rounded, const Color(0xFF4285F4), 'G'),
-      'anthropic' => (Icons.text_fields_rounded, const Color(0xFFD97757), 'A'),
-      'openrouter' => (Icons.alt_route_rounded, const Color(0xFF8B78E6), 'OR'),
-      'virustotal' => (Icons.shield_rounded, const Color(0xFF536DFF), 'VT'),
-      'shodan' => (Icons.radar, const Color(0xFFE44B5F), 'S'),
-      'urlscan' => (Icons.travel_explore, const Color(0xFF28B8CC), 'U'),
-      's3_compatible' => (Icons.cloud_queue_rounded, const Color(0xFFF59D28), 'S3'),
-      'webdav' => (Icons.folder_open_rounded, const Color(0xFF28B8CC), 'W'),
-      'cloudflare' => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
-      _ => switch (provider.category) {
-          ProviderCategory.cloudInfrastructure => (Icons.cloud_rounded, const Color(0xFFF38020), 'CF'),
-          ProviderCategory.backend => (Icons.cloud_outlined, const Color(0xFF7BA8E8), 'API'),
-          ProviderCategory.database => (Icons.storage_rounded, const Color(0xFF5BC0BE), 'DB'),
-          ProviderCategory.storage => (Icons.folder_open_rounded, const Color(0xFF6EB6D8), 'IO'),
-          ProviderCategory.ai => (Icons.auto_awesome_rounded, const Color(0xFF9A8BFF), 'AI'),
-          ProviderCategory.onDeviceAi => (Icons.phone_android_rounded, const Color(0xFF73F0C2), 'AI'),
-          ProviderCategory.securityIntelligence => (Icons.security_rounded, const Color(0xFF65A9FF), 'SEC'),
-          ProviderCategory.custom => (Icons.api, const Color(0xFFAAB4C5), 'API'),
-        },
-    };
-
-    return Semantics(
-      label: '${provider.name} icon',
-      image: true,
-      child: Container(
-        width: 42,
-        height: 42,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .13),
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: color.withValues(alpha: .28)),
-        ),
-        child: mark.length > 1
-            ? Text(mark, style: TextStyle(color: color, fontSize: mark.length > 2 ? 9 : 12, fontWeight: FontWeight.w800, letterSpacing: -.3))
-            : Icon(icon, color: color, size: 22),
-      ),
-    );
-  }
-}
-
-class _ConnectionRow extends StatelessWidget {
-  const _ConnectionRow({required this.name, required this.detail, required this.icon});
-  final String name;
-  final String detail;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => Card(
-        child: ListTile(
-          leading: Icon(icon, color: _mint),
-          title: Text(name),
-          subtitle: Text(detail),
-          trailing: const Icon(Icons.add_link_rounded),
-        ),
-      );
-}
-
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title, required this.icon});
   final String title;
@@ -3117,40 +2976,12 @@ TextStyle _eyebrow(BuildContext context) => TextStyle(
       letterSpacing: 1.5,
     );
 
-String _providerCategoryName(ProviderCategory category, BuildContext context) => context.tr(providerCategoryLabel(category));
-
-String _providerDescription(ProviderDefinition provider, BuildContext context) => switch (provider.id) {
-      'local_ai' => context.tr('Runtime inferensi lokal opsional di perangkat; tidak ada fallback cloud.'),
-      'openai' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
-      'gemini' => context.tr('Penyedia AI Google. Inferensi Gemini aktif setelah konfigurasi API key dan persetujuan pembagian data.'),
-      'anthropic' => context.tr('Penyedia AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
-      'openrouter' => context.tr('Perute model AI opsional. Kunci dapat disimpan lokal, tetapi belum ada permintaan API.'),
-      'cloudflare_workers' => context.tr('Backend edge milik pengguna. Uji ini hanya memeriksa keterjangkauan HTTPS.'),
-      'firebase_auth' => context.tr('Autentikasi Firebase opsional. SDK Firebase belum dihubungkan.'),
-      'firebase_functions' => context.tr('Cloud Functions milik pengguna. Pemanggilan fungsi belum diimplementasikan.'),
-      'supabase' => context.tr('Database dan layanan Supabase milik pengguna. Akses terautentikasi belum tersedia.'),
-      'cloudflare_d1' => context.tr('Database D1 sebaiknya diakses melalui Worker milik Anda; adapter belum tersedia.'),
-      'cloudflare_r2' => context.tr('Penyimpanan objek R2 milik pengguna. Adapter unggah belum tersedia.'),
-      'firebase_storage' => context.tr('Penyimpanan Firebase opsional. Unggah dan unduh belum tersedia.'),
-      's3_compatible' => context.tr('Penyimpanan S3-compatible. Akses dan kredensial belum didukung.'),
-      'webdav' => context.tr('Endpoint WebDAV HTTPS. Operasi terautentikasi belum didukung.'),
-      'custom_rest' => context.tr('Endpoint HTTPS pilihan pengguna; hanya pemeriksaan koneksi tanpa autentikasi tersedia.'),
-      _ => context.tr('Integrasi belum tersedia. Lihat panduan dan status sebelum memasukkan kredensial.'),
-    };
-
 IconData _toolIcon(String id) => switch (id) {
       'dns_lookup' => Icons.hub_outlined,
       'tls_inspector' => Icons.lock_outline,
       'http_headers' => Icons.http_outlined,
       _ => Icons.analytics_outlined,
     };
-
-void _showProviderDetails(BuildContext context, ProviderDefinition provider) {
-  showDialog<void>(
-    context: context,
-    builder: (_) => ProviderDetailsDialog(provider: provider),
-  );
-}
 
 Future<bool?> _confirmSaveResult(BuildContext context) => showDialog<bool>(
       context: context,

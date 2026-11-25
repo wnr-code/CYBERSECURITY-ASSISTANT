@@ -120,7 +120,17 @@ class AiProviderManager {
   List<String> get registeredProviderIds => List.unmodifiable(_adapters.keys);
 
   Future<bool> isReady(String providerId) async {
-    if (!_adapters.containsKey(providerId)) return false;
+    final adapter = _adapters[providerId];
+    if (adapter == null) return false;
+    if (adapter is LocalAiProviderAdapter) {
+      final runtime = adapter.runtime;
+      if (runtime is! LocalAiInferenceReadiness) return false;
+      try {
+        return await runtime.isReady().timeout(const Duration(seconds: 3));
+      } catch (_) {
+        return false;
+      }
+    }
     if (providerId == 'gemini') {
       try {
         final key = await credentialStore
@@ -313,6 +323,12 @@ class GeminiAiProviderAdapter implements AiProviderAdapter {
 /// model runtime must be explicitly supplied by the Android integration.
 abstract interface class LocalAiInferenceRuntime {
   Future<AiProviderReply> complete(List<AiChatMessage> messages);
+}
+
+/// Implementations must prove a loaded, verified model before Assistant offers
+/// Local AI. A missing readiness probe fails closed.
+abstract interface class LocalAiInferenceReadiness {
+  Future<bool> isReady();
 }
 
 class LocalAiProviderAdapter implements AiProviderAdapter {

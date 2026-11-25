@@ -1,0 +1,329 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "local-ai-artifacts",
+  "auditedOn": "2026-11-23",
+  "releaseGate": {
+    "status": "notReady",
+    "runtimeIntegrated": false,
+    "modelInstallEnabled": false,
+    "providerReady": false,
+    "offlineInferenceVerified": false
+  },
+  "runtime": {
+    "name": "local_inference + llamadart + llama.cpp",
+    "runtimeMode": "Android ARM64 CPU only (target; build configuration not integrated)",
+    "source": {
+      "repository": "https://github.com/slimshadystark/local_inference",
+      "version": "0.1.1",
+      "commit": "fbf0282ae5ab59af712c43015ebfb171573d5be6",
+      "url": "https://github.com/slimshadystark/local_inference/tree/fbf0282ae5ab59af712c43015ebfb171573d5be6",
+      "license": "MIT",
+      "licenseSource": "https://github.com/slimshadystark/local_inference/blob/fbf0282ae5ab59af712c43015ebfb171573d5be6/LICENSE",
+      "status": "source_metadata_pinned_not_integrated"
+    },
+    "dependencies": [
+      {
+        "name": "llamadart",
+        "version": "0.8.23",
+        "commit": "e153abed06870e3de48ea91a9b6cf8541c2ce79f",
+        "repository": "https://github.com/leehack/llamadart",
+        "status": "upstream_tag_resolved_not_integrated"
+      },
+      {
+        "name": "llamadart-native",
+        "version": "0.4.0",
+        "commit": "236d369512eedbd564b5b1b839c2a6d0f9dd654e",
+        "repository": "https://github.com/leehack/llamadart-native",
+        "status": "upstream_tag_resolved_not_downloaded"
+      }
+    ],
+    "archive": {
+      "name": "llamadart-native-android-arm64-v0.4.0.tar.gz",
+      "url": "https://github.com/leehack/llamadart-native/releases/download/v0.4.0/llamadart-native-android-arm64-v0.4.0.tar.gz",
+      "sizeBytes": 38610514,
+      "upstreamManifest": "https://github.com/slimshadystark/local_inference/blob/fbf0282ae5ab59af712c43015ebfb171573d5be6/packages/local_inference/tool/native/llamadart-native-v0.4.0.sha256",
+      "upstreamManifestBlobSha": "23652fbeef6c2a768bc078473692c5d586f55022",
+      "expected_sha256": "756f4d3c4d020e2de4e26b029ebe9aad26073b4f14c425ce76d10e1c6922a73f",
+      "actual_sha256": null,
+      "verification_status": "not_downloaded",
+      "metadata_digests_match": true,
+      "downloaded_to_audit_workspace": false,
+      "archive_bytes_verified": false,
+      "actual_contents_inspected": false,
+      "redirected_hosts": [
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com"
+      ],
+      "redirect_hosts_allowed": false
+    },
+    "abi": "arm64-v8a",
+    "minimumAndroidApi": 28,
+    "platformRequirementsSource": "https://github.com/slimshadystark/local_inference/blob/fbf0282ae5ab59af712c43015ebfb171573d5be6/packages/local_inference/README.md",
+    "upstreamDeviceTestStatus": "upstream README says release APK builds but has not run on a device",
+    "librariesExpectedByUpstreamManifest": [
+      {
+        "path": "libggml-base.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "34e527f2b583adb7b3d3447c304391e49e6ae9abf9641ebd29b784a18d29a097",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv8.0_1.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "6e9abd23b9c0f5f903a124c317dc5333f653eb2758a3c388c08671bb4f8bc271",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv8.2_1.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "9120ee543cc36bc06ec3e6c85e065d970cf79f4a48a54e0f1d966d02db05f716",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv8.2_2.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "faff63b804243e89aca06dbd147b0084bb82c1a5d565b2ddbf73b81723d2edb3",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv8.6_1.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "3d2394144c07c46a887a17a878b9eb52f9c200314cfcc04842e211716416f978",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv9.0_1.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "285ba9cc4625095ecbd9ab457db2c418c67ba868abe1971ae94999b634db5238",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv9.2_1.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "b1d93093d2a8ce0cb3d8a00ce3b43d93b8870cd37bf3eb073e8f121e5d1e3aac",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-cpu-android_armv9.2_2.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "c9fa9f52f658bbd73e3cd97c7edb7bfb696b5a4cc4629fc0cbf187536ad288d7",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-opencl.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "a024796d2f7bfea3cb9a1b7e3d9a0f25a04a19d98f6d7a275f0ca2b477a7a18d",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml-vulkan.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "3aedef70ef9c410936ff01ff2faed97b4889b638e8475bf93e8f9a8d17a0cbcf",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libggml.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "78f460e1338e5a990817769cbd48806afd9a70a937da94c90f4491ad5303a125",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libllama-common.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "0e70ef0127168b5a56867e20ef34fdc1af7b4347e6dbc91372e0d5cf446396fb",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libllama.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "890ba679b63201a7bd2776e824aca0902d67c8c4577b7cf5bb8c87def7cf2345",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libllamadart.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "135ab2aa626ea33c33904b5be6cd23db53e37fb527f195e84e9f2d08dfd8573a",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      },
+      {
+        "path": "libmtmd.so",
+        "abi": "arm64-v8a",
+        "expected_sha256": "19bf4aac35f109e3273f4e356856f259368acc69fc41c7a526552f7da8629b10",
+        "actual_sha256": null,
+        "verification_status": "not_downloaded",
+        "hash_source": "pinned_upstream_manifest"
+      }
+    ],
+    "nativeLibraryHashesLocallyVerified": false,
+    "elfMetadataInspected": false,
+    "nativeDependenciesInspected": false,
+    "buildBackendPolicy": {
+      "initialConfig": "cpu-only",
+      "requestedBackends": [
+        "cpu"
+      ],
+      "forbiddenBackends": [
+        "vulkan",
+        "opencl"
+      ],
+      "configSnippet": {
+        "hooks": {
+          "user_defines": {
+            "llamadart": {
+              "llamadart_native_runtimes": [
+                "llama_cpp"
+              ],
+              "llamadart_native_backends": {
+                "platforms": {
+                  "android-arm64": {
+                    "backends": [
+                      "cpu"
+                    ],
+                    "cpu_profile": "full"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "mustSetExplicitly": true,
+      "appliedToApp": false,
+      "upstreamDefaultAndroidArm64Backends": [
+        "cpu",
+        "vulkan"
+      ],
+      "verifiedInApk": false,
+      "apkAuditRequirement": "Fail integration validation if Vulkan/OpenCL shared libraries are packaged or a non-CPU backend is selectable."
+    },
+    "licenses": {
+      "status": "upstream_notices_reviewed_payload_not_inspected",
+      "noticeUrl": "https://github.com/slimshadystark/local_inference/blob/fbf0282ae5ab59af712c43015ebfb171573d5be6/packages/local_inference/NATIVE_LICENSES.txt",
+      "components": [
+        {
+          "name": "llama.cpp and ggml",
+          "license": "MIT"
+        },
+        {
+          "name": "llamadart-native",
+          "license": "MIT"
+        },
+        {
+          "name": "nlohmann/json",
+          "license": "MIT"
+        },
+        {
+          "name": "cpp-httplib",
+          "license": "MIT"
+        },
+        {
+          "name": "stb_image",
+          "license": "MIT or public domain"
+        },
+        {
+          "name": "rotate-bits",
+          "license": "MIT"
+        },
+        {
+          "name": "SHA-256, subprocess.h, miniaudio",
+          "license": "public domain (miniaudio also MIT-0)"
+        },
+        {
+          "name": "YaRN in ggml rope operation",
+          "license": "MIT"
+        },
+        {
+          "name": "KleidiAI 1.24.0 (Android ARM64 CPU variants)",
+          "license": "Apache-2.0"
+        },
+        {
+          "name": "ggml's KleidiAI glue",
+          "license": "MIT"
+        }
+      ]
+    },
+    "modelLifecycleAvailable": false,
+    "expectedCpuApkLibraries": [
+      "libggml-base.so",
+      "libggml-cpu-android_armv8.0_1.so",
+      "libggml-cpu-android_armv8.2_1.so",
+      "libggml-cpu-android_armv8.2_2.so",
+      "libggml-cpu-android_armv8.6_1.so",
+      "libggml-cpu-android_armv9.0_1.so",
+      "libggml-cpu-android_armv9.2_1.so",
+      "libggml-cpu-android_armv9.2_2.so",
+      "libggml.so",
+      "libllama-common.so",
+      "libllama.so",
+      "libllamadart.so",
+      "libmtmd.so"
+    ],
+    "forbiddenApkBackendLibraries": [
+      "libggml-opencl.so",
+      "libggml-vulkan.so"
+    ],
+    "nativeDependencyPolicy": {
+      "status": "not_inspected",
+      "approved_needed_by_library": null,
+      "actual_needed_by_library": null
+    }
+  },
+  "model": {
+    "name": "Qwen2.5-1.5B-Instruct Q4_K_M (target candidate only)",
+    "publisherRepository": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    "artifactFileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "publisherRevision": null,
+    "license": null,
+    "exactSizeBytes": null,
+    "publisherMetadataVerified": false,
+    "artifactBytesDownloaded": false,
+    "thirdPartyReportedSizeMB": 1120,
+    "thirdPartySizeSource": "https://github.com/SxryxnshS5/onenm_local_llm/blob/55dadf762d40069aa393ff822e7f9e643b40806b/flutter-llama.cpp/lib/models.dart",
+    "thirdPartySizeIsAuthoritative": false,
+    "installAllowed": false,
+    "blocker": "Publisher metadata host is outside this workspace network allowlist; do not substitute third-party claims for authoritative size/license/digest.",
+    "expected_sha256": null,
+    "actual_sha256": null,
+    "verification_status": "publisher_metadata_unverified",
+    "licenseVerificationStatus": "unverified",
+    "sourceRevisionVerificationStatus": "unverified",
+    "exactSizeVerificationStatus": "unverified"
+  },
+  "verificationPolicy": {
+    "unknownAbiRamOrStorage": "fail_closed",
+    "missingOrMalformedSha256": "fail_closed",
+    "digestMismatch": "delete_staged_artifact_and_fail",
+    "missingOrUnverifiedLicense": "fail_closed",
+    "installationSuccessDoesNotSetReady": true,
+    "readyRequiresOnDeviceInferenceAndOfflineRetest": true,
+    "cloudFallbackAllowed": false
+  }
+}
