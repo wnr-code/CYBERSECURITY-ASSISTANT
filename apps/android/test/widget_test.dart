@@ -285,6 +285,7 @@ Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory
 void _installSecureStorageTestBackend(WidgetTester tester) {
   const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   const pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
+  const localAiCapabilityChannel = MethodChannel('org.cybersecurityassistant/local_ai_capabilities');
   final values = <String, String>{};
   final testSupportDirectory = Directory.systemTemp.createTempSync('csa-widget-support-');
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -294,8 +295,10 @@ void _installSecureStorageTestBackend(WidgetTester tester) {
     }
     return null;
   });
+  messenger.setMockMethodCallHandler(localAiCapabilityChannel, (call) async => null);
   addTearDown(() {
     messenger.setMockMethodCallHandler(pathProviderChannel, null);
+    messenger.setMockMethodCallHandler(localAiCapabilityChannel, null);
     if (testSupportDirectory.existsSync()) testSupportDirectory.deleteSync(recursive: true);
   });
   messenger.setMockMethodCallHandler(channel, (call) async {
