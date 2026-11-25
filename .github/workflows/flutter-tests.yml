@@ -21,11 +21,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install stable Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
+          flutter-version: '3.47.0'
           channel: stable
           cache: true
+
+      - name: Install pinned Android SDK, NDK, and CMake
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools, platforms;android-36, build-tools;36.0.0, ndk;27.0.12077973, cmake;3.22.1'
+          accept-android-sdk-licenses: true
 
       - name: Generate Android Gradle scaffold
         working-directory: apps/android
@@ -36,6 +43,21 @@ jobs:
         run: |
           python3 -m unittest discover -s tool -p 'test_*.py' -v
           python3 tool/configure_android.py
+
+      - name: Record Flutter, Java, Android SDK, NDK, CMake, and Gradle versions
+        working-directory: apps/android
+        run: |
+          mkdir -p build
+          {
+            echo 'Flutter:'; flutter --version
+            echo 'Dart:'; dart --version 2>&1
+            echo 'Java:'; java -version 2>&1
+            echo 'Android SDK packages:'; sdkmanager --list_installed 2>&1
+            sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+            echo 'NDK:'; cat "$sdk_root/ndk/27.0.12077973/source.properties"
+            echo 'CMake:'; "$sdk_root/cmake/3.22.1/bin/cmake" --version
+            echo 'Gradle wrapper:'; ./android/gradlew --version
+          } | tee build/local-ai-toolchain.txt
 
       - name: Resolve Flutter dependencies
         working-directory: apps/android
@@ -147,6 +169,41 @@ jobs:
           name: android-cold-start-captures
           path: apps/android/build/cold-start
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Build and audit source-native CPU-only ARM64 APK
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: apps/android
+        env:
+          LOCAL_AI_NATIVE_BUILD: '1'
+        run: python3 tool/run_flutter_build.py
+
+      - name: Summarize source-native audit result
+        if: success() && github.event_name == 'workflow_dispatch'
+        working-directory: apps/android
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          echo "### Local AI native APK validation (not device readiness)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Workflow run: ${RUN_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: ${COMMIT_SHA}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- llama.cpp source: ea722948146befb23c9529c1ec7f59fb2f34911f" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Build/audit report: apps/android/build/local-ai-audit-report.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Local AI status remains **Not Ready** until real ARM64 device inference, offline, RAM, and stability checks pass." >> "$GITHUB_STEP_SUMMARY"
+          cat build/local-ai-audit-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload source-native APK and audit evidence
+        if: success() && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: local-ai-arm64-native-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/android/build/app/outputs/flutter-apk/app-debug.apk
+            apps/android/build/local-ai-audit-report.json
+            apps/android/build/local-ai-toolchain.txt
+            apps/android/pubspec.lock
+          if-no-files-found: error
           retention-days: 14
 
       - name: Require both emulator cold-start checks to pass

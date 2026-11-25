@@ -16,6 +16,7 @@ from local_ai_artifact_gate import (
     audit_apk_cpu_only,
     audit_model_file,
     audit_runtime_archive,
+    audit_source_build_config,
     audit_source_native_apk,
     preflight_runtime_build,
 )
@@ -28,6 +29,13 @@ def _elf64_aarch64() -> bytes:
     header[5] = 1  # little endian
     struct.pack_into("<H", header, 18, 183)  # EM_AARCH64
     return bytes(header)
+
+
+def _source_apk(apk_path: Path, native: bytes | None = None) -> None:
+    with zipfile.ZipFile(apk_path, "w") as apk:
+        apk.writestr("lib/arm64-v8a/libcsa_localai.so", native or _elf64_aarch64())
+        apk.writestr("assets/local_ai/llama.cpp-LICENSE.txt", "MIT License\nCopyright The ggml authors\n")
+        apk.writestr("classes.dex", b"LocalAiInferenceBridge nativeLoadModel nativeUnloadModel nativeComplete")
 
 
 def _manifest_with_runtime(libraries: dict[str, bytes]) -> dict:
@@ -182,12 +190,43 @@ hooks:
             self.assertEqual(report["actual_sha256"], report["expected_sha256"])
             self.assertIn("still_disabled", report["install_gate_status"])
 
+    def test_effective_cmake_cache_must_be_pinned_arm64_cpu_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "app" / ".dart_tool" / "llama.cpp"
+            source.mkdir(parents=True)
+            source.joinpath(".csa-source-lock").write_text("a" * 40, encoding="utf-8")
+            cache = root / "CMakeCache.txt"
+            names = (
+                "BUILD_SHARED_LIBS", "GGML_NATIVE", "GGML_OPENMP", "GGML_LLAMAFILE",
+                "GGML_CPU_KLEIDIAI", "GGML_CPU_ALL_VARIANTS", "GGML_BACKEND_DL",
+                "GGML_CUDA", "GGML_VULKAN", "GGML_OPENCL", "GGML_METAL", "GGML_RPC",
+                "GGML_SYCL", "GGML_CANN", "GGML_MUSA", "GGML_CUDA_GRAPHS",
+                "LLAMA_OPENSSL", "LLAMA_SUBPROCESS", "LLAMA_BUILD_COMMON", "LLAMA_BUILD_TESTS",
+                "LLAMA_BUILD_TOOLS", "LLAMA_BUILD_EXAMPLES", "LLAMA_BUILD_SERVER",
+                "LLAMA_BUILD_APP", "LLAMA_BUILD_MTMD",
+            )
+            lines = [
+                "ANDROID_ABI:STRING=arm64-v8a",
+                f"LLAMA_CPP_SOURCE_DIR:UNINITIALIZED={source}",
+                *(f"{name}:BOOL=OFF" for name in names),
+            ]
+            cache.write_text("\n".join(lines), encoding="utf-8")
+            report = audit_source_build_config(cache, "a" * 40)
+            self.assertEqual(report["target_abi"], "arm64-v8a")
+            self.assertEqual(report["verification_status"], "effective_cmake_cache_cpu_only_arm64_verified")
+            cache.write_text("\n".join(lines).replace("GGML_VULKAN:BOOL=OFF", "GGML_VULKAN:BOOL=ON"), encoding="utf-8")
+            with self.assertRaisesRegex(GateError, "CPU-only/no-CLI"):
+                audit_source_build_config(cache, "a" * 40)
+
     def test_source_apk_audit_accepts_only_static_arm64_jni_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             apk_path = Path(directory) / "source.apk"
-            with zipfile.ZipFile(apk_path, "w") as apk:
-                apk.writestr("lib/arm64-v8a/libcsa_localai.so", _elf64_aarch64())
-            with patch("local_ai_artifact_gate._readelf_needed", return_value=["libc.so", "libc++_shared.so"]):
+            _source_apk(apk_path)
+            with (
+                patch("local_ai_artifact_gate._readelf_needed", return_value=["libc.so", "libc++_shared.so"]),
+                patch("local_ai_artifact_gate._readelf_symbols", return_value={"JNI_OnLoad"}),
+            ):
                 report = audit_source_native_apk(apk_path, readelf="readelf")
             self.assertEqual(report["native_library"]["elf"]["machine"], "AArch64")
             self.assertEqual(report["bundled_gguf_models"], 0)
@@ -196,17 +235,19 @@ hooks:
     def test_source_apk_audit_rejects_model_payload_and_dynamic_gpu_library(self):
         with tempfile.TemporaryDirectory() as directory:
             apk_path = Path(directory) / "model.apk"
-            with zipfile.ZipFile(apk_path, "w") as apk:
+            _source_apk(apk_path)
+            with zipfile.ZipFile(apk_path, "a") as apk:
                 apk.writestr("assets/unverified.gguf", b"GGUF")
-                apk.writestr("lib/arm64-v8a/libcsa_localai.so", _elf64_aarch64())
             with self.assertRaisesRegex(GateError, "Unverified model payload"):
                 audit_source_native_apk(apk_path, readelf="readelf")
 
             apk_path = Path(directory) / "gpu.apk"
-            with zipfile.ZipFile(apk_path, "w") as apk:
-                apk.writestr("lib/arm64-v8a/libcsa_localai.so", _elf64_aarch64())
-            with patch("local_ai_artifact_gate._readelf_needed", return_value=["libvulkan.so"]):
-                with self.assertRaisesRegex(GateError, "forbidden backend dependencies"):
+            _source_apk(apk_path)
+            with (
+                patch("local_ai_artifact_gate._readelf_needed", return_value=["libvulkan.so"]),
+                patch("local_ai_artifact_gate._readelf_symbols", return_value={"JNI_OnLoad"}),
+            ):
+                with self.assertRaisesRegex(GateError, "forbidden accelerator dependencies"):
                     audit_source_native_apk(apk_path, readelf="readelf")
 
 

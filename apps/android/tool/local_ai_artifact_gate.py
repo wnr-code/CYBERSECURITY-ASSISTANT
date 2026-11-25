@@ -26,6 +26,10 @@ MANIFEST_PATH = Path(__file__).resolve().parents[3] / "docs" / "local-ai-artifac
 RUNTIME_DEPENDENCIES = {"local_inference", "local_inference_flutter", "llamadart"}
 RUNTIME_PREFIXES = ("libggml", "libllama", "libllamadart", "libmtmd")
 FORBIDDEN_BACKEND_TOKENS = ("vulkan", "opencl")
+SOURCE_FORBIDDEN_ACCELERATOR_TOKENS = (
+    "vulkan", "opencl", "cuda", "metal", "sycl", "rpc", "kleidiai",
+    "openmp", "musa", "cann", "rocm", "hip", "nnapi", "qnn", "coreml",
+)
 MAX_NATIVE_FILE_BYTES = 256 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_EXPANDED_ARCHIVE_BYTES = 1024 * 1024 * 1024
@@ -400,6 +404,70 @@ def audit_apk_cpu_only(apk_path: Path, manifest_path: Path = MANIFEST_PATH) -> d
     return {"verification_status": "cpu_only_hashes_match", "runtime_libraries": rows, "apk": str(apk_path)}
 
 
+def audit_source_build_config(cache_path: Path, expected_commit: str) -> dict[str, Any]:
+    """Check the effective CMake cache used by Gradle's Android native build."""
+    if cache_path.is_symlink() or not cache_path.is_file():
+        raise GateError("CMakeCache must be a regular file from the Android native build.")
+    try:
+        text = cache_path.read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeError) as exc:
+        raise GateError(f"Could not read the native CMake cache: {exc}") from exc
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        match = re.match(r"^([^#/][^:]*):[^=]+=(.*)$", line)
+        if match:
+            values[match.group(1)] = match.group(2)
+
+    abi = values.get("ANDROID_ABI") or values.get("CMAKE_ANDROID_ARCH_ABI")
+    if abi != "arm64-v8a":
+        raise GateError(f"CMake cache target ABI is not arm64-v8a: {abi!r}")
+    source_dir = values.get("LLAMA_CPP_SOURCE_DIR", "").replace("\\", "/").rstrip("/")
+    if not source_dir.endswith("/.dart_tool/llama.cpp"):
+        raise GateError("CMake cache did not use the prepared official llama.cpp source tree.")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
+        raise GateError("Expected llama.cpp commit pin is malformed.")
+    source_lock = Path(source_dir) / ".csa-source-lock"
+    if not source_lock.is_file() or source_lock.read_text(encoding="utf-8").strip() != expected_commit:
+        raise GateError("Prepared llama.cpp source lock does not match the expected immutable commit.")
+
+    cpu_only_flags = (
+        "BUILD_SHARED_LIBS", "GGML_NATIVE", "GGML_OPENMP", "GGML_LLAMAFILE",
+        "GGML_CPU_KLEIDIAI", "GGML_CPU_ALL_VARIANTS", "GGML_BACKEND_DL",
+        "GGML_CUDA", "GGML_VULKAN", "GGML_OPENCL", "GGML_METAL", "GGML_RPC",
+        "GGML_SYCL", "GGML_CANN", "GGML_MUSA", "GGML_CUDA_GRAPHS",
+        "LLAMA_OPENSSL", "LLAMA_SUBPROCESS", "LLAMA_BUILD_COMMON", "LLAMA_BUILD_TESTS",
+        "LLAMA_BUILD_TOOLS", "LLAMA_BUILD_EXAMPLES", "LLAMA_BUILD_SERVER",
+        "LLAMA_BUILD_APP", "LLAMA_BUILD_MTMD",
+    )
+    effective = {name: values.get(name) for name in cpu_only_flags}
+    wrong = {name: value for name, value in effective.items() if value != "OFF"}
+    if wrong:
+        raise GateError(f"Effective CMake cache violates the CPU-only/no-CLI build policy: {wrong}")
+    return {
+        "verification_status": "effective_cmake_cache_cpu_only_arm64_verified",
+        "target_abi": abi,
+        "source_commit": expected_commit,
+        "source_directory": source_dir,
+        "effective_backend_and_build_flags": effective,
+        "cmake_cache": str(cache_path),
+    }
+
+
+def _readelf_symbols(path: Path, readelf: str) -> set[str]:
+    try:
+        result = subprocess.run([readelf, "-Ws", str(path)], check=False, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise GateError(f"readelf symbol inspection timed out for {path.name}") from exc
+    if result.returncode != 0:
+        raise GateError(f"readelf symbol inspection failed for {path.name}: {(result.stderr or result.stdout)[-500:]}")
+    symbols: set[str] = set()
+    for line in result.stdout.splitlines():
+        columns = line.split()
+        if len(columns) >= 8:
+            symbols.add(columns[-1].split("@", 1)[0])
+    return symbols
+
+
 def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[str, Any]:
     """Audit the JNI shared library produced from pinned llama.cpp source.
 
@@ -419,9 +487,43 @@ def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[
         if model_files:
             raise GateError(f"Unverified model payload must not be bundled in the APK: {model_files[:5]}")
         native_files = [name for name in names if len(PurePosixPath(name).parts) == 3 and PurePosixPath(name).parts[0] == "lib" and name.lower().endswith(".so")]
-        forbidden = [name for name in native_files if any(token in PurePosixPath(name).name.lower() for token in FORBIDDEN_BACKEND_TOKENS)]
+        non_arm64 = [name for name in native_files if PurePosixPath(name).parts[1] != "arm64-v8a"]
+        if non_arm64:
+            raise GateError(f"APK contains native libraries outside the arm64-v8a ABI: {non_arm64}")
+        apk_native_inventory: list[dict[str, Any]] = []
+        with tempfile.TemporaryDirectory(prefix="local-ai-apk-native-inventory-") as inventory_dir:
+            for index, name in enumerate(native_files):
+                payload = apk.read(name)
+                if not payload or len(payload) > MAX_NATIVE_FILE_BYTES:
+                    raise GateError(f"APK native library is empty or over the audit size limit: {name}")
+                native_path = Path(inventory_dir) / f"native-{index}.so"
+                native_path.write_bytes(payload)
+                elf_info = _elf_header(native_path)
+                dependencies = _readelf_needed(native_path, readelf)
+                forbidden_needed = [
+                    dependency for dependency in dependencies
+                    if any(token in dependency.lower() for token in SOURCE_FORBIDDEN_ACCELERATOR_TOKENS)
+                ]
+                if forbidden_needed:
+                    raise GateError(f"APK native library has forbidden accelerator dependencies: {name}: {forbidden_needed}")
+                apk_native_inventory.append({"path": name, "sha256": hashlib.sha256(payload).hexdigest(), "elf": elf_info, "needed_libraries": dependencies})
+        forbidden = [
+            name for name in native_files
+            if any(token in PurePosixPath(name).name.lower() for token in SOURCE_FORBIDDEN_ACCELERATOR_TOKENS)
+        ]
         if forbidden:
-            raise GateError(f"Forbidden Vulkan/OpenCL native library found in APK: {forbidden}")
+            raise GateError(f"Forbidden accelerator/backend native library found in APK: {forbidden}")
+        license_path = "assets/local_ai/llama.cpp-LICENSE.txt"
+        if license_path not in names:
+            raise GateError("The app APK is missing the upstream llama.cpp license notice.")
+        license_bytes = apk.read(license_path)
+        license_text = license_bytes.decode("utf-8", errors="strict")
+        if "MIT License" not in license_text or "The ggml authors" not in license_text:
+            raise GateError("The bundled llama.cpp license notice does not match the pinned upstream MIT notice.")
+        dex_payloads = [apk.read(name) for name in names if name.startswith("classes") and name.endswith(".dex")]
+        required_jni_strings = (b"LocalAiInferenceBridge", b"nativeLoadModel", b"nativeUnloadModel", b"nativeComplete")
+        if not dex_payloads or any(not any(token in payload for payload in dex_payloads) for token in required_jni_strings):
+            raise GateError("APK DEX does not contain the expected LocalAiInferenceBridge class and native methods.")
         runtime_related = [name for name in native_files if PurePosixPath(name).name.startswith(("libcsa_localai", "libllama", "libggml"))]
         if len(runtime_related) != 1 or PurePosixPath(runtime_related[0]).name != "libcsa_localai.so":
             raise GateError(f"Expected one statically linked Local AI JNI library; found {runtime_related}")
@@ -438,9 +540,15 @@ def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[
             library_path.write_bytes(payload)
             elf = _elf_header(library_path)
             needed = _readelf_needed(library_path, readelf)
-        forbidden_dependencies = [name for name in needed if any(token in name.lower() for token in FORBIDDEN_BACKEND_TOKENS)]
+            symbols = _readelf_symbols(library_path, readelf)
+        if "JNI_OnLoad" not in symbols:
+            raise GateError("Native JNI library does not export JNI_OnLoad for LocalAiInferenceBridge registration.")
+        forbidden_dependencies = [
+            name for name in needed
+            if any(token in name.lower() for token in SOURCE_FORBIDDEN_ACCELERATOR_TOKENS)
+        ]
         if forbidden_dependencies:
-            raise GateError(f"Source-built CPU library has forbidden backend dependencies: {forbidden_dependencies}")
+            raise GateError(f"Source-built CPU library has forbidden accelerator/backend dependencies: {forbidden_dependencies}")
         dynamic_llama = [name for name in needed if name.lower().startswith(("libllama", "libggml"))]
         if dynamic_llama:
             raise GateError(f"llama.cpp/ggml must be statically linked into the single JNI library: {dynamic_llama}")
@@ -452,8 +560,17 @@ def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "elf": elf,
                 "needed_libraries": needed,
+                "jni_onload_exported": True,
+                "jni_methods_registered_in_dex": list(required_jni_strings[1:]),
             },
             "bundled_gguf_models": 0,
+            "apk_native_libraries": apk_native_inventory,
+            "license_notice": {
+                "path": license_path,
+                "sha256": hashlib.sha256(license_bytes).hexdigest(),
+                "declared_license": "MIT",
+                "verification_status": "upstream_notice_present",
+            },
         }
 
 
