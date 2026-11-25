@@ -673,7 +673,11 @@ class DiagnosticReporter extends ChangeNotifier {
     final safeAssessmentId = safeIdentifier(assessmentId);
     final safeExecutionId = safeIdentifier(executionId);
     final safeRuntimeStatus = runtimeStatus == null ? null : sanitizeDiagnosticText(runtimeStatus, maxLength: 120);
-    final key = '${resolvedType.name}|${safeComponent.toLowerCase()}|$safeType|${safeMessage.toLowerCase()}|${safeStack.split('\n').take(4).join('|').replaceAll(RegExp(r':\d+'), ':#')}';
+    // When a stack is present, identify repeats by the originating frames rather
+    // than volatile message text (for example, an ArgumentError value). Keep the
+    // message in the key for stackless reports so unrelated errors do not merge.
+    final fingerprintMessage = safeStack.isEmpty ? safeMessage.toLowerCase() : '';
+    final key = '${resolvedType.name}|${safeComponent.toLowerCase()}|$safeType|$fingerprintMessage|${safeStack.split('\n').take(4).join('|').replaceAll(RegExp(r':\d+'), ':#')}';
     final fingerprint = sha256.convert(utf8.encode(key)).toString();
     final duplicate = _reports.indexWhere((row) => row.fingerprint == fingerprint && now.difference(row.lastSeen) < const Duration(days: 1));
     final automaticApproval = _settings.consentGranted && _settings.autoReportingEnabled && !_settings.reviewBeforeUpload;

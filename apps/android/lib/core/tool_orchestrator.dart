@@ -353,12 +353,15 @@ class ToolOrchestrator {
         runtimeExecutionId: report?.executionId,
       ));
       if (cancelled) throw RuntimeExecutionCancelled(report: report);
+      final diagnosticCategory = requiredCapabilities.contains(RuntimeCapability.network)
+          ? DiagnosticCategory.network
+          : DiagnosticCategory.assessment;
       DiagnosticReporter.recordGlobal(
         const ToolOrchestrationException('Tool execution failed safely; response content was excluded.'),
         stackTrace: stack,
-        category: DiagnosticCategory.assessment,
-        reportType: DiagnosticReportType.assessmentError,
-        severity: DiagnosticSeverity.high,
+        category: diagnosticCategory,
+        reportType: reportTypeForCategory(diagnosticCategory),
+        severity: severityForCategory(diagnosticCategory),
         component: 'tool_orchestrator',
         assessmentId: invocation.parentActivityId ?? invocation.correlationId,
         executionId: report?.executionId,

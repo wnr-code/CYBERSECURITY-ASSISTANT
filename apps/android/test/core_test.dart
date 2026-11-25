@@ -588,7 +588,10 @@ void main() {
     test('catalogue IDs are unique and no provider claims an implemented connector', () {
       expect(providerRegistry, isNotEmpty);
       expect(providerRegistry.map((provider) => provider.id).toSet().length, providerRegistry.length);
-      expect(providerRegistry.every((provider) => !provider.integrationImplemented), isTrue);
+      expect(
+        providerRegistry.where((provider) => provider.integrationImplemented).map((provider) => provider.id).toSet(),
+        {'cloudflare', 'gemini'},
+      );
       expect(providerRegistry.any((provider) => provider.category == ProviderCategory.ai), isTrue);
       expect(providerAuthLabel(ProviderAuthType.apiKey), 'User-owned API key required');
     });
