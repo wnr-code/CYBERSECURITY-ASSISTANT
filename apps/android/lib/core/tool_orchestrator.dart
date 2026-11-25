@@ -13,6 +13,10 @@ import 'security_tools.dart';
 import 'tool_registry.dart';
 import 'tool_result_codec.dart';
 
+// Trust the terminal error chosen by RuntimeManager; a caller token cancelled
+// during later cleanup must not relabel an already-won timeout or completion.
+bool _isCallerCancellation(Object error) => error is RuntimeExecutionCancelled;
+
 class ToolInvocation {
   const ToolInvocation({
     required this.toolId,
@@ -44,11 +48,12 @@ class ToolOrchestrationException implements Exception {
 enum AssessmentCheckStatus { completed, failed, skipped, cancelled }
 
 class AssessmentCheckOutcome {
-  const AssessmentCheckOutcome({required this.toolId, required this.status, this.result, this.error});
+  const AssessmentCheckOutcome({required this.toolId, required this.status, this.result, this.error, this.executionReport});
   final String toolId;
   final AssessmentCheckStatus status;
   final ToolRunResult? result;
   final String? error;
+  final RuntimeExecutionReport? executionReport;
 }
 
 class AssessmentExecution {
@@ -123,6 +128,20 @@ class ToolOrchestrator {
       '$prefix-${DateTime.now().toUtc().microsecondsSinceEpoch}-${++_activitySequence}-${_activityRandom.nextInt(1 << 32).toRadixString(16)}';
 
   static String _boundedActivitySummary(String value) => sanitizeActivitySummary(value);
+
+  static String _runtimeReportNotice(RuntimeExecutionReport? report) {
+    if (report == null) return '';
+    final notices = <String>[];
+    if (report.cleanupOutcome == RuntimeCleanupOutcome.failed) {
+      notices.add('Runtime cleanup failed${report.cleanupErrorType == null ? '' : ' (${report.cleanupErrorType})'}.');
+    }
+    if (!report.terminalStateSaveConfirmed) notices.add('Runtime lifecycle state save was not confirmed.');
+    if (!report.terminalAuditSaveConfirmed) notices.add('Runtime terminal audit save was not confirmed.');
+    if (report.persistenceFailures.isNotEmpty && report.terminalStateSaveConfirmed && report.terminalAuditSaveConfirmed) {
+      notices.add('An additional runtime persistence operation was not confirmed.');
+    }
+    return notices.isEmpty ? '' : ' ${notices.join(' ')}';
+  }
 
   Future<void> _emitActivity(ActivityEvent event) async {
     final validated = event.sanitizedForStorage().validated();
@@ -258,9 +277,14 @@ class ToolOrchestrator {
       status: ActivityStatus.started,
       startedAt: activityStartedAt,
     );
+    RuntimeManager? activeManager;
+    RuntimeExecutionReport? previousExecutionReport;
+    RuntimeExecutionReport? executionReport;
     try {
       await _emitActivity(activity);
       final manager = await _runtimeManager;
+      activeManager = manager;
+      previousExecutionReport = manager.lastExecutionReport;
       final discovery = _findDiscovery(await manager.discover(), runtimeId);
       if (discovery == null || discovery.status != RuntimeDiscoveryStatus.available) {
         final reason = discovery?.reason ?? 'No compatible runtime adapter is registered.';
@@ -275,6 +299,7 @@ class ToolOrchestrator {
         networkAuthorized: invocation.authorized,
         cancellationToken: invocation.cancellationToken,
       );
+      executionReport = execution.report;
       const resultFields = {'toolId', 'target', 'summary', 'details', 'findings', 'completedAt', 'authorizationConfirmed'};
       if (execution.output.keys.toSet().length != resultFields.length || !execution.output.keys.toSet().containsAll(resultFields)) {
         throw const ToolOrchestrationException('Runtime returned an invalid tool result shape.');
@@ -282,7 +307,7 @@ class ToolOrchestrator {
       final decodedResult = decodeToolRunResult(jsonEncode(execution.output));
       final result = invocation.parentActivityId == null
           ? decodedResult
-          : decodedResult.copyWith(assessmentId: invocation.parentActivityId);
+          : decodedResult.copyWith(assessmentId: invocation.parentActivityId, runtimeExecutionReport: executionReport);
       if (result.toolId != definition.id || result.target.length > 2048 || result.summary.length > 4096 ||
           result.details.length > 128 || result.findings.length > 128 ||
           result.details.any((detail) => detail.length > 8192) ||
@@ -299,22 +324,34 @@ class ToolOrchestrator {
       await _emitActivity(activity.copyWith(
         status: ActivityStatus.completed,
         finishedAt: DateTime.now().toUtc(),
-        summary: _boundedActivitySummary('$reportStatus${result.summary}'),
+        summary: _boundedActivitySummary('$reportStatus${result.summary}${_runtimeReportNotice(executionReport)}'),
         findingCount: result.findings.length,
         sourceResultKey: reportSaved ? activityResultKey(result.toolId, result.target, result.completedAt) : null,
       ));
       return result;
     } on Exception catch (error, stack) {
-      final cancelled = error is RuntimeExecutionCancelled || invocation.cancellationToken?.isCancelled == true;
+      final cancelled = _isCallerCancellation(error);
+      final currentReport = activeManager?.lastExecutionReport;
+      final exceptionReport = switch (error) {
+        RuntimeExecutionException(:final report) => report,
+        RuntimeExecutionCancelled(:final report) => report,
+        RuntimeExecutionTimeout(:final report) => report,
+        _ => null,
+      };
+      final report = executionReport ?? exceptionReport ??
+          (identical(currentReport, previousExecutionReport) ? null : currentReport);
+      final failureSummary = cancelled ? 'Check cancelled.' : 'The check failed before producing a report.';
       await _emitActivity(activity.copyWith(
         status: cancelled ? ActivityStatus.cancelled : ActivityStatus.failed,
         finishedAt: DateTime.now().toUtc(),
-        summary: cancelled ? 'Check cancelled.' : 'The check failed before producing a report.',
+        summary: _boundedActivitySummary('$failureSummary${_runtimeReportNotice(report)}'),
       ));
-      if (cancelled) throw const RuntimeExecutionCancelled();
+      if (cancelled) throw RuntimeExecutionCancelled(report: report);
       DiagnosticReporter.recordGlobal(const ToolOrchestrationException('Tool execution failed safely; response content was excluded.'),
           stackTrace: stack, category: DiagnosticCategory.network);
-      if (error is RuntimeExecutionException) throw ToolExecutionException(error.message);
+      if (error is RuntimeExecutionException) {
+        throw ToolExecutionException(error.message, executionReport: report);
+      }
       rethrow;
     }
   }
@@ -335,6 +372,7 @@ class ToolOrchestrator {
     final startedAt = DateTime.now().toUtc();
     final outcomes = <AssessmentCheckOutcome>[];
     final results = <ToolRunResult>[];
+    var cancellationStoppedRun = false;
     final assessmentActivity = ActivityEvent(
       eventId: _newActivityId('assessment'),
       kind: ActivityKind.assessment,
@@ -374,12 +412,33 @@ class ToolOrchestrator {
           parentActivityId: assessmentActivity.eventId,
         ));
         results.add(result);
-        outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.completed, result: result);
+        outcome = AssessmentCheckOutcome(
+          toolId: toolId,
+          status: AssessmentCheckStatus.completed,
+          result: result,
+          executionReport: result.runtimeExecutionReport as RuntimeExecutionReport?,
+        );
       } on Exception catch (error) {
-        if (error is RuntimeExecutionCancelled || cancellationToken?.isCancelled == true) {
-          outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.cancelled, error: 'Check cancelled.');
+        if (_isCallerCancellation(error)) {
+          outcome = AssessmentCheckOutcome(
+            toolId: toolId,
+            status: AssessmentCheckStatus.cancelled,
+            error: 'Check cancelled.',
+            executionReport: error is RuntimeExecutionCancelled ? error.report : null,
+          );
         } else {
-          outcome = AssessmentCheckOutcome(toolId: toolId, status: AssessmentCheckStatus.failed, error: error.toString());
+          outcome = AssessmentCheckOutcome(
+            toolId: toolId,
+            status: AssessmentCheckStatus.failed,
+            error: error.toString(),
+            executionReport: error is ToolExecutionException
+                ? error.executionReport as RuntimeExecutionReport?
+                : error is RuntimeExecutionTimeout
+                    ? error.report
+                    : error is RuntimeExecutionException
+                        ? error.report
+                        : null,
+          );
         }
       }
       outcomes.add(outcome);
@@ -390,7 +449,10 @@ class ToolOrchestrator {
     await _emitActivity(assessmentActivity.copyWith(status: ActivityStatus.running));
     try {
       for (final id in ids) {
-        if (cancellationToken?.isCancelled == true) break;
+        if (cancellationToken?.isCancelled == true) {
+          cancellationStoppedRun = true;
+          break;
+        }
         await runOne(
           id,
           checkTarget: target,
@@ -398,20 +460,24 @@ class ToolOrchestrator {
           allowPrivate: allowPrivateNetwork,
         );
       }
-      if (includeResponseAnalysis && results.isNotEmpty && cancellationToken?.isCancelled != true) {
-        await runOne(
-          'response_analyzer',
-          checkTarget: results.first.target,
-          checkAuthorized: false,
-          prior: results.toList(growable: false),
-        );
+      if (includeResponseAnalysis && results.isNotEmpty) {
+        if (cancellationToken?.isCancelled == true) {
+          cancellationStoppedRun = true;
+        } else {
+          await runOne(
+            'response_analyzer',
+            checkTarget: results.first.target,
+            checkAuthorized: false,
+            prior: results.toList(growable: false),
+          );
+        }
       }
       final completedAt = DateTime.now().toUtc();
       final completedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.completed).length;
       final failedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.failed).length;
       final skippedCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.skipped).length;
       final cancelledCount = outcomes.where((outcome) => outcome.status == AssessmentCheckStatus.cancelled).length;
-      final cancelled = cancellationToken?.isCancelled == true || cancelledCount > 0;
+      final cancelled = cancellationStoppedRun || cancelledCount > 0;
       final activityStatus = cancelled ? ActivityStatus.cancelled : failedCount > 0 || skippedCount > 0 ? ActivityStatus.failed : ActivityStatus.completed;
       final findingCount = results.where((result) => result.toolId != 'response_analyzer').fold<int>(
         0,
@@ -430,7 +496,7 @@ class ToolOrchestrator {
         outcomes: List.unmodifiable(outcomes),
       );
     } catch (error) {
-      final cancelled = cancellationToken?.isCancelled == true || error is RuntimeExecutionCancelled;
+      final cancelled = _isCallerCancellation(error);
       await _emitActivity(assessmentActivity.copyWith(
         status: cancelled ? ActivityStatus.cancelled : ActivityStatus.failed,
         finishedAt: DateTime.now().toUtc(),

@@ -38,6 +38,8 @@ class _SavedHistory implements ResultHistoryStore {
 
 void main() {
   testWidgets('dashboard loads saved history automatically at startup', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
     final history = _SavedHistory();
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('id'),

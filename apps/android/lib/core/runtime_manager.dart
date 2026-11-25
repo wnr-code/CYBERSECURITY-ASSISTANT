@@ -151,29 +151,78 @@ class RuntimeDiscovery {
 
 class RuntimeCancellationToken implements ToolCancellation {
   final Completer<void> _cancelled = Completer<void>();
+  final Set<void Function()> _listeners = {};
+
   @override
   bool get isCancelled => _cancelled.isCompleted;
+
   @override
   Future<void> get whenCancelled => _cancelled.future;
-  void cancel() {
-    if (!_cancelled.isCompleted) _cancelled.complete();
+
+  @visibleForTesting
+  int get debugListenerCount => _listeners.length;
+
+  RuntimeCancellationSubscription subscribe(void Function() listener) {
+    if (isCancelled) {
+      listener();
+      return RuntimeCancellationSubscription._closed();
+    }
+    _listeners.add(listener);
+    return RuntimeCancellationSubscription._(this, listener);
   }
+
+  void cancel() {
+    if (_cancelled.isCompleted) return;
+    _cancelled.complete();
+    final listeners = List<void Function()>.of(_listeners);
+    _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
+  }
+
+  void _removeListener(void Function() listener) => _listeners.remove(listener);
+
   void throwIfCancelled() {
     if (isCancelled) throw const RuntimeExecutionCancelled();
   }
 }
 
+/// A removable callback registration for a [RuntimeCancellationToken].
+class RuntimeCancellationSubscription {
+  RuntimeCancellationSubscription._(this._token, this._listener);
+  RuntimeCancellationSubscription._closed() : _token = null, _listener = null;
+
+  RuntimeCancellationToken? _token;
+  final void Function()? _listener;
+
+  void dispose() {
+    final token = _token;
+    _token = null;
+    final listener = _listener;
+    if (token != null && listener != null) token._removeListener(listener);
+  }
+}
+
 class RuntimeExecutionCancelled implements Exception {
-  const RuntimeExecutionCancelled();
+  const RuntimeExecutionCancelled({this.report});
+  final RuntimeExecutionReport? report;
   @override
   String toString() => 'Runtime execution was cancelled.';
 }
 
 class RuntimeExecutionException implements Exception {
-  const RuntimeExecutionException(this.message);
+  const RuntimeExecutionException(this.message, {this.report});
   final String message;
+  final RuntimeExecutionReport? report;
   @override
   String toString() => message;
+}
+
+class RuntimeExecutionTimeout extends TimeoutException {
+  RuntimeExecutionTimeout(Duration? duration, this.report)
+      : super('Runtime execution timed out.', duration);
+  final RuntimeExecutionReport report;
 }
 
 class RuntimeToolRequest {
@@ -195,12 +244,138 @@ abstract interface class RuntimeExecutionAdapter implements RuntimeAdapter {
   Future<Map<String, Object?>> executeTool(RuntimeToolRequest request);
 }
 
+enum RuntimeExecutionOutcome { success, failed, timeout, cancelled }
+enum RuntimeCleanupOutcome { notAttempted, succeeded, failed }
+enum RuntimePersistenceKind { registry, state, audit }
+
+class RuntimePersistenceFailure {
+  const RuntimePersistenceFailure({
+    required this.sequence,
+    required this.kind,
+    required this.operation,
+    required this.errorType,
+    required this.at,
+    this.executionId,
+    this.runtimeId,
+    this.toolId,
+  });
+
+  final int sequence;
+  final RuntimePersistenceKind kind;
+  final String operation;
+  final String errorType;
+  final DateTime at;
+  final String? executionId;
+  final String? runtimeId;
+  final String? toolId;
+}
+
+/// Ephemeral execution report: this reports what the runtime could confirm in
+/// memory; it is not itself durable and never claims failed writes succeeded.
+class RuntimeExecutionReport {
+  RuntimeExecutionReport({
+    required this.executionId,
+    required this.runtimeId,
+    required this.toolId,
+    required this.outcome,
+    required this.cleanupOutcome,
+    this.cleanupErrorType,
+    required this.terminalStateSaveConfirmed,
+    required this.terminalAuditSaveConfirmed,
+    required List<RuntimePersistenceFailure> persistenceFailures,
+  }) : persistenceFailures = List.unmodifiable(persistenceFailures);
+
+  final String executionId;
+  final String runtimeId;
+  final String toolId;
+  final RuntimeExecutionOutcome outcome;
+  final RuntimeCleanupOutcome cleanupOutcome;
+  final String? cleanupErrorType;
+  final bool terminalStateSaveConfirmed;
+  final bool terminalAuditSaveConfirmed;
+  final List<RuntimePersistenceFailure> persistenceFailures;
+
+  bool get persistenceFullyConfirmed =>
+      terminalStateSaveConfirmed && terminalAuditSaveConfirmed && persistenceFailures.isEmpty;
+}
+
 class RuntimeExecutionResult {
-  const RuntimeExecutionResult({required this.runtimeId, required this.toolId, required this.output, required this.duration});
+  const RuntimeExecutionResult({required this.runtimeId, required this.toolId, required this.output, required this.duration, this.report});
   final String runtimeId;
   final String toolId;
   final Map<String, Object?> output;
   final Duration duration;
+  final RuntimeExecutionReport? report;
+}
+
+enum _RuntimeTerminalKind { success, failed, timeout, cancelled }
+
+class _RuntimeTerminalOutcome {
+  const _RuntimeTerminalOutcome._(this.kind, {this.output, this.error, this.stackTrace, this.timeout});
+
+  const _RuntimeTerminalOutcome.success(Map<String, Object?> output)
+      : this._(_RuntimeTerminalKind.success, output: output);
+  const _RuntimeTerminalOutcome.failed(Object error, StackTrace stackTrace)
+      : this._(_RuntimeTerminalKind.failed, error: error, stackTrace: stackTrace);
+  const _RuntimeTerminalOutcome.timeout(Duration timeout)
+      : this._(_RuntimeTerminalKind.timeout, timeout: timeout);
+  const _RuntimeTerminalOutcome.cancelled() : this._(_RuntimeTerminalKind.cancelled);
+
+  final _RuntimeTerminalKind kind;
+  final Map<String, Object?>? output;
+  final Object? error;
+  final StackTrace? stackTrace;
+  final Duration? timeout;
+
+  Exception asException() => switch (kind) {
+        _RuntimeTerminalKind.cancelled => const RuntimeExecutionCancelled(),
+        _RuntimeTerminalKind.timeout => TimeoutException('Runtime execution timed out.', timeout),
+        _RuntimeTerminalKind.failed => error is RuntimeExecutionException
+            ? error!
+            : RuntimeExecutionException(sanitizeDiagnosticText(error.toString())),
+        _RuntimeTerminalKind.success => StateError('A successful terminal outcome has no exception.'),
+      };
+}
+
+class _RuntimeTerminalArbiter {
+  _RuntimeTerminalArbiter(this.executionToken);
+
+  final RuntimeCancellationToken executionToken;
+  _RuntimeTerminalOutcome? _outcome;
+  final Completer<_RuntimeTerminalOutcome> _completed = Completer<_RuntimeTerminalOutcome>();
+  RuntimeCancellationSubscription? _cancellationSubscription;
+  Timer? _deadline;
+
+  bool get isSettled => _outcome != null;
+  _RuntimeTerminalOutcome? get outcome => _outcome;
+  Future<_RuntimeTerminalOutcome> get future => _completed.future;
+
+  void attachCancellationSubscription(RuntimeCancellationSubscription subscription) {
+    if (isSettled) {
+      subscription.dispose();
+    } else {
+      _cancellationSubscription = subscription;
+    }
+  }
+
+  void attachDeadline(Timer deadline) {
+    if (isSettled) {
+      deadline.cancel();
+    } else {
+      _deadline?.cancel();
+      _deadline = deadline;
+    }
+  }
+
+  bool trySet(_RuntimeTerminalOutcome outcome) {
+    if (_outcome != null) return false;
+    _outcome = outcome;
+    _deadline?.cancel();
+    _cancellationSubscription?.dispose();
+    if (outcome.kind != _RuntimeTerminalKind.success) executionToken.cancel();
+    _completed.complete(outcome);
+    return true;
+  }
 }
 
 class MemoryRuntimeStateStore implements RuntimeStateStore {
@@ -256,6 +431,11 @@ abstract interface class RuntimeAdapter {
   Future<bool> healthCheck();
 }
 
+/// Timer seam used by runtime execution tests to advance deadlines deterministically.
+typedef RuntimeTimerFactory = Timer Function(Duration duration, void Function() callback);
+
+Timer _defaultTimerFactory(Duration duration, void Function() callback) => Timer(duration, callback);
+
 /// Persistent lifecycle/permission boundary only. An empty adapter registry is intentional:
 /// this app does not bundle or execute arbitrary Market downloads as a runtime.
 class RuntimeManager extends ChangeNotifier {
@@ -266,9 +446,11 @@ class RuntimeManager extends ChangeNotifier {
     PolicyEngine? policy,
     DateTime Function()? clock,
     Future<Directory> Function()? supportDirectoryProvider,
+    RuntimeTimerFactory? timerFactory,
   })  : _clock = clock ?? DateTime.now,
         _policy = policy ?? PolicyEngine(),
-        _supportDirectoryProvider = supportDirectoryProvider ?? getApplicationSupportDirectory {
+        _supportDirectoryProvider = supportDirectoryProvider ?? getApplicationSupportDirectory,
+        _timerFactory = timerFactory ?? _defaultTimerFactory {
     for (final adapter in adapters) {
       final descriptor = adapter.descriptor;
       if (!descriptor.metadataValid || !descriptor.resourceLimit.valid || _adapters.containsKey(descriptor.id)) {
@@ -283,16 +465,38 @@ class RuntimeManager extends ChangeNotifier {
   final PolicyEngine _policy;
   final DateTime Function() _clock;
   final Future<Directory> Function() _supportDirectoryProvider;
+  final RuntimeTimerFactory _timerFactory;
   final Map<String, RuntimeAdapter> _adapters = {};
   final Map<String, RuntimeState> _states = {};
   final Map<String, Set<RuntimeCapability>> _grants = {};
+  static int _managerSequence = 0;
+  static const int persistenceFailureHistoryLimit = 100;
+
   final List<Map<String, Object?>> _audit = [];
+  final List<RuntimePersistenceFailure> _persistenceFailures = [];
+  final Map<String, RuntimeExecutionReport> _executionReports = {};
+  final int _managerId = ++_managerSequence;
+  String? _activeExecutionId;
+  String? _activeRuntimeId;
+  String? _activeToolId;
+  int _executionSequence = 0;
   int _auditSequence = 0;
+  int _persistenceFailureSequence = 0;
+  RuntimeExecutionReport? _lastExecutionReport;
   bool _initialized = false;
+  bool _registrySnapshotLoaded = false;
+  bool _registryMutation = false;
   Future<void>? _initialization;
   bool _busy = false;
   List<RuntimeState> get states => List.unmodifiable(_states.values);
   List<Map<String, Object?>> get auditEvents => List.unmodifiable(_audit.map((entry) => Map<String, Object?>.unmodifiable(entry)));
+  /// Rolling history containing at most [persistenceFailureHistoryLimit] most recent failures.
+  List<RuntimePersistenceFailure> get persistenceFailures => List.unmodifiable(_persistenceFailures);
+  /// Compatibility/diagnostics view of the most recently completed execution; not a run lookup API.
+  RuntimeExecutionReport? get lastExecutionReport => _lastExecutionReport;
+  RuntimeExecutionReport? reportForExecution(String executionId) => _executionReports[executionId];
+
+  String _newExecutionId() => 'runtime-exec-$_managerId-${++_executionSequence}';
   List<RuntimeDescriptor> get registered => List.unmodifiable(_adapters.values.map((adapter) => adapter.descriptor));
   /// Tool IDs exposed by concrete, reviewed execution adapters only. A descriptor
   /// without an executable adapter does not authorize dispatch.
@@ -374,7 +578,8 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<void> _initializeRegistry() async {
     if (_initialized) return;
-    final snapshot = await store.load();
+    final snapshot = _registrySnapshotLoaded ? const <String, Object?>{} : await store.load();
+    _registrySnapshotLoaded = true;
     final rawGrants = snapshot['grants'];
     if (rawGrants is Map<String, dynamic>) {
       for (final entry in rawGrants.entries) {
@@ -413,33 +618,46 @@ class RuntimeManager extends ChangeNotifier {
         if (sequence != null && sequence > _auditSequence) _auditSequence = sequence;
       }
     }
-    for (final adapter in _adapters.values.where((item) => item.descriptor.bundled)) {
-      final descriptor = adapter.descriptor;
-      if (_states.containsKey(descriptor.id) || compatibilityProblem(descriptor) != null) continue;
-      try {
-        await adapter.install(await _workingDirectory(descriptor.id));
-        _grants[descriptor.id] = Set.unmodifiable(descriptor.requiredCapabilities.intersection(environment.availableCapabilities));
-        _states[descriptor.id] = RuntimeState(
-          id: descriptor.id,
-          lifecycle: RuntimeLifecycle.installed,
-          installedVersion: descriptor.version,
-          updatedAt: _clock().toUtc(),
-        );
-        await _record('bundled-adapter-installed', descriptor.id);
-      } catch (error, stack) {
-        DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
-        _states[descriptor.id] = RuntimeState(
-          id: descriptor.id,
-          lifecycle: RuntimeLifecycle.failed,
-          installedVersion: null,
-          updatedAt: _clock().toUtc(),
-          lastError: sanitizeDiagnosticText(error.runtimeType.toString()),
-        );
-        await _record('bundled-adapter-install-failed', descriptor.id);
+    _registryMutation = true;
+    try {
+      for (final adapter in _adapters.values.where((item) => item.descriptor.bundled)) {
+        final descriptor = adapter.descriptor;
+        if (_states.containsKey(descriptor.id) || compatibilityProblem(descriptor) != null) continue;
+        try {
+          await adapter.install(await _workingDirectory(descriptor.id));
+          _grants[descriptor.id] = Set.unmodifiable(descriptor.requiredCapabilities.intersection(environment.availableCapabilities));
+          _states[descriptor.id] = RuntimeState(
+            id: descriptor.id,
+            lifecycle: RuntimeLifecycle.installed,
+            installedVersion: descriptor.version,
+            updatedAt: _clock().toUtc(),
+          );
+          await _record('bundled-adapter-installed', descriptor.id);
+        } catch (error, stack) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
+          _states[descriptor.id] = RuntimeState(
+            id: descriptor.id,
+            lifecycle: RuntimeLifecycle.failed,
+            installedVersion: null,
+            updatedAt: _clock().toUtc(),
+            lastError: sanitizeDiagnosticText(error.runtimeType.toString()),
+          );
+          await _record('bundled-adapter-install-failed', descriptor.id);
+        }
       }
+    } finally {
+      _registryMutation = false;
+    }
+    _registryMutation = true;
+    try {
+      await _persist();
+    } catch (error) {
+      _rememberPersistenceFailure(RuntimePersistenceKind.registry, 'initialize-registry', error);
+      rethrow;
+    } finally {
+      _registryMutation = false;
     }
     _initialized = true;
-    await _persist();
     notifyListeners();
   }
 
@@ -470,7 +688,7 @@ class RuntimeManager extends ChangeNotifier {
       throw StateError('Only declared capabilities available in this environment may be granted.');
     }
     final directory = await _workingDirectory(id);
-    return _withLifecycle(id, RuntimeLifecycle.installed, () async {
+    return _withLifecycle(id, RuntimeLifecycle.failed, () async {
       await _record('install-start', id);
       try {
         await adapter.install(directory);
@@ -520,17 +738,39 @@ class RuntimeManager extends ChangeNotifier {
   }
 
   Future<RuntimeState> stop(String id, {required bool userApproved}) async {
-    await initializeRegistry();
+    if (_busy) throw StateError('Runtime stop is unavailable while another runtime operation is in progress.');
+    _busy = true;
+    try {
+      await initializeRegistry();
     if (!userApproved) {
       DiagnosticReporter.recordGlobal(StateError('Runtime stop was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit runtime stop approval is required.');
     }
     final adapter = _requireAdapter(id);
-    await adapter.stop();
+    try {
+      await adapter.stop();
+    } catch (error, stackTrace) {
+      DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.runtime);
+      try {
+        await _record('runtime-stop-cleanup-failed', id);
+      } catch (_) {
+        // The persistence failure remains inspectable in persistenceFailures.
+      }
+      try {
+        await _set(id, RuntimeLifecycle.failed, version: adapter.descriptor.version, error: 'Runtime cleanup failed.');
+      } catch (stateError, stateStackTrace) {
+        DiagnosticReporter.recordGlobal(stateError, stackTrace: stateStackTrace, category: DiagnosticCategory.database);
+        _setVolatileCleanupFailure(id, adapter.descriptor.version);
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
     final healthy = await adapter.healthCheck();
     final state = await _set(id, RuntimeLifecycle.stopped, version: adapter.descriptor.version, health: _clock().toUtc());
     if (!healthy) return _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed after stop.');
     return state;
+    } finally {
+      _busy = false;
+    }
   }
 
   Future<RuntimeState> update(String id, String version, {required bool userApproved, required bool licenseAccepted}) async {
@@ -587,7 +827,103 @@ class RuntimeManager extends ChangeNotifier {
         version: adapter.descriptor.version, error: healthy ? null : 'Runtime health check failed.', health: _clock().toUtc());
   }
 
+  Future<T> _awaitTerminalStage<T>(
+    _RuntimeTerminalArbiter arbiter,
+    Future<T> Function() operation, {
+    Duration? timeout,
+  }) {
+    final terminal = arbiter.outcome;
+    if (terminal != null) return Future<T>.error(terminal.asException(), terminal.stackTrace);
+
+    final stage = Completer<T>();
+    Timer? deadline;
+    if (timeout != null) {
+      deadline = _timerFactory(timeout, () => arbiter.trySet(_RuntimeTerminalOutcome.timeout(timeout)));
+      arbiter.attachDeadline(deadline);
+    }
+
+    Future<T>.sync(operation).then(
+      (value) {
+        deadline?.cancel();
+        if (!arbiter.isSettled && !stage.isCompleted) stage.complete(value);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        deadline?.cancel();
+        arbiter.trySet(_RuntimeTerminalOutcome.failed(error, stackTrace));
+      },
+    );
+
+    return Future.any<T>([
+      stage.future,
+      arbiter.future.then<T>((outcome) => throw outcome.asException()),
+    ]).whenComplete(() => deadline?.cancel());
+  }
+
   Future<RuntimeExecutionResult> executeTool({
+    required String runtimeId,
+    required String toolId,
+    required Map<String, Object?> input,
+    required Set<RuntimeCapability> requiredCapabilities,
+    required bool networkAuthorized,
+    RuntimeCancellationToken? cancellationToken,
+  }) {
+    // Admission is synchronous: no await can interleave before the lock is held.
+    if (_busy) return Future<RuntimeExecutionResult>.error(const RuntimeExecutionException('Another runtime operation is in progress.'));
+    _busy = true;
+    final executionId = _newExecutionId();
+    _activeExecutionId = executionId;
+    _activeRuntimeId = runtimeId;
+    _activeToolId = toolId;
+    return _executeToolAdmitted(
+      executionId: executionId,
+      runtimeId: runtimeId,
+      toolId: toolId,
+      input: input,
+      requiredCapabilities: requiredCapabilities,
+      networkAuthorized: networkAuthorized,
+      cancellationToken: cancellationToken,
+    ).then<RuntimeExecutionResult>((result) => result, onError: (Object error, StackTrace stack) {
+      if (_executionReports[executionId] == null) {
+        final report = RuntimeExecutionReport(
+          executionId: executionId,
+          runtimeId: runtimeId,
+          toolId: toolId,
+          outcome: error is RuntimeExecutionCancelled
+              ? RuntimeExecutionOutcome.cancelled
+              : error is TimeoutException
+                  ? RuntimeExecutionOutcome.timeout
+                  : RuntimeExecutionOutcome.failed,
+          cleanupOutcome: RuntimeCleanupOutcome.notAttempted,
+          terminalStateSaveConfirmed: false,
+          terminalAuditSaveConfirmed: false,
+          persistenceFailures: _persistenceFailures.where((failure) => failure.executionId == executionId).toList(),
+        );
+        _lastExecutionReport = report;
+        _executionReports[executionId] = report;
+        while (_executionReports.length > persistenceFailureHistoryLimit) {
+          _executionReports.remove(_executionReports.keys.first);
+        }
+        if (error is RuntimeExecutionCancelled) {
+          throw RuntimeExecutionCancelled(report: report);
+        }
+        if (error is TimeoutException) {
+          throw RuntimeExecutionTimeout(error.duration, report);
+        }
+        if (error is RuntimeExecutionException) {
+          throw RuntimeExecutionException(error.message, report: report);
+        }
+      }
+      Error.throwWithStackTrace(error, stack);
+    }).whenComplete(() {
+      _busy = false;
+      _activeExecutionId = null;
+      _activeRuntimeId = null;
+      _activeToolId = null;
+    });
+  }
+
+  Future<RuntimeExecutionResult> _executeToolAdmitted({
+    required String executionId,
     required String runtimeId,
     required String toolId,
     required Map<String, Object?> input,
@@ -601,10 +937,6 @@ class RuntimeManager extends ChangeNotifier {
       await _record('tool-rejected', runtimeId, toolId: toolId);
       DiagnosticReporter.recordGlobal(const RuntimeExecutionException('Tool was rejected by the runtime registry.'), category: DiagnosticCategory.runtime);
       throw const RuntimeExecutionException('No executable adapter is registered for this tool.');
-    }
-    if (_busy) {
-      await _record('tool-rejected-busy', runtimeId, toolId: toolId);
-      throw const RuntimeExecutionException('Another runtime execution is in progress.');
     }
     final descriptor = adapter.descriptor;
     final compatibility = compatibilityProblem(descriptor);
@@ -640,90 +972,223 @@ class RuntimeManager extends ChangeNotifier {
       await _record('tool-rejected-input', runtimeId, toolId: toolId);
       throw const RuntimeExecutionException('Tool input exceeds the configured size limit.');
     }
-    final token = cancellationToken ?? RuntimeCancellationToken();
-    if (token.isCancelled) {
+    final callerCancellationToken = cancellationToken;
+    if (callerCancellationToken?.isCancelled == true) {
       await _record('tool-cancelled-before-start', runtimeId, toolId: toolId);
-      token.throwIfCancelled();
+      throw const RuntimeExecutionCancelled();
     }
     final directory = await _workingDirectory(runtimeId);
+    if (callerCancellationToken?.isCancelled == true) {
+      await _record('tool-cancelled-before-start', runtimeId, toolId: toolId);
+      throw const RuntimeExecutionCancelled();
+    }
+
     final stopwatch = Stopwatch()..start();
-    _busy = true;
+    final executionToken = RuntimeCancellationToken();
+    final arbiter = _RuntimeTerminalArbiter(executionToken);
+    if (callerCancellationToken != null) {
+      arbiter.attachCancellationSubscription(
+        callerCancellationToken.subscribe(() => arbiter.trySet(const _RuntimeTerminalOutcome.cancelled())),
+      );
+    }
+    _lastExecutionReport = null;
     try {
-      await _record('tool-start', runtimeId, toolId: toolId);
-      final lifecycle = _states[runtimeId]!.lifecycle;
-      if (lifecycle == RuntimeLifecycle.installed || lifecycle == RuntimeLifecycle.stopped) {
-        await adapter.initialize(directory).timeout(descriptor.resourceLimit.maxExecution);
-        await _set(runtimeId, RuntimeLifecycle.initialized, version: descriptor.version);
+      late final _RuntimeTerminalOutcome terminal;
+      try {
+        await _awaitTerminalStage(arbiter, () => _record('tool-start', runtimeId));
+        final lifecycle = _states[runtimeId]!.lifecycle;
+        if (lifecycle == RuntimeLifecycle.installed || lifecycle == RuntimeLifecycle.stopped) {
+          await _awaitTerminalStage(
+            arbiter,
+            () => adapter.initialize(directory),
+            timeout: descriptor.resourceLimit.maxExecution,
+          );
+          await _awaitTerminalStage(
+            arbiter,
+            () => _set(runtimeId, RuntimeLifecycle.initialized, version: descriptor.version),
+          );
+        }
+        final healthy = await _awaitTerminalStage(
+          arbiter,
+          adapter.healthCheck,
+          timeout: descriptor.resourceLimit.maxExecution,
+        );
+        if (!healthy) throw const RuntimeExecutionException('Runtime health check failed before tool execution.');
+        await _awaitTerminalStage(
+          arbiter,
+          () => _set(runtimeId, RuntimeLifecycle.running, version: descriptor.version, health: _clock().toUtc()),
+        );
+
+        if (arbiter.isSettled) throw arbiter.outcome!.asException();
+        // Adapters receive only the child token. The arbiter owns the caller
+        // subscription and fixes the winning cause before cleanup begins.
+        final request = RuntimeToolRequest(
+          toolId: toolId,
+          input: Map<String, Object?>.unmodifiable(input),
+          requiredCapabilities: Set.unmodifiable(requiredCapabilities),
+          networkAuthorized: networkAuthorized,
+          cancellationToken: executionToken,
+        );
+        final executionDeadline = descriptor.resourceLimit.maxExecution;
+        final deadline = _timerFactory(
+          executionDeadline,
+          () => arbiter.trySet(_RuntimeTerminalOutcome.timeout(executionDeadline)),
+        );
+        arbiter.attachDeadline(deadline);
+        Future<Map<String, Object?>>.sync(() => adapter.executeTool(request)).then(
+          (output) {
+            deadline.cancel();
+            try {
+              if (output.keys.any((key) => key.isEmpty || key.length > 100)) {
+                throw const RuntimeExecutionException('Runtime returned invalid output keys.');
+              }
+              final encodedOutput = jsonEncode(output);
+              if (utf8.encode(encodedOutput).length > descriptor.resourceLimit.maxOutputBytes) {
+                throw const RuntimeExecutionException('Runtime output exceeds the configured size limit.');
+              }
+              final safeOutput = Map<String, Object?>.unmodifiable(
+                Map<String, Object?>.from(jsonDecode(encodedOutput) as Map<String, dynamic>),
+              );
+              arbiter.trySet(_RuntimeTerminalOutcome.success(safeOutput));
+            } catch (error, stackTrace) {
+              arbiter.trySet(_RuntimeTerminalOutcome.failed(error, stackTrace));
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            deadline.cancel();
+            if (error is TimeoutException) {
+              arbiter.trySet(_RuntimeTerminalOutcome.timeout(error.duration ?? executionDeadline));
+            } else {
+              arbiter.trySet(_RuntimeTerminalOutcome.failed(error, stackTrace));
+            }
+          },
+        );
+        terminal = await arbiter.future;
+      } catch (error, stackTrace) {
+        final proposed = error is RuntimeExecutionCancelled
+            ? const _RuntimeTerminalOutcome.cancelled()
+            : error is TimeoutException
+                ? _RuntimeTerminalOutcome.timeout(error.duration ?? descriptor.resourceLimit.maxExecution)
+                : _RuntimeTerminalOutcome.failed(error, stackTrace);
+        arbiter.trySet(proposed);
+        terminal = arbiter.outcome!;
       }
-      token.throwIfCancelled();
-      if (!await adapter.healthCheck().timeout(descriptor.resourceLimit.maxExecution)) {
-        throw const RuntimeExecutionException('Runtime health check failed before tool execution.');
-      }
-      await _set(runtimeId, RuntimeLifecycle.running, version: descriptor.version, health: _clock().toUtc());
-      final request = RuntimeToolRequest(
-        toolId: toolId,
-        input: Map<String, Object?>.unmodifiable(input),
-        requiredCapabilities: Set.unmodifiable(requiredCapabilities),
-        networkAuthorized: networkAuthorized,
-        cancellationToken: token,
-      );
-      final execution = adapter.executeTool(request).timeout(descriptor.resourceLimit.maxExecution);
-      final output = await Future.any<Map<String, Object?>>([
-        execution,
-        token.whenCancelled.then((_) => throw const RuntimeExecutionCancelled()),
-      ]);
-      token.throwIfCancelled();
-      if (output.keys.any((key) => key.isEmpty || key.length > 100)) {
-        throw const RuntimeExecutionException('Tool returned invalid output keys.');
-      }
-      final encodedOutput = jsonEncode(output);
-      if (utf8.encode(encodedOutput).length > descriptor.resourceLimit.maxOutputBytes) {
-        throw const RuntimeExecutionException('Tool output exceeds the configured size limit.');
-      }
-      await adapter.stop();
-      await _set(runtimeId, RuntimeLifecycle.stopped, version: descriptor.version, health: _clock().toUtc());
-      await _record('tool-complete', runtimeId, toolId: toolId);
-      return RuntimeExecutionResult(
-        runtimeId: runtimeId,
-        toolId: toolId,
-        output: Map<String, Object?>.unmodifiable(Map<String, Object?>.from(jsonDecode(encodedOutput) as Map<String, dynamic>)),
-        duration: stopwatch.elapsed,
-      );
-    } catch (error, stack) {
-      token.cancel();
+
+      // The outcome and caller subscription are fixed before cleanup awaits.
+      Object? cleanupError;
       try {
         await adapter.stop();
-      } catch (_) {
-        // Cleanup is best-effort after timeout/cancellation; never mask the failure.
+      } catch (error, stackTrace) {
+        cleanupError = error;
+        DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.runtime);
+        try {
+          await _record('tool-cleanup-failed', runtimeId, toolId: toolId);
+        } catch (_) {
+          // The report below records that cleanup/audit persistence is unconfirmed.
+        }
       }
-      DiagnosticReporter.recordGlobal(const RuntimeExecutionException('Runtime adapter execution failed safely; response content was excluded.'),
-          stackTrace: stack, category: DiagnosticCategory.runtime);
-      final isCancellation = error is RuntimeExecutionCancelled;
-      final isTimeout = error is TimeoutException;
-      final isInvalidOutput = error is RuntimeExecutionException && error.message.contains('output');
-      final detail = isCancellation ? 'cancelled' : isTimeout ? 'timeout' : isInvalidOutput ? 'invalid-output' : sanitizeDiagnosticText(error.runtimeType.toString());
-      Object? auditPersistenceError;
-      try {
-        await _record('tool-$detail', runtimeId, toolId: toolId);
-      } catch (auditError, auditStack) {
-        auditPersistenceError = auditError;
-        DiagnosticReporter.recordGlobal(auditError, stackTrace: auditStack, category: DiagnosticCategory.database);
+
+      var terminalStateSaveConfirmed = false;
+      var terminalAuditSaveConfirmed = false;
+      if (terminal.kind == _RuntimeTerminalKind.success) {
+        try {
+          await _set(
+            runtimeId,
+            cleanupError == null ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
+            version: descriptor.version,
+            error: cleanupError == null ? null : 'Runtime cleanup failed.',
+            health: _clock().toUtc(),
+          );
+          terminalStateSaveConfirmed = true;
+        } catch (error, stackTrace) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.database);
+          if (cleanupError != null) _setVolatileCleanupFailure(runtimeId, descriptor.version);
+        }
+        try {
+          await _record('tool-complete', runtimeId, toolId: toolId);
+          terminalAuditSaveConfirmed = true;
+        } catch (error, stackTrace) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.database);
+        }
+      } else {
+        final detail = switch (terminal.kind) {
+          _RuntimeTerminalKind.cancelled => 'cancelled',
+          _RuntimeTerminalKind.timeout => 'timeout',
+          _RuntimeTerminalKind.failed => terminal.error is RuntimeExecutionException &&
+                  (terminal.error! as RuntimeExecutionException).message.contains('output')
+              ? 'invalid-output'
+              : sanitizeDiagnosticText(terminal.error!.runtimeType.toString()),
+          _RuntimeTerminalKind.success => throw StateError('Unexpected successful terminal outcome.'),
+        };
+        try {
+          await _record('tool-$detail', runtimeId, toolId: toolId);
+          terminalAuditSaveConfirmed = true;
+        } catch (error, stackTrace) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.database);
+        }
+        final healthyAfterCleanup = cleanupError == null && await adapter.healthCheck().catchError((_) => false);
+        try {
+          await _set(
+            runtimeId,
+            healthyAfterCleanup ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
+            version: descriptor.version,
+            error: cleanupError == null ? sanitizeDiagnosticText(detail) : 'Runtime cleanup failed after $detail outcome.',
+            health: _clock().toUtc(),
+          );
+          terminalStateSaveConfirmed = true;
+        } catch (error, stackTrace) {
+          DiagnosticReporter.recordGlobal(error, stackTrace: stackTrace, category: DiagnosticCategory.database);
+          if (cleanupError != null) _setVolatileCleanupFailure(runtimeId, descriptor.version);
+        }
       }
-      final healthy = await adapter.healthCheck().catchError((_) => false);
-      try {
-        await _set(runtimeId, healthy ? RuntimeLifecycle.stopped : RuntimeLifecycle.failed,
-            version: descriptor.version, error: sanitizeDiagnosticText(detail), health: _clock().toUtc());
-      } catch (stateError, stateStack) {
-        auditPersistenceError ??= stateError;
-        DiagnosticReporter.recordGlobal(stateError, stackTrace: stateStack, category: DiagnosticCategory.database);
+
+      final report = RuntimeExecutionReport(
+        executionId: executionId,
+        runtimeId: runtimeId,
+        toolId: toolId,
+        outcome: switch (terminal.kind) {
+          _RuntimeTerminalKind.success => RuntimeExecutionOutcome.success,
+          _RuntimeTerminalKind.failed => RuntimeExecutionOutcome.failed,
+          _RuntimeTerminalKind.timeout => RuntimeExecutionOutcome.timeout,
+          _RuntimeTerminalKind.cancelled => RuntimeExecutionOutcome.cancelled,
+        },
+        cleanupOutcome: cleanupError == null ? RuntimeCleanupOutcome.succeeded : RuntimeCleanupOutcome.failed,
+        cleanupErrorType: cleanupError == null ? null : sanitizeDiagnosticText(cleanupError.runtimeType.toString()),
+        terminalStateSaveConfirmed: terminalStateSaveConfirmed,
+        terminalAuditSaveConfirmed: terminalAuditSaveConfirmed,
+        persistenceFailures: _persistenceFailures.where((failure) => failure.executionId == executionId).toList(),
+      );
+      _lastExecutionReport = report;
+      _executionReports[executionId] = report;
+      while (_executionReports.length > persistenceFailureHistoryLimit) {
+        _executionReports.remove(_executionReports.keys.first);
       }
-      if (auditPersistenceError != null) {
-        throw const RuntimeExecutionException('Runtime audit persistence failed; the operation result was not accepted.');
+
+      if (terminal.kind == _RuntimeTerminalKind.success) {
+        return RuntimeExecutionResult(
+          runtimeId: runtimeId,
+          toolId: toolId,
+          output: terminal.output!,
+          duration: stopwatch.elapsed,
+          report: report,
+        );
       }
-      if (error is RuntimeExecutionException || error is RuntimeExecutionCancelled || error is TimeoutException) rethrow;
-      throw RuntimeExecutionException(sanitizeDiagnosticText(error.toString()));
+      switch (terminal.kind) {
+        case _RuntimeTerminalKind.cancelled:
+          throw RuntimeExecutionCancelled(report: report);
+        case _RuntimeTerminalKind.timeout:
+          throw RuntimeExecutionTimeout(terminal.timeout, report);
+        case _RuntimeTerminalKind.failed:
+          final message = terminal.error is RuntimeExecutionException
+              ? (terminal.error! as RuntimeExecutionException).message
+              : sanitizeDiagnosticText(terminal.error.toString());
+          throw RuntimeExecutionException(message, report: report);
+        case _RuntimeTerminalKind.success:
+          throw StateError('Unexpected successful terminal outcome.');
+      }
     } finally {
-      _busy = false;
+      arbiter._cancellationSubscription?.dispose();
+      arbiter._deadline?.cancel();
     }
   }
 
@@ -749,10 +1214,28 @@ class RuntimeManager extends ChangeNotifier {
       return await task();
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
-      return _set(id, failure, error: sanitizeDiagnosticText(error.runtimeType.toString()));
+      try {
+        await _set(id, failure, error: sanitizeDiagnosticText(error.runtimeType.toString()));
+      } catch (stateError, stateStack) {
+        DiagnosticReporter.recordGlobal(stateError, stackTrace: stateStack, category: DiagnosticCategory.database);
+      }
+      Error.throwWithStackTrace(error, stack);
     } finally {
       _busy = false;
     }
+  }
+
+  void _setVolatileCleanupFailure(String id, String version) {
+    final prior = _states[id];
+    _states[id] = RuntimeState(
+      id: id,
+      lifecycle: RuntimeLifecycle.failed,
+      installedVersion: version,
+      updatedAt: _clock().toUtc(),
+      lastHealthCheck: prior?.lastHealthCheck,
+      lastError: 'Runtime cleanup failed; state persistence is unconfirmed.',
+    );
+    notifyListeners();
   }
 
   Future<RuntimeState> _set(String id, RuntimeLifecycle lifecycle, {String? version, String? error, DateTime? health}) async {
@@ -762,12 +1245,13 @@ class RuntimeManager extends ChangeNotifier {
     _states[id] = next;
     try {
       await _record(lifecycle.name, id);
-    } catch (_) {
+    } catch (error) {
       if (prior == null) {
         _states.remove(id);
       } else {
         _states[id] = prior;
       }
+      _rememberPersistenceFailure(RuntimePersistenceKind.state, lifecycle.name, error);
       rethrow;
     }
     notifyListeners();
@@ -781,15 +1265,39 @@ class RuntimeManager extends ChangeNotifier {
       'at': at.toIso8601String(),
       'action': sanitizeDiagnosticText(action),
       'runtimeId': sanitizeDiagnosticText(id),
+      if (_activeExecutionId != null && !_registryMutation) 'executionId': _activeExecutionId,
       if (toolId != null) 'toolId': sanitizeDiagnosticText(toolId),
     };
     _audit.insert(0, event);
     try {
       await _persist();
-    } catch (_) {
+    } catch (error) {
       _audit.remove(event);
+      _rememberPersistenceFailure(RuntimePersistenceKind.audit, action, error);
       rethrow;
     }
+  }
+
+  void _rememberPersistenceFailure(
+    RuntimePersistenceKind kind,
+    String operation,
+    Object error, {
+    String? executionId,
+    String? runtimeId,
+    String? toolId,
+  }) {
+    final failureKind = _registryMutation ? RuntimePersistenceKind.registry : kind;
+    _persistenceFailures.add(RuntimePersistenceFailure(
+      sequence: ++_persistenceFailureSequence,
+      kind: failureKind,
+      operation: sanitizeDiagnosticText(operation),
+      errorType: sanitizeDiagnosticText(error.runtimeType.toString()),
+      at: _clock().toUtc(),
+      executionId: executionId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeExecutionId),
+      runtimeId: runtimeId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeRuntimeId),
+      toolId: toolId ?? (failureKind == RuntimePersistenceKind.registry ? null : _activeToolId),
+    ));
+    if (_persistenceFailures.length > persistenceFailureHistoryLimit) _persistenceFailures.removeAt(0);
   }
 
   Future<void> _persist() async {

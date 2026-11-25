@@ -260,9 +260,9 @@ FindingRecord _findingFixture({
   );
 }
 
-void _useTallViewport(WidgetTester tester) {
+void _useTallViewport(WidgetTester tester, {double width = 800}) {
   tester.view.devicePixelRatio = 1;
-  tester.view.physicalSize = const Size(800, 1400);
+  tester.view.physicalSize = Size(width, 1400);
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 }
@@ -479,7 +479,7 @@ void main() {
   testWidgets('MainShell keeps one Assessment running across tabs and a recreated Runner can cancel it', (tester) async {
     tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
-    _useTallViewport(tester);
+    _useTallViewport(tester, width: 390);
 
     final started = Completer<void>();
     final orchestrator = _CancellableAssessmentOrchestrator(started);
@@ -549,7 +549,7 @@ void main() {
   testWidgets('MainShell teardown requests cancellation before releasing the application manager', (tester) async {
     tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
-    _useTallViewport(tester);
+    _useTallViewport(tester, width: 390);
 
     final started = Completer<void>();
     final orchestrator = _CancellableAssessmentOrchestrator(started);
@@ -862,6 +862,8 @@ void main() {
   });
 
   testWidgets('branded splash hands off to dashboard while SQLite history is pending', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
     final initialization = Completer<List<ToolRunResult>>();
     final history = _MemoryResultHistory(loadResults: () => initialization.future);
     await tester.pumpWidget(CybersecurityAssistantApp(resultStore: history));
@@ -913,7 +915,7 @@ void main() {
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
     expect(find.text('DIGITAL EARTH'), findsOneWidget);
     expect(find.text('DIAM'), findsOneWidget);
-    expect(find.text('Skor Keamanan'), findsOneWidget);
+    expect(find.text('SKOR KEAMANAN'), findsOneWidget);
     expect(find.text('Belum dihitung'), findsOneWidget);
     expect(find.text('Tidak ada assessment yang berjalan'), findsOneWidget);
   });

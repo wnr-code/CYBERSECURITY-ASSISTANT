@@ -47,6 +47,7 @@ class ToolRunResult {
     required this.completedAt,
     this.authorizationConfirmed = false,
     this.assessmentId,
+    this.runtimeExecutionReport,
   });
 
   final String toolId;
@@ -59,8 +60,10 @@ class ToolRunResult {
   final bool authorizationConfirmed;
   /// Parent assessment event ID when this result was produced as part of an assessment.
   final String? assessmentId;
+  /// Ephemeral runtime diagnostic metadata; intentionally excluded from report serialization.
+  final Object? runtimeExecutionReport;
 
-  ToolRunResult copyWith({String? assessmentId}) => ToolRunResult(
+  ToolRunResult copyWith({String? assessmentId, Object? runtimeExecutionReport}) => ToolRunResult(
         toolId: toolId,
         target: target,
         summary: summary,
@@ -69,12 +72,14 @@ class ToolRunResult {
         completedAt: completedAt,
         authorizationConfirmed: authorizationConfirmed,
         assessmentId: assessmentId ?? this.assessmentId,
+        runtimeExecutionReport: runtimeExecutionReport ?? this.runtimeExecutionReport,
       );
 }
 
 class ToolExecutionException implements Exception {
-  const ToolExecutionException(this.message);
+  const ToolExecutionException(this.message, {this.executionReport});
   final String message;
+  final Object? executionReport;
 
   @override
   String toString() => message;

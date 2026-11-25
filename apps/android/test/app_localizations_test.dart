@@ -32,7 +32,7 @@ void main() {
     expect(localization.text('Untuk apa halaman ini?'), 'What is this page for?');
     expect(localization.text('Contoh cara memakai'), 'Example: how to use it');
     expect(localization.text('Buat laporan uji lokal'), 'Create local test report');
-    expect(localization.text('Belum tersedia'), 'Unavailable');
+    expect(localization.text('Belum tersedia'), 'Not available yet');
     expect(localization.text('Tidak ada temuan pada data yang dimuat ini'), 'No findings in this loaded view');
   });
 }

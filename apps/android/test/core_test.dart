@@ -20,6 +20,81 @@ import 'package:cybersecurity_assistant/core/tool_result_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+class _TestTimer implements Timer {
+  _TestTimer(this.callback);
+  final void Function() callback;
+  bool _active = true;
+
+  @override
+  bool get isActive => _active;
+  @override
+  int get tick => 0;
+  @override
+  void cancel() => _active = false;
+
+  void fire() {
+    if (!_active) return;
+    _active = false;
+    callback();
+  }
+}
+
+class _ScriptedRuntimeStore extends MemoryRuntimeStateStore {
+  bool Function(Map<String, Object?> snapshot)? failWhen;
+
+  @override
+  Future<void> save(Map<String, Object?> snapshot) async {
+    if (failWhen?.call(snapshot) == true) throw StateError('Controlled runtime persistence failure.');
+    await super.save(snapshot);
+  }
+}
+
+class _TimeoutRuntimeAdapter implements RuntimeExecutionAdapter {
+  final executionStarted = Completer<void>();
+
+  @override
+  RuntimeDescriptor get descriptor => const RuntimeDescriptor(
+        id: 'runtime.dart.security-tools',
+        name: 'Controlled security tools',
+        version: '1.0.0',
+        license: 'MIT',
+        supportedPlatforms: ['Android'],
+        supportedAbis: ['arm64-v8a'],
+        dependencies: [],
+        requiredCapabilities: {RuntimeCapability.network},
+        supportedToolIds: ['dns_lookup'],
+        minAndroidApi: 29,
+        sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      );
+
+  @override
+  Future<void> install(Directory directory) async {}
+  @override
+  Future<void> initialize(Directory directory) async {}
+  @override
+  Future<void> stop() async {}
+  @override
+  Future<void> update(Directory directory, String version) async {}
+  @override
+  Future<void> uninstall(Directory directory) async {}
+  @override
+  Future<bool> healthCheck() async => true;
+
+  @override
+  Future<Map<String, Object?>> executeTool(RuntimeToolRequest request) {
+    if (!executionStarted.isCompleted) executionStarted.complete();
+    return Completer<Map<String, Object?>>().future;
+  }
+}
+
+class _TechnicalFailureRuntimeAdapter extends _TimeoutRuntimeAdapter {
+  @override
+  Future<Map<String, Object?>> executeTool(RuntimeToolRequest request) async {
+    if (!executionStarted.isCompleted) executionStarted.complete();
+    throw const RuntimeExecutionException('Controlled adapter execution failure.');
+  }
+}
+
 class _PendingDnsSecurityTools extends SecurityTools {
   final started = Completer<void>();
   final pending = Completer<ToolRunResult>();
@@ -653,7 +728,10 @@ void main() {
     });
 
     test('real Orchestrator returns technical failure without fabricating analyzer success', () async {
-      final manager = AssessmentExecutionManager(orchestrator: ToolOrchestrator(tools: _FailingDnsSecurityTools()));
+      final activityStore = MemoryActivityHistoryStore();
+      final manager = AssessmentExecutionManager(
+        orchestrator: ToolOrchestrator(tools: _FailingDnsSecurityTools(), activityStore: activityStore),
+      );
       addTearDown(manager.dispose);
 
       manager.startAssessment(
@@ -668,9 +746,14 @@ void main() {
       expect(terminal.outcomes.map((outcome) => outcome.toolId), ['dns_lookup']);
       expect(terminal.outcomes.single.status, AssessmentCheckStatus.failed);
       expect(terminal.outcomes.single.result, isNull);
+      expect(terminal.wasCancelled, isFalse);
       expect(terminal.progress.selectedCount, 1);
       expect(terminal.progress.failedCount, 1);
+      expect(terminal.progress.cancelledCount, 0);
       expect(terminal.progress.processedCount, 1);
+      final activities = await activityStore.loadActivities();
+      expect(activities.singleWhere((event) => event.kind == ActivityKind.tool).status, ActivityStatus.failed);
+      expect(activities.singleWhere((event) => event.kind == ActivityKind.assessment).status, ActivityStatus.failed);
     });
 
     test('real Orchestrator omits analyzer when cancellation arrives before its invocation', () async {
@@ -1167,5 +1250,133 @@ void main() {
       expect(result.findings.map((finding) => finding.title), ['High risk', 'Low risk', 'Informational']);
       expect(result.details, ['http_headers: header check']);
     });
+  });
+
+  test('ToolOrchestrator reports technical failure separately from audit persistence', () async {
+    for (final terminalAuditShouldPersist in [true, false]) {
+      final root = await Directory.systemTemp.createTemp('orchestrator-technical-failure-');
+      final adapter = _TechnicalFailureRuntimeAdapter();
+      final store = _ScriptedRuntimeStore();
+      final runtimeManager = RuntimeManager(
+        environment: const RuntimeEnvironment(
+          platform: 'Android',
+          abi: 'arm64-v8a',
+          deviceAbis: ['arm64-v8a'],
+          androidApiLevel: 35,
+          availableCapabilities: {RuntimeCapability.network},
+        ),
+        store: store,
+        adapters: [adapter],
+        supportDirectoryProvider: () async => root,
+      );
+      final activityStore = MemoryActivityHistoryStore();
+      try {
+        await runtimeManager.install(
+          adapter.descriptor.id,
+          userApproved: true,
+          licenseAccepted: true,
+          grantedCapabilities: const {RuntimeCapability.network},
+        );
+        if (!terminalAuditShouldPersist) {
+          store.failWhen = (snapshot) {
+            final audit = snapshot['audit'];
+            return audit is List && audit.any((entry) => entry is Map && entry['action'] == 'tool-RuntimeExecutionException');
+          };
+        }
+        final orchestrator = ToolOrchestrator(runtimeManager: runtimeManager, activityStore: activityStore);
+        final assessment = await orchestrator.runAssessment(
+          target: 'example.com',
+          toolIds: const ['dns_lookup'],
+          authorized: true,
+          includeResponseAnalysis: false,
+        );
+
+        expect(assessment.outcomes.single.status, AssessmentCheckStatus.failed);
+        expect(assessment.outcomes.single.executionReport?.executionId, isNotEmpty);
+        expect(assessment.failedCount, 1);
+        expect(assessment.cancelledCount, 0);
+        final activities = await activityStore.loadActivities();
+        final toolActivity = activities.singleWhere((event) => event.kind == ActivityKind.tool);
+        final assessmentActivity = activities.singleWhere((event) => event.kind == ActivityKind.assessment);
+        expect(toolActivity.status, ActivityStatus.failed);
+        expect(assessmentActivity.status, ActivityStatus.failed);
+
+        final report = runtimeManager.lastExecutionReport!;
+        expect(report.outcome, RuntimeExecutionOutcome.failed);
+        expect(assessment.outcomes.single.executionReport?.executionId, report.executionId);
+        expect(report.terminalAuditSaveConfirmed, terminalAuditShouldPersist);
+        expect(toolActivity.summary.contains('Runtime terminal audit save was not confirmed.'), !terminalAuditShouldPersist);
+        expect(report.terminalStateSaveConfirmed, isTrue);
+        if (terminalAuditShouldPersist) {
+          expect(runtimeManager.auditEvents.map((event) => event['action']), contains('tool-RuntimeExecutionException'));
+          expect(report.persistenceFailures, isEmpty);
+        } else {
+          expect(runtimeManager.auditEvents.map((event) => event['action']), isNot(contains('tool-RuntimeExecutionException')));
+          expect(report.persistenceFailures.any((failure) => failure.kind == RuntimePersistenceKind.audit), isTrue);
+          expect(toolActivity.summary, contains('Runtime terminal audit save was not confirmed.'));
+        }
+      } finally {
+        runtimeManager.dispose();
+        await root.delete(recursive: true);
+      }
+    }
+  });
+
+  test('ToolOrchestrator records an end-to-end timeout consistently', () async {
+    final root = await Directory.systemTemp.createTemp('orchestrator-timeout-');
+    final adapter = _TimeoutRuntimeAdapter();
+    final timers = <_TestTimer>[];
+    final runtimeManager = RuntimeManager(
+      environment: const RuntimeEnvironment(
+        platform: 'Android',
+        abi: 'arm64-v8a',
+        deviceAbis: ['arm64-v8a'],
+        androidApiLevel: 35,
+        availableCapabilities: {RuntimeCapability.network},
+      ),
+      store: MemoryRuntimeStateStore(),
+      adapters: [adapter],
+      supportDirectoryProvider: () async => root,
+      timerFactory: (duration, callback) {
+        final timer = _TestTimer(callback);
+        timers.add(timer);
+        return timer;
+      },
+    );
+    final activityStore = MemoryActivityHistoryStore();
+    try {
+      await runtimeManager.install(
+        adapter.descriptor.id,
+        userApproved: true,
+        licenseAccepted: true,
+        grantedCapabilities: const {RuntimeCapability.network},
+      );
+      final orchestrator = ToolOrchestrator(runtimeManager: runtimeManager, activityStore: activityStore);
+      final assessmentPending = orchestrator.runAssessment(
+        target: 'example.com',
+        toolIds: const ['dns_lookup'],
+        authorized: true,
+        includeResponseAnalysis: false,
+      );
+      await adapter.executionStarted.future;
+      timers.lastWhere((timer) => timer.isActive).fire();
+      final assessment = await assessmentPending;
+
+      expect(assessment.outcomes, hasLength(1));
+      expect(assessment.outcomes.single.status, AssessmentCheckStatus.failed,
+          reason: 'A runtime timeout remains a failed assessment check, not cancellation.');
+      expect(assessment.failedCount, 1);
+      expect(assessment.cancelledCount, 0);
+      expect(runtimeManager.auditEvents.map((event) => event['action']), contains('tool-timeout'));
+      expect(runtimeManager.auditEvents.map((event) => event['action']), isNot(contains('tool-cancelled')));
+      final activities = await activityStore.loadActivities();
+      final toolActivity = activities.singleWhere((event) => event.kind == ActivityKind.tool);
+      final assessmentActivity = activities.singleWhere((event) => event.kind == ActivityKind.assessment);
+      expect(toolActivity.status, ActivityStatus.failed);
+      expect(assessmentActivity.status, ActivityStatus.failed);
+    } finally {
+      runtimeManager.dispose();
+      await root.delete(recursive: true);
+    }
   });
 }
