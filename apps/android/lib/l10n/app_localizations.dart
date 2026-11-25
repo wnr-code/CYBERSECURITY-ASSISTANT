@@ -520,7 +520,7 @@ class AppLocalizations {
     'All': 'Semua',
     'No tools match your search.': 'Tidak ada alat yang cocok dengan pencarian.',
     'AI ASSISTANT': 'ASISTEN AI',
-    'AI assistant avatar; check mark is decorative and does not verify responses.': 'Avatar Asisten AI; tanda centang hanya dekoratif dan tidak memverifikasi jawaban.'
+    'AI assistant avatar; check mark is decorative and does not verify responses.': 'Avatar Asisten AI; tanda centang hanya dekoratif dan tidak memverifikasi jawaban.',
     'Security, with context.': 'Keamanan dengan konteks.',
     'Your assistant is not connected. Local tools remain available without an AI service.': 'Asisten belum terhubung. Alat lokal tetap dapat digunakan tanpa layanan AI.',
     'Ask about a tool or workflow…': 'Tanyakan tentang alat atau alur kerja…',

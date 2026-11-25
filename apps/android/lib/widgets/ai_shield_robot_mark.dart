@@ -41,7 +41,7 @@ class _AiShieldRobotPainter extends CustomPainter {
       ..cubicTo(7.6, 20.4, 3.7, 16.5, 3.4, 11.2)
       ..lineTo(3, 4.6)
       ..close();
-    final shieldBounds = const Rect.fromLTWH(3, 1.4, 18, 21.2);
+    const shieldBounds = Rect.fromLTWH(3, 1.4, 18, 21.2);
     canvas.drawPath(
       shield,
       Paint()
