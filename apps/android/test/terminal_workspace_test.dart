@@ -22,7 +22,7 @@ class _FakeTerminalRuntime implements TerminalToolRuntime {
     String? correlationId,
   }) async {
     calls.add('$toolId:$target');
-    return TerminalExecutionResult.completed('fixture output');
+    return const TerminalExecutionResult.completed('fixture output');
   }
 }
 

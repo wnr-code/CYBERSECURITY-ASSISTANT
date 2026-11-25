@@ -115,7 +115,7 @@ void main() {
   test('rejects symbolic links for both reads and writes', () async {
     final outside = File('${sandbox.path}/outside.txt')..writeAsStringSync('outside secret');
     await Link('${root.path}/escape.txt').create(outside.path);
-    await Link('${root.path}/escape-dir').create('${privateRoot.path}');
+    await Link('${root.path}/escape-dir').create(privateRoot.path);
 
     await expectLater(
       workspace.readText('escape.txt', actor: WorkspaceActor.terminal),

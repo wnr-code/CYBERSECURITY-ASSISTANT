@@ -75,7 +75,7 @@ class _FakeToolRuntime implements TerminalToolRuntime {
     String? correlationId,
   }) async {
     correlation = correlationId;
-    return TerminalExecutionResult.completed(
+    return const TerminalExecutionResult.completed(
       'Resolved 2 addresses.',
       executionId: 'runtime-exec-actual-42',
       executionData: const {'tool_id': 'dns_lookup', 'summary': 'Resolved 2 addresses.'},

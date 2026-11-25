@@ -71,7 +71,7 @@ class _AiTransport implements AiHttpTransport {
   @override
   Future<AiHttpResponse> post(Uri uri, Map<String, String> headers, List<int> body) async {
     postRequests++;
-    return AiHttpResponse(500, const []);
+    return const AiHttpResponse(500, []);
   }
 }
 

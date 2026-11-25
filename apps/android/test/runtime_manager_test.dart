@@ -74,15 +74,6 @@ class _ControlledPersistenceStore extends _Store {
   }
 }
 
-class _OtherAdapter extends _Adapter {
-  @override
-  RuntimeDescriptor get descriptor => const RuntimeDescriptor(
-        id: 'runtime.other', name: 'Other Fixture Runtime', version: '1.0.0', license: 'MIT',
-        supportedAbis: ['arm64-v8a'], dependencies: [], requiredCapabilities: {RuntimeCapability.filesystemRead},
-        sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-      );
-}
-
 class _SignallingHealthAdapter extends _Adapter {
   final healthCheckStarted = Completer<void>();
 

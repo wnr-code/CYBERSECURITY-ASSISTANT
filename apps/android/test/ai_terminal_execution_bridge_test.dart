@@ -18,7 +18,7 @@ class _FakeTerminalRuntime implements TerminalToolRuntime {
     String? correlationId,
   }) async {
     calls.add('$toolId:$target');
-    return TerminalExecutionResult.completed('execution accepted', executionId: 'test-runtime-execution');
+    return const TerminalExecutionResult.completed('execution accepted', executionId: 'test-runtime-execution');
   }
 }
 
