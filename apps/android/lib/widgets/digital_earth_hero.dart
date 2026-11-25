@@ -11,7 +11,9 @@ const _earthPanel = Color(0xFF111D32);
 /// Lightweight illustrative globe. It deliberately contains no live topology,
 /// nodes, connection lines, attack markers, or telemetry.
 class DigitalEarthHero extends StatefulWidget {
-  const DigitalEarthHero({super.key});
+  const DigitalEarthHero({super.key, this.onTap});
+
+  final VoidCallback? onTap;
 
   @override
   State<DigitalEarthHero> createState() => _DigitalEarthHeroState();
@@ -60,58 +62,63 @@ class _DigitalEarthHeroState extends State<DigitalEarthHero> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) => Card(
+        key: const ValueKey('digital-earth-hero'),
         clipBehavior: Clip.antiAlias,
-        child: Container(
-          height: 276,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [_earthPanel, Color(0xFF10182A), Color(0xFF142238)],
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            height: 276,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [_earthPanel, Color(0xFF10182A), Color(0xFF142238)],
+              ),
+              border: Border.all(color: _earthCyan.withValues(alpha: .18)),
             ),
-            border: Border.all(color: _earthCyan.withValues(alpha: .18)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
-            child: Column(children: [
-              Row(children: [
-                Expanded(
-                  child: Text(
-                    context.tr('DIGITAL EARTH'),
-                    style: const TextStyle(color: _earthCyan, fontWeight: FontWeight.w800, letterSpacing: .6),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
+              child: Column(children: [
+                Row(children: [
+                  Expanded(
+                    child: Text(
+                      context.tr('DIGITAL EARTH'),
+                      style: const TextStyle(color: _earthCyan, fontWeight: FontWeight.w800, letterSpacing: .6),
+                    ),
                   ),
-                ),
-                Text(
-                  context.tr('IDLE'),
-                  style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11, fontWeight: FontWeight.w700),
-                ),
-              ]),
-              const SizedBox(height: 4),
-              Expanded(
-                child: Center(
-                  child: Semantics(
-                    image: true,
-                    label: context.tr('Illustrative globe; network topology is unavailable; no nodes or connections are shown.'),
-                    child: RepaintBoundary(
-                      child: RotationTransition(
-                        turns: _rotation,
-                        child: const SizedBox(
-                          width: 208,
-                          height: 208,
-                          child: CustomPaint(painter: _DigitalEarthPainter()),
+                  Text(
+                    context.tr('IDLE'),
+                    style: TextStyle(color: Colors.white.withValues(alpha: .62), fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ]),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: Center(
+                    child: Semantics(
+                      image: true,
+                      label: context.tr('Illustrative globe; network topology is unavailable; no nodes or connections are shown.'),
+                      child: RepaintBoundary(
+                        child: RotationTransition(
+                          turns: _rotation,
+                          child: const SizedBox(
+                            width: 208,
+                            height: 208,
+                            child: CustomPaint(painter: _DigitalEarthPainter()),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              Text(
-                context.tr('Illustrative · no nodes or connection data'),
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white.withValues(alpha: .66), fontSize: 11, letterSpacing: .2),
-              ),
-            ]),
+                Text(
+                  context.tr('Illustrative · no nodes or connection data'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white.withValues(alpha: .66), fontSize: 11, letterSpacing: .2),
+                ),
+              ]),
+            ),
           ),
         ),
       );

@@ -144,8 +144,19 @@ void main() {
     expect(find.text('Account Configuration'), findsWidgets);
     expect(find.text('Permissions & Capabilities'), findsOneWidget);
     expect(find.textContaining('Read-only capabilities: GET /user/tokens/verify, GET /accounts, GET /zones, and GET /zones/{zone_id}.'), findsOneWidget);
-    expect(find.text('Test Connection'), findsOneWidget);
+    expect(find.text('Connect'), findsOneWidget);
+    final connectBeforeConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'));
+    expect(connectBeforeConfiguration.onPressed, isNull);
     expect(find.text('Open Dashboard'), findsNothing);
+
+    await manager.saveCloudflareConfiguration(token: 'cloudflare-user-token-secret');
+    await tester.pumpAndSettle();
+    final connectAfterConfiguration = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'));
+    expect(connectAfterConfiguration.onPressed, isNotNull);
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    await tester.pumpAndSettle();
+    expect(manager.statusFor('cloudflare'), ManagedProviderStatus.connected);
+    expect(find.text('Test Connection'), findsOneWidget);
 
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),

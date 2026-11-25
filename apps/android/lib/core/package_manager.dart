@@ -380,12 +380,28 @@ class PackageRegistry {
   PackageRegistry(this.file);
   final File file;
   final Map<String, InstalledPackage> _installed = {};
+  Future<void> _mutationTail = Future<void>.value();
 
   List<InstalledPackage> get installed => List.unmodifiable(_installed.values);
   InstalledPackage? byId(String id) => _installed[id];
   bool contains(String id) => _installed.containsKey(id);
 
+  Future<void> _serializeMutation(Future<void> Function() mutation) {
+    final previous = _mutationTail;
+    final released = Completer<void>();
+    _mutationTail = released.future;
+    return () async {
+      await previous;
+      try {
+        await mutation();
+      } finally {
+        released.complete();
+      }
+    }();
+  }
+
   Future<void> load() async {
+    await _mutationTail;
     _installed.clear();
     if (!await file.exists()) return;
     try {
@@ -416,29 +432,42 @@ class PackageRegistry {
     }
   }
 
-  Future<void> record(InstalledPackage package) async {
-    _installed[package.id] = package;
-    await _save();
-  }
+  Future<void> record(InstalledPackage package) => _serializeMutation(() async {
+        final next = Map<String, InstalledPackage>.of(_installed);
+        next[package.id] = package;
+        await _save(next);
+        _installed
+          ..clear()
+          ..addAll(next);
+      });
 
-  Future<void> remove(String id) async {
-    _installed.remove(id);
-    await _save();
-  }
+  Future<void> remove(String id) => _serializeMutation(() async {
+        final next = Map<String, InstalledPackage>.of(_installed);
+        next.remove(id);
+        await _save(next);
+        _installed
+          ..clear()
+          ..addAll(next);
+      });
 
-  Future<void> _save() async {
+  Future<void> _save(Map<String, InstalledPackage> snapshot) async {
     await file.parent.create(recursive: true);
     final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(jsonEncode([
-      for (final package in _installed.values)
-        {
-          'id': package.id,
-          'version': package.version,
-          'relativeFile': package.relativeFile,
-          'sha256': package.sha256,
-        },
-    ]), flush: true);
-    await temporary.rename(file.path);
+    try {
+      await temporary.writeAsString(jsonEncode([
+        for (final package in snapshot.values)
+          {
+            'id': package.id,
+            'version': package.version,
+            'relativeFile': package.relativeFile,
+            'sha256': package.sha256,
+          },
+      ]), flush: true);
+      await temporary.rename(file.path);
+    } catch (_) {
+      if (await temporary.exists()) await temporary.delete();
+      rethrow;
+    }
   }
 }
 
@@ -476,10 +505,18 @@ class PackageInstaller {
     final parent = destination.parent;
     await parent.create(recursive: true);
     final temporary = File('${destination.path}.part');
+    var createdDestination = false;
     try {
-      await temporary.writeAsBytes(verified.bytes, flush: true);
-      if (await destination.exists()) await destination.delete();
-      await temporary.rename(destination.path);
+      if (await destination.exists()) {
+        final existingDigest = sha256.convert(await destination.readAsBytes()).toString();
+        if (existingDigest != actualSha) {
+          throw const PackageManagerException('A different payload already occupies this package version; refusing to overwrite it.');
+        }
+      } else {
+        await temporary.writeAsBytes(verified.bytes, flush: true);
+        await temporary.rename(destination.path);
+        createdDestination = true;
+      }
       final installed = InstalledPackage(
         id: package.id,
         version: package.version,
@@ -488,25 +525,59 @@ class PackageInstaller {
       );
       await registry.record(installed);
       if (previous != null && previous.version != package.version) {
-        final oldVersionDirectory = Directory(p.join(packageDirectory.path, package.id, previous.version));
-        if (await oldVersionDirectory.exists()) await oldVersionDirectory.delete(recursive: true);
+        try {
+          await _removeManagedPayload(previous);
+        } on FileSystemException catch (_, stack) {
+          // The new registry entry is already committed. A stale old-version payload
+          // is only orphaned package data, so don't misreport the successful update.
+          DiagnosticReporter.recordGlobal(
+            const PackageManagerException('An obsolete package version could not be fully cleaned up.'),
+            stackTrace: stack,
+            category: DiagnosticCategory.package,
+          );
+        }
       }
       return installed;
     } catch (_) {
       if (await temporary.exists()) await temporary.delete();
+      if (createdDestination && registry.byId(package.id)?.relativeFile != relativeFile && await destination.exists()) {
+        await destination.delete();
+      }
       rethrow;
     }
   }
 
-  Future<void> uninstall(InstalledPackage package) async {
+  Future<void> _removeManagedPayload(InstalledPackage package) async {
     if (!_isSafePackageId(package.id) || !_isSafeVersion(package.version)) {
       throw const PackageManagerException('Installed package registry contains an unsafe path.');
     }
     final expectedRelative = p.join(package.id, package.version, 'payload.${_payloadExtension(package.relativeFile)}');
     if (package.relativeFile != expectedRelative) throw const PackageManagerException('Installed package path is invalid.');
-    final directory = Directory(p.join(packageDirectory.path, package.id));
-    if (await directory.exists()) await directory.delete(recursive: true);
+    final payload = File(p.join(packageDirectory.path, package.relativeFile));
+    if (await payload.exists()) await payload.delete();
+    final versionDirectory = payload.parent;
+    if (await versionDirectory.exists() && await versionDirectory.list().isEmpty) {
+      await versionDirectory.delete();
+    }
+    final packageDirectoryForId = versionDirectory.parent;
+    if (await packageDirectoryForId.exists() && await packageDirectoryForId.list().isEmpty) {
+      await packageDirectoryForId.delete();
+    }
+  }
+
+  Future<void> uninstall(InstalledPackage package) async {
+    // Commit the uninstall in the registry before cleaning files. If a filesystem
+    // cleanup fails, the package stays uninstalled and only its orphaned data remains.
     await registry.remove(package.id);
+    try {
+      await _removeManagedPayload(package);
+    } on FileSystemException catch (_, stack) {
+      DiagnosticReporter.recordGlobal(
+        const PackageManagerException('An uninstalled package left orphaned data that requires cleanup.'),
+        stackTrace: stack,
+        category: DiagnosticCategory.package,
+      );
+    }
   }
 }
 

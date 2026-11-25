@@ -7,6 +7,7 @@ Local-first, Android-first cybersecurity assistant with a user-controlled tool e
 - [Final Technical Blueprint](docs/technical-blueprint.md) — product architecture, boundaries, and roadmap.
 - [AI Cybersecurity Expert Engine Blueprint](docs/ai-cybersecurity-expert-engine.md) — planned AI capabilities, reasoning and provider boundaries, guardrails, phases, and current implementation ledger.
 - [Embedded Android Runtime Blueprint](docs/embedded-runtime-implementation.md) — future in-app runtime boundary; no external Termux dependency for supported core functions, but no embedded terminal/runtime is implemented.
+- [Market Modular Delivery](docs/market-modular-delivery.md) — persistent Market and staged module strategy: stabilize the base APK, test signed modules from the official server, evaluate Play delivery near release.
 - [Documentation index](docs/README.md) — all architecture and verification documents.
 - [Diagnostics Relay setup](docs/diagnostics-relay.md) — local-first reporting, consent flow, and Cloudflare Workers + D1 deployment.
 - [Static security audit](docs/security-audit.md) — current review findings and verification blockers.

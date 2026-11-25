@@ -7,6 +7,8 @@
 **Dokumen dasar:** [`ui-ux-architecture-audit.md`](ui-ux-architecture-audit.md) · [`ui-ux-design-proposal.md`](ui-ux-design-proposal.md)
 
 > Prototype ini dibuat sebagai wireframe visual high-fidelity statis dari vector artwork. PNG adalah render terverifikasi dari SVG yang disertakan; bukan screenshot emulator, bukan aplikasi berjalan, bukan Figma prototype, dan bukan representasi data aktual di perangkat. Tidak ada kode aplikasi yang diubah.
+>
+> **Klarifikasi produk setelah prototype:** Market harus tetap tersedia di base app dan menampilkan modul Cloudflare, Gemini, serta Local AI yang bisa dipasang/dihapus satu per satu. Prototype statis ini tidak menggambarkan lifecycle modular tersebut dan bukan spesifikasi final Market; gunakan [Market Modular Delivery](market-modular-delivery.md) sebagai target lifecycle.
 
 ## 1. Keputusan desain yang diterapkan
 

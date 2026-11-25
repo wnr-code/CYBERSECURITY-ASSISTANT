@@ -7,7 +7,9 @@
 **Tanggal audit:** 2026-11-23
 **Desain acuan:** [`ui-ux-architecture-audit.md`](ui-ux-architecture-audit.md), [`ui-ux-design-proposal.md`](ui-ux-design-proposal.md), [`ui-ux-high-fidelity-prototype.md`](ui-ux-high-fidelity-prototype.md), aset di [`ui-ux-prototype-assets/`](ui-ux-prototype-assets/).
 
-> Dokumen ini hanya memetakan implementasi masa depan ke kode yang diperiksa pada working tree. Tidak ada kode aplikasi, tampilan, database, service, dependency, konfigurasi atau aset prototype yang diubah. Persetujuan desain tidak dianggap sebagai persetujuan implementasi.
+> Dokumen ini hanya memetakan implementasi UI/UX masa depan ke kode yang diperiksa pada working tree. Tidak ada kode aplikasi, tampilan, database, service, dependency, konfigurasi atau aset prototype yang diubah. Persetujuan desain tidak dianggap sebagai persetujuan implementasi.
+>
+> Catatan terbaru: audit ini tidak merancang install/uninstall provider modules. Arah Market modular yang dikonfirmasi pemilik dicatat terpisah di [Market Modular Delivery](market-modular-delivery.md); gunakan dokumen itu untuk scope distribusi Cloudflare/Gemini/Local AI.
 
 ## 1. Ringkasan kondisi kode saat ini
 

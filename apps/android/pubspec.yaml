@@ -31,3 +31,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/market/
+    - assets/brands/cloudflare.png
+    - assets/brands/googlegemini.png

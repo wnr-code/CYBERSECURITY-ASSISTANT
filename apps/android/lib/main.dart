@@ -38,6 +38,7 @@ import 'widgets/diagnostics_screen.dart';
 import 'widgets/edge_panel.dart';
 import 'widgets/floating_terminal.dart';
 import 'widgets/assistant_screen.dart';
+import 'widgets/ai_shield_robot_mark.dart';
 import 'widgets/assessment_runner.dart';
 import 'widgets/catalog_screen.dart';
 import 'widgets/dashboard_screen.dart';
@@ -1473,10 +1474,45 @@ class _BottomNavItem extends StatelessWidget {
       );
 }
 
-class _AIChatNavButton extends StatelessWidget {
+class _AIChatNavButton extends StatefulWidget {
   const _AIChatNavButton({required this.onTap});
 
   final VoidCallback onTap;
+
+  @override
+  State<_AIChatNavButton> createState() => _AIChatNavButtonState();
+}
+
+class _AIChatNavButtonState extends State<_AIChatNavButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _robotMotion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 760),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _robotMotion.value = 1;
+    } else if (_robotMotion.value == 0) {
+      _robotMotion.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _robotMotion.dispose();
+    super.dispose();
+  }
+
+  void _openAssistant() {
+    if (MediaQuery.of(context).disableAnimations) {
+      _robotMotion.value = 1;
+    } else {
+      _robotMotion.forward(from: 0);
+    }
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -1484,7 +1520,7 @@ class _AIChatNavButton extends StatelessWidget {
         label: context.tr('AI chat'),
         child: InkResponse(
           key: const ValueKey('bottom-navigation-ai-chat'),
-          onTap: onTap,
+          onTap: _openAssistant,
           radius: 34,
           child: SizedBox(
             width: 54,
@@ -1502,7 +1538,12 @@ class _AIChatNavButton extends StatelessWidget {
                   ],
                   border: Border.all(color: _electricBlue.withValues(alpha: .76), width: 1),
                 ),
-                child: const Icon(Icons.forum_rounded, size: 21, color: Color(0xFF8AD8FF)),
+                child: Center(
+                  child: AnimatedBuilder(
+                    animation: _robotMotion,
+                    builder: (context, _) => AiShieldRobotMark(progress: _robotMotion.value),
+                  ),
+                ),
               ),
               const SizedBox(height: 3),
               FittedBox(

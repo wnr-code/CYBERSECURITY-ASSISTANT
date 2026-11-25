@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/ai_provider_manager.dart';
 import '../core/market_provider_manager.dart';
 import '../l10n/app_localizations.dart';
+import 'market_brand_mark.dart';
 import 'market_provider_dialog.dart';
 
 class MarketProviderDetailScreen extends StatelessWidget {
@@ -69,11 +70,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          CircleAvatar(
-            radius: 25,
-            backgroundColor: _brandColor.withValues(alpha: .15),
-            child: Icon(_icon, color: _brandColor, size: 27),
-          ),
+          MarketBrandMark(providerId: providerId, diameter: 50),
           const SizedBox(width: 13),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(subtitle, style: TextStyle(color: Colors.white.withValues(alpha: .68), fontSize: 12)),
@@ -170,47 +167,57 @@ class MarketProviderDetailScreen extends StatelessWidget {
     ]);
   }
 
-  Widget _actions(BuildContext context, ManagedProviderStatus status) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Wrap(spacing: 8, runSpacing: 8, children: [
+  Widget _actions(BuildContext context, ManagedProviderStatus status) {
+    final configured = providerId == 'cloudflare'
+        ? manager.cloudflareConfigured
+        : providerId == 'gemini'
+            ? manager.geminiConfigured
+            : false;
+    final connectLabel = status == ManagedProviderStatus.connected ? 'Test Connection' : 'Connect';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
+          OutlinedButton.icon(
+            onPressed: manager.isBusy
+                ? null
+                : () => showDialog<void>(
+                      context: context,
+                      builder: (_) => MarketProviderDialog(providerId: providerId, manager: manager),
+                    ),
+            icon: const Icon(Icons.settings_outlined),
+            label: Text(context.tr(providerId == 'local_ai' ? 'Device & model status' : providerId == 'gemini' ? 'API Configuration' : 'Account Configuration')),
+          ),
+          if (providerId != 'local_ai')
+            FilledButton.icon(
+              onPressed: manager.isBusy || !configured ? null : () => _testConnection(context),
+              icon: manager.isBusy
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.wifi_tethering_rounded),
+              label: Text(context.tr(connectLabel)),
+            )
+          else
             OutlinedButton.icon(
-              onPressed: manager.isBusy ? null : () => showDialog<void>(
-                context: context,
-                builder: (_) => MarketProviderDialog(providerId: providerId, manager: manager),
-              ),
-              icon: const Icon(Icons.settings_outlined),
-              label: Text(context.tr(providerId == 'local_ai' ? 'Device & model status' : providerId == 'gemini' ? 'API Configuration' : 'Account Configuration')),
+              onPressed: null,
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: Text(context.tr('Offline Inference Test')),
             ),
-            if (providerId != 'local_ai')
-              FilledButton.icon(
-                onPressed: manager.isBusy ? null : () => _testConnection(context),
-                icon: manager.isBusy
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.wifi_tethering_rounded),
-                label: Text(context.tr('Test Connection')),
-              )
-            else
-              OutlinedButton.icon(
-                onPressed: null,
-                icon: const Icon(Icons.play_arrow_rounded),
-                label: Text(context.tr('Offline Inference Test')),
-              ),
-            if (providerId == 'cloudflare' && status == ManagedProviderStatus.connected && onOpenCloudflareDashboard != null)
-              OutlinedButton.icon(
-                onPressed: onOpenCloudflareDashboard,
-                icon: const Icon(Icons.dashboard_outlined),
-                label: Text(context.tr('Open Dashboard')),
-              ),
-            if ((providerId == 'cloudflare' && manager.cloudflareConfigured) || (providerId == 'gemini' && manager.geminiConfigured))
-              TextButton.icon(
-                onPressed: manager.isBusy ? null : () => _disconnect(context),
-                icon: const Icon(Icons.link_off_outlined),
-                label: Text(context.tr('Disconnect')),
-              ),
-          ]),
-        ),
-      );
+          if (providerId == 'cloudflare' && status == ManagedProviderStatus.connected && onOpenCloudflareDashboard != null)
+            OutlinedButton.icon(
+              onPressed: onOpenCloudflareDashboard,
+              icon: const Icon(Icons.dashboard_outlined),
+              label: Text(context.tr('Open Dashboard')),
+            ),
+          if ((providerId == 'cloudflare' && manager.cloudflareConfigured) || (providerId == 'gemini' && manager.geminiConfigured))
+            TextButton.icon(
+              onPressed: manager.isBusy ? null : () => _disconnect(context),
+              icon: const Icon(Icons.link_off_outlined),
+              label: Text(context.tr('Disconnect')),
+            ),
+        ]),
+      ),
+    );
+  }
 
   Future<void> _testConnection(BuildContext context) async {
     try {
@@ -289,18 +296,6 @@ class MarketProviderDetailScreen extends StatelessWidget {
         ManagedProviderStatus.disconnected => Colors.orangeAccent,
         ManagedProviderStatus.error => Colors.redAccent,
         ManagedProviderStatus.notReady => Colors.orangeAccent,
-      };
-
-  Color get _brandColor => switch (providerId) {
-        'cloudflare' => const Color(0xFFF38020),
-        'gemini' => const Color(0xFF9A8BFF),
-        _ => const Color(0xFF20C8FF),
-      };
-
-  IconData get _icon => switch (providerId) {
-        'cloudflare' => Icons.cloud_rounded,
-        'gemini' => Icons.auto_awesome_rounded,
-        _ => Icons.memory_rounded,
       };
 
   String _maskedAccountId(String? accountId) {

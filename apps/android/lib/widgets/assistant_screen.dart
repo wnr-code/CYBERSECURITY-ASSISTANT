@@ -4,6 +4,7 @@ import '../core/ai_assistant_coordinator.dart';
 import '../core/ai_provider_manager.dart';
 import '../core/ai_terminal_execution_bridge.dart';
 import '../l10n/app_localizations.dart';
+import 'ai_assistant_avatar.dart';
 
 class AssistantScreen extends StatefulWidget {
   const AssistantScreen({
@@ -138,6 +139,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   Widget _notConfigured(BuildContext context) => ListView(padding: const EdgeInsets.all(20), children: [
         const SizedBox(height: 20),
+        const AiAssistantAvatar(key: ValueKey('assistant-avatar-not-connected'), diameter: 48),
+        const SizedBox(height: 14),
         Text(context.tr('AI assistant is not connected'), style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
         Text(context.tr('Connect and configure a supported AI provider before sending a message. Prompts and approved tool results are sent to the selected provider. Do not send credentials, secrets, or personal data.'), style: const TextStyle(height: 1.5)),
@@ -151,6 +154,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
       ]);
 
   Widget _welcome(BuildContext context) => ListView(padding: const EdgeInsets.all(20), children: [
+        const AiAssistantAvatar(key: ValueKey('assistant-avatar-welcome'), diameter: 48),
+        const SizedBox(height: 12),
         Text(context.tr('AI ASSISTANT'), style: Theme.of(context).textTheme.labelSmall),
         const SizedBox(height: 8),
         Text(context.tr('AI assistance'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
@@ -162,31 +167,41 @@ class _AssistantScreenState extends State<AssistantScreen> {
         Text(context.tr('Chat display stays in this screen session only. Each send is a separate provider request; earlier messages are not resent and prompt text is not written to the local activity log.'), style: TextStyle(color: Colors.white.withValues(alpha: .55), fontSize: 11, height: 1.4)),
       ]);
 
-  Widget _messageTile(BuildContext context, _AssistantBubble message) => Align(
-        alignment: message.fromUser ? Alignment.centerRight : Alignment.centerLeft,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 680),
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(13),
-          decoration: BoxDecoration(
-            color: message.fromUser ? const Color(0xFF153B42) : const Color(0xFF151D31),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white.withValues(alpha: .08)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            SelectableText(message.text, style: const TextStyle(height: 1.45)),
-            if (message.requestId != null) ...[
-              const SizedBox(height: 7),
-              Text('${context.tr('Request ID')}: ${message.requestId}', style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: .55))),
-            ],
-            if (message.executionIds.isNotEmpty) ...[
-              const SizedBox(height: 7),
-              for (final id in message.executionIds)
-                Text('${context.tr('Runtime Execution ID')}: $id', style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: .62))),
-            ],
-          ]),
-        ),
-      );
+  Widget _messageTile(BuildContext context, _AssistantBubble message) {
+    final bubble = Container(
+      constraints: const BoxConstraints(maxWidth: 680),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: message.fromUser ? const Color(0xFF153B42) : const Color(0xFF151D31),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: .08)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SelectableText(message.text, style: const TextStyle(height: 1.45)),
+        if (message.requestId != null) ...[
+          const SizedBox(height: 7),
+          Text('${context.tr('Request ID')}: ${message.requestId}', style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: .55))),
+        ],
+        if (message.executionIds.isNotEmpty) ...[
+          const SizedBox(height: 7),
+          for (final id in message.executionIds)
+            Text('${context.tr('Runtime Execution ID')}: $id', style: TextStyle(fontSize: 10, color: Colors.white.withValues(alpha: .62))),
+        ],
+      ]),
+    );
+
+    return Align(
+      alignment: message.fromUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: message.fromUser
+          ? bubble
+          : Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              AiAssistantAvatar(key: ValueKey('assistant-avatar-${message.requestId ?? 'pending'}'), diameter: 36),
+              const SizedBox(width: 8),
+              Flexible(child: bubble),
+            ]),
+    );
+  }
 
   Future<void> _send() async {
     final prompt = _inputController.text.trim();

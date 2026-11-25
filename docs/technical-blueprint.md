@@ -5,7 +5,7 @@
 - **Product description:** Local-first Android cybersecurity assistant with a planned AI Cybersecurity Expert Engine.
 - **Architecture principles:** Local-first, hybrid AI, BYOI (Bring Your Own Infrastructure), BYOK (Bring Your Own Key), a user-controlled tool ecosystem, and no mandatory developer backend.
 
-> **Implementation note:** The repository contains a Flutter UI with splash, dashboard, primary navigation and a secondary Assistant screen; an in-app registry for four P0 entries; a registry-ID-only tool orchestration boundary; guarded DNS/TLS/HTTP-header adapters with a self-attestation audit marker; result analysis/export and opt-in SQLite history; a namespaced secure-credential wrapper and provider-details UI (not wired to provider connectors; Android runtime behavior is unverified); an HTTPS endpoint reachability prototype; a guide-only provider catalog; an allowlisted GitHub release-metadata viewer; and tests. The Assistant is a UI placeholder: no AI model/provider, knowledge base, AI reasoning engine, AI router, internal terminal/runtime, or embedded package manager is implemented. These are early foundations, not a complete or release-ready product. See [`apps/android/README.md`](../apps/android/README.md), [AI Cybersecurity Expert Engine](ai-cybersecurity-expert-engine.md), and [Embedded Runtime Blueprint](embedded-runtime-implementation.md) for details.
+> **Implementation note:** The repository contains a Flutter app with a Dashboard, four primary destinations, three bounded network checks, deterministic local response analysis, local result/finding/activity records, a typed Market package manager, and provider-specific Cloudflare and opt-in Gemini paths. The Gemini Assistant uses the user's key and per-request data-sharing consent; AI proposals still pass tool review and policy gates. Cloudflare is limited to token verification and read-only account/zone operations. Local AI has a capability contract/device probe but no integrated inference runtime or model. The current Market installs a small verified data guide only; Cloudflare/Gemini code is in the base app and provider modules cannot yet be independently installed or removed. The app has no full AI expert engine, knowledge retrieval, unrestricted shell, or arbitrary Market code loader. These are early foundations, not a complete or release-ready product. See [`apps/android/README.md`](../apps/android/README.md), [Market Modular Delivery](market-modular-delivery.md), [AI Cybersecurity Expert Engine](ai-cybersecurity-expert-engine.md), and [Embedded Runtime Blueprint](embedded-runtime-implementation.md) for details.
 
 ## 1. Product concept
 
@@ -17,7 +17,7 @@ Cybersecurity Assistant is an Android application for discovering, managing, and
 4. **Cybersecurity Knowledge and Result Services** — versioned security references, normalized local findings, provenance, and report contracts shared with the AI and tools (planned or partial as marked in the AI ledger).
 5. **User-owned cloud infrastructure** — optional services configured and controlled by each user; it is not a mandatory developer backend.
 
-The project provides the application, engine, integration framework, catalog metadata, documentation, and infrastructure templates. Users provide any external accounts, domains, API keys, tokens, storage, and services they choose to connect. The application must not depend on a mandatory developer-operated backend.
+The project provides the base application, engine contracts, integration framework, catalog metadata, documentation, and infrastructure templates. The base APK should remain lightweight while keeping the Market and shared policy/registry foundations available. Users should be able to select, install, update, and remove optional provider/tool modules without removing the app or Market. Users provide any external accounts, domains, API keys, tokens, storage, and services they choose to connect. The application must not depend on a mandatory developer-operated backend. The intended modular delivery and current implementation gap are defined in [Market Modular Delivery](market-modular-delivery.md).
 
 ## 2. GitHub tool ecosystem
 
@@ -76,7 +76,7 @@ The application should provide configuration guidance and templates without requ
 
 ## 5. System architecture and data flow
 
-Guarded AI-assisted tool flow (all AI functions are planned):
+Target AI-assisted evidence flow (only narrow Gemini chat and registered-tool proposals are currently implemented):
 
 ```text
 User + authorized scope
@@ -125,7 +125,7 @@ Future findings use four labels: **Confirmed Finding**, **Potential Finding**, *
 
 The model is an untrusted planner/interpreter. It cannot access arbitrary shell commands, raw credentials, or direct tool adapters. Any proposed action must use a registered Tool ID and typed parameters, then pass independently through the Tool Registry, Policy Engine, and Tool Orchestrator. Active checks require the existing authorization/scope controls and explicit user approval. No automatic exploit or malware execution is allowed. Evidence stays local by default; sending code, findings, or other sensitive data to cloud AI requires informed consent.
 
-Planned providers are Gemini, OpenAI, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, and optional local `llama.cpp`/GGUF inference. This is BYOK and local-first hybrid AI: no developer key, mandatory paid provider, or silent cloud fallback. Provider/model managers, smart routing, usage controls, and the full AI engine are not implemented. The current Assistant screen and local rule-based Result Analyzer are not an AI engine. See [AI Cybersecurity Expert Engine — Architecture Blueprint](ai-cybersecurity-expert-engine.md) for full capabilities, source/version model, integration contracts, conceptual module map, security guardrails, current implementation ledger, and staged rollout.
+The target provider roster includes Gemini, OpenAI, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, and optional local `llama.cpp`/GGUF inference. In the current app, a narrow opt-in Gemini adapter and guarded registered-tool loop are implemented; the other cloud AI providers are catalog-only, and Local AI has no integrated runtime/model. Provider/model managers, smart routing, usage controls, and the full AI Expert Engine are not implemented. This remains BYOK and local-first: no developer key, mandatory paid provider, or silent cloud fallback. See [AI Cybersecurity Expert Engine — Architecture Blueprint](ai-cybersecurity-expert-engine.md) for the full target, boundaries, current implementation ledger, and staged rollout.
 
 ## 8. Download Manager
 
@@ -141,6 +141,12 @@ The Download Manager should:
 
 No downloaded artifact should be run automatically or before validation completes.
 
+### Optional provider modules for lightweight Play installs
+
+The base application keeps Market available. Cloudflare, Gemini, and Local AI are the first user-selectable optional modules; the module list remains visible whether or not a module is installed. During testing, after the current APK is stable, the target is a controlled project server for signed, versioned provider packages behind a transport-neutral module manager. Start with verified manifests/data and host-compiled, typed provider adapters; checksums/signatures do not make arbitrary downloaded code safe. Near Play release, evaluate on-demand executable modules in a modular AAB, with Local AI model weights delivered as separately selected, integrity-checked data. Market remains the lifecycle UI in every phase, and removing a module never removes the app or Market. See [Market Modular Delivery](market-modular-delivery.md) for stages, trust model, and the current gap.
+
+This is a product target, not implemented behavior. Cloudflare and Gemini adapters are currently bundled in the base APK, Local AI has no integrated runtime/model, and the existing Market package lifecycle only installs data packages.
+
 ## 9. Connection Manager and credential handling
 
 The Connection Manager organizes optional integrations by category:
@@ -152,9 +158,9 @@ The Connection Manager organizes optional integrations by category:
 - Security Intelligence APIs.
 - Custom Services.
 
-Potential connectors include Cloudflare Workers, Firebase, Supabase, R2, S3-compatible storage, WebDAV, OpenAI, Gemini, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, VirusTotal, Shodan, and URLScan. Each connection should provide endpoint/configuration fields, authentication setup, a **Test Connection** action, connection status, and provider-specific setup guidance. Tests should use the least-privileged request possible and avoid logging secrets or sending unnecessary data. AI providers remain optional BYOK integrations; no developer API key is bundled, no provider is active by default, and cloud data transfer requires explicit consent. The existing catalog is guide-only and stored credentials are not used by provider connectors.
+Potential connectors include Cloudflare Workers, Firebase, Supabase, R2, S3-compatible storage, WebDAV, OpenAI, Gemini, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs, VirusTotal, Shodan, and URLScan. Each connection should provide provider-doc-aligned endpoint/configuration fields, authentication guidance where needed, **Connect/Disconnect** and bounded **Test Connection** controls, truthful status, and least-privilege setup instructions. Do not require an API key for a local, public, or unauthenticated service. AI providers remain optional BYOK integrations; user-provided accounts, endpoints, storage, domains, and infrastructure are BYOI. No developer API key is bundled, no provider is active by default, and cloud data transfer requires explicit consent. Current Cloudflare and Gemini adapters are implemented in the base app; most other entries remain guidance/catalog-only. The target is for the three priority providers to be optional Market modules, as detailed in [Market Modular Delivery](market-modular-delivery.md).
 
-API keys and tokens must be stored encrypted using Android Keystore-backed protection. Do not embed developer credentials or cloud administrator/master keys in the APK. Secret values should be masked in the UI and excluded from logs, reports, crash data, and analytics.
+Secrets must be stored in Android Keystore-backed Secure Storage, masked in the UI, and excluded from logs, reports, crash data, Diagnostics, analytics, Market/catalog, and project-server requests. Send credentials directly only to the user's documented provider endpoint for a user-initiated operation; never proxy them through project infrastructure. Module uninstall preserves credentials, configuration, and user-owned external resources by default. Disconnect and credential deletion/revocation are separately explained user actions; uninstall must not silently perform them. Do not embed developer credentials or cloud administrator/master keys in the APK.
 
 ## 10. Operating modes
 
@@ -245,7 +251,7 @@ Cybersecurity Assistant is more than a directory of tool links. It is an Android
 - **Tool Registry:** source of truth for tool metadata and compatibility.
 - **Download Manager:** controlled retrieval, validation, installation, and updates.
 - **Android Execution Engine:** runs supported tools on-device.
-- **AI Cybersecurity Expert Engine (planned):** will help select, configure, and interpret tools through guarded, policy-mediated orchestration; the current Assistant is only a UI placeholder.
+- **AI Cybersecurity Expert Engine (planned):** will provide broad, evidence-grounded security reasoning and reporting through guarded, policy-mediated orchestration. The current Assistant offers narrow opt-in Gemini chat and registered-tool proposals; it is not the full Expert Engine.
 - **User-owned cloud:** optional backend, database, storage, synchronization, and coordination.
 - **SQLite:** primary local persistence.
 - **Connection Manager:** configuration and testing of user-owned external services.

@@ -66,6 +66,10 @@ Install/update flow: resolve an allowlisted source → show source/version/licen
 
 A “Plugin Store” is only a catalog and reviewed distribution channel in this design. Plugins cannot register native code or expand permissions without review. Prefer declarative manifests and fixed adapter capabilities; signed publisher identity alone is not proof of safety.
 
+### Boundary with optional provider modules
+
+This runtime/package blueprint covers curated tools and data artifacts; it is not permission to execute arbitrary provider code. The owner-confirmed product target keeps the Market shell in the base app and makes Cloudflare, Gemini, and Local AI independently selectable. After base APK stabilization, a controlled project server may deliver signed, versioned declarative/provider data packages; all execution remains in reviewed host adapters with typed policy checks. A checksum/signature alone is not a sandbox. Any downloaded executable provider code requires a separate threat model and constrained-runtime review. Near Play release, evaluate Play on-demand feature modules for executable code. Large Local AI model weights are separate data artifacts with explicit source/license/size/integrity checks. See [Market Modular Delivery](market-modular-delivery.md). This is a future target and has not been implemented or validated in the current Android build.
+
 ### Android process and ABI support
 
 - Prefer Android-native Kotlin/Java APIs or reviewed Android NDK libraries for core capabilities.

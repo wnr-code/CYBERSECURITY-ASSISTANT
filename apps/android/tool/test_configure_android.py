@@ -3,7 +3,7 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from verify_android_splash import _parse_signer_fingerprints, verify_sources
+from verify_android_splash import _parse_signer_fingerprints, _validate_apk_signers, verify_sources
 
 from configure_android import (
     configure_gradle,
@@ -24,6 +24,29 @@ class ConfigureAndroidTests(unittest.TestCase):
             "Signer #1 certificate SHA-1 digest: AA:BB\n"
         )
         self.assertEqual(parsed, {"aa" * 32})
+        spaced = " ".join(["Bb"] * 32)
+        parsed_variants = _parse_signer_fingerprints(
+            f"Signer #1 certificate SHA256 digest: {spaced}\n"
+            f"Source Stamp certificate SHA-256 digest: {'cc' * 32}\n"
+        )
+        self.assertEqual(parsed_variants, {"bb" * 32})
+
+    def test_debug_apk_signature_does_not_require_release_pin_fingerprint_output(self):
+        result = _validate_apk_signers("Verified using v2 scheme (APK Signature Scheme v2): true\\n", set())
+        self.assertIn("APK signature valid", result)
+        self.assertIn("signer fingerprint unavailable", result)
+        self.assertIn("not release-trusted", result)
+
+    def test_release_apk_signer_pin_still_fails_closed_without_a_digest(self):
+        with self.assertRaisesRegex(RuntimeError, "Expected exactly one APK signer certificate digest"):
+            _validate_apk_signers("Verified using v2 scheme: true\\n", {"a" * 64})
+
+    def test_release_apk_signer_pin_requires_the_actual_fingerprint_to_match(self):
+        fingerprint = "ab" * 32
+        output = f"Signer #1 certificate SHA-256 digest: {fingerprint}\\n"
+        self.assertIn(fingerprint, _validate_apk_signers(output, {fingerprint}))
+        with self.assertRaisesRegex(RuntimeError, "does not match"):
+            _validate_apk_signers(output, {"cd" * 32})
 
     def test_trusted_signer_resource_is_validated_and_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:

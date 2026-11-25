@@ -325,7 +325,20 @@ Pertahankan alur explicit authorization, target review, tool readiness dan hasil
 └────────────────────────────────────────────┘
 ```
 
-Market tetap halaman sekunder dengan disclosure katalog terbatas dan status kompatibilitas/instalasi. “My Tools” hanya muncul setelah ada fungsi nyata untuk memilih/menyimpan tool; sebelum itu gunakan nama `Tool Catalog` yang tersedia.
+Market tetap halaman sekunder dengan status kompatibilitas dan lifecycle yang jujur. “My Tools” hanya muncul setelah ada fungsi nyata untuk memilih/menyimpan tool; sebelum itu gunakan nama `Tool Catalog` yang tersedia.
+
+**Klarifikasi produk disetujui pemilik (2026-11-23):** Market dan katalognya selalu ada di base app. Pengguna dapat memasang atau menghapus modul Cloudflare, Gemini, dan Local AI secara independen tanpa menghapus aplikasi atau Market. Kartu modul tetap terlihat saat belum dipasang, dengan status yang membedakan `Belum dipasang`, `Mengunduh`, `Terpasang`, `Perlu konfigurasi`, `Belum siap`, `Tidak kompatibel`, dan `Gagal`. Sebelum pemasangan, tampilkan sumber, versi, ukuran, lisensi, perangkat/izin yang diperlukan, serta efek penghapusan.
+
+```text
+┌────────────────────────────────────────────┐
+│ Market > Provider Modules                  │
+│ Cloudflare    Not installed      [Install] │
+│ Gemini        Not installed      [Install] │
+│ Local AI      Not installed      [Install] │
+└────────────────────────────────────────────┘
+```
+
+Setelah Cloudflare terpasang, buka halaman khusus dan tampilkan hanya operasi yang benar-benar lolos pemeriksaan izin API per kapabilitas. Gemini tetap meminta key pengguna dan persetujuan data setiap permintaan. Local AI tetap `Not Ready` sampai runtime/model kompatibel lulus pemeriksaan dan inferensi lokal nyata berhasil. Menghapus modul tidak menghapus aplikasi, Market, riwayat pemeriksaan, atau provider lain. Ini adalah **target UI/produk**, belum perilaku Market saat ini. Prioritas teknisnya adalah stabilisasi APK dasar; setelah itu uji paket bertanda tangan dari server resmi dengan kontrak transport netral. Paket data tidak boleh diperlakukan sebagai kode executable. Pengiriman kode melalui Play modular dievaluasi menjelang rilis. Detail ada di [Market Modular Delivery](market-modular-delivery.md).
 
 ### 9.3 Reports
 

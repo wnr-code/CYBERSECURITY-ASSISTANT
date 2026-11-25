@@ -8,7 +8,7 @@ import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
-import 'security_status_hero.dart';
+import 'digital_earth_hero.dart';
 
 const _dashboardMint = Color(0xFF73F0C2);
 const _dashboardBlue = Color(0xFF36D9FF);
@@ -116,7 +116,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final width = MediaQuery.sizeOf(context).width;
     final horizontalPadding = width < 360 ? 14.0 : 20.0;
     final assessmentEvents = widget.activityEvents.where((event) => event.kind == ActivityKind.assessment).toList(growable: false);
-    final latestAssessment = assessmentEvents.isEmpty ? null : _latestAssessment(assessmentEvents);
     final findingsBySeverity = <FindingSeverity, int>{
       for (final severity in FindingSeverity.values)
         severity: widget.findings.where((finding) => finding.severity == severity).length,
@@ -145,20 +144,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.4),
             ),
             const SizedBox(height: 16),
-            SecurityStatusHero(
-              assessmentProgress: running,
-              activeAssessmentTarget: widget.activeAssessmentTarget,
-              latestAssessment: latestAssessment,
-              activityLoaded: widget.activityLoaded,
-              activityBusy: widget.activityBusy,
-              activityError: widget.activityError,
-              findingsCount: widget.findings.length,
-              findingsBySeverity: findingsBySeverity,
-              findingsLoaded: widget.findingsLoaded,
-              findingsBusy: widget.findingsBusy,
-              findingsError: widget.findingsError,
-              onTap: widget.onOpenSecurityOverview,
-            ),
+            DigitalEarthHero(onTap: widget.onOpenSecurityOverview),
             const SizedBox(height: 18),
             _DashboardHeading(title: context.tr('SECURITY INSTRUMENTS'), icon: Icons.tune_rounded),
             const SizedBox(height: 9),
@@ -781,11 +767,6 @@ Color _severityColor(FindingSeverity severity) => switch (severity) {
       FindingSeverity.low => const Color(0xFF71B7FF),
       FindingSeverity.info => _dashboardMint,
     };
-
-ActivityEvent _latestAssessment(List<ActivityEvent> events) {
-  final ordered = List<ActivityEvent>.of(events)..sort((a, b) => b.startedAt.compareTo(a.startedAt));
-  return ordered.first;
-}
 
 String _assessmentStatusSummary(List<ActivityEvent> events, BuildContext context) {
   final completed = events.where((event) => event.status == ActivityStatus.completed).length;

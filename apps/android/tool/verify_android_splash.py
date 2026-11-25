@@ -166,9 +166,41 @@ def _trusted_signer_pins(android_root: Path) -> set[str]:
 
 
 def _parse_signer_fingerprints(apksigner_output: str) -> set[str]:
-    values = re.findall(r"(?im)^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f:]+)\s*$", apksigner_output)
-    normalized = {value.replace(":", "").lower() for value in values}
-    return {value for value in normalized if re.fullmatch(r"[0-9a-f]{64}", value)}
+    fingerprints: set[str] = set()
+    for line in apksigner_output.splitlines():
+        if not re.search(r"(?i)\bsigner\s*#?\d+\b", line):
+            continue
+        match = re.search(r"(?i)sha-?256(?:\s+digest)?\s*[:=]\s*([0-9a-fA-F: \t-]+)", line)
+        if match is None:
+            continue
+        normalized = re.sub(r"[^0-9a-f]", "", match.group(1).lower())
+        if re.fullmatch(r"[0-9a-f]{64}", normalized):
+            fingerprints.add(normalized)
+    return fingerprints
+
+
+def _validate_apk_signers(signature_output: str, trusted_pins: set[str]) -> str:
+    actual_signers = _parse_signer_fingerprints(signature_output)
+    if trusted_pins:
+        if len(actual_signers) != 1:
+            digest_lines = [
+                line.strip()
+                for line in signature_output.splitlines()
+                if re.search(r"(?i)sha-?256", line)
+            ]
+            diagnostic = "; ".join(digest_lines[:4]) or "apksigner emitted no SHA-256 digest line"
+            raise RuntimeError(
+                "Expected exactly one APK signer certificate digest from apksigner; "
+                f"parsed {len(actual_signers)}. Output: {diagnostic[:500]}"
+            )
+        _require(actual_signers.issubset(trusted_pins), "Built APK signer does not match the configured trusted developer certificate")
+        return f"configured trusted signer(s) verified: {', '.join(sorted(actual_signers))}"
+
+    if len(actual_signers) == 1:
+        signer_detail = f"signer {next(iter(actual_signers))}"
+    else:
+        signer_detail = "signer fingerprint unavailable from apksigner"
+    return f"APK signature valid but no trusted release signer pin is configured ({signer_detail}); not release-trusted"
 
 
 def verify_apk(apk: Path, android_root: Path) -> None:
@@ -198,14 +230,8 @@ def verify_apk(apk: Path, android_root: Path) -> None:
 
     apksigner = _find_apksigner()
     signature = subprocess.run([apksigner, "verify", "--verbose", "--print-certs", str(apk)], check=True, capture_output=True, text=True)
-    actual_signers = _parse_signer_fingerprints(signature.stdout + signature.stderr)
-    _require(len(actual_signers) == 1, "Expected exactly one APK signer certificate digest from apksigner")
-    pins = _trusted_signer_pins(android_root)
-    if pins:
-        _require(actual_signers.issubset(pins), "Built APK signer does not match the configured trusted developer certificate")
-        signer_result = f"configured trusted signer(s) verified: {', '.join(sorted(actual_signers))}"
-    else:
-        signer_result = f"APK signature valid but no trusted release signer pin is configured (signer(s): {', '.join(sorted(actual_signers))}); not release-trusted"
+    signature_output = signature.stdout + signature.stderr
+    signer_result = _validate_apk_signers(signature_output, _trusted_signer_pins(android_root))
 
     digest = hashlib.sha256()
     with apk.open("rb") as stream:

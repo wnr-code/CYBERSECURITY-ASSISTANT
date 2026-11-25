@@ -39,9 +39,19 @@ The registry must support multiple capability domains without treating them as d
 
 Long-term ecosystem components remain in the architecture: Embedded Runtime, Plugin Store, Plugin Manager, Dependency Manager, and verified Download/Update Manager. They are **planned**, not currently available. Any future plugin/runtime requires source/license review, Android/device compatibility checks, dependency and integrity verification, least privilege, user approval, sandbox/isolation design, and a no-auto-execution policy. No arbitrary shell, downloaded code execution, or plugin execution is part of the current implementation.
 
+## Persistent Market and optional provider modules
+
+The product direction is for the lightweight base app to keep the Market, module catalog, shared registries/contracts, policy boundary, and core local workflows. Users can choose Cloudflare, Gemini, and Local AI modules from Market and install or remove each independently; removing a module must not remove the app, Market, or unrelated user records. The module catalog remains visible when a module is absent.
+
+The delivery plan is staged. After the base APK is stable, the testing phase may use a controlled, allowlisted project server to deliver signed, versioned module manifests/data. Keep provider execution behind reviewed host-compiled adapters and typed policy-enforced capabilities; a valid signature does not make arbitrary downloaded code safe. Near release, evaluate modular AAB/Google Play on-demand delivery for executable code. Local AI model weights remain separate, user-selected, license- and integrity-checked data. Market is always the lifecycle UI—not an arbitrary-code loader. Cloudflare's page and operations appear only when its Market package is installed and each capability is justified by the relevant permission response. Gemini still requires user-owned credentials and per-request data-sharing consent. Local AI is Ready only after actual compatible local inference succeeds, with no cloud fallback.
+
+This is the intended direction, **not current behavior**. The existing Market installs only limited data payloads; Cloudflare/Gemini code is bundled and Local AI has no integrated runtime/model. See [Market Modular Delivery](market-modular-delivery.md) for lifecycle states, security gates, and the implementation plan.
+
 ## Local-first and BYOI/BYOK
 
 Built-in supported checks must work without cloud accounts, developer-controlled services, AI providers, or user API keys. Results remain on-device unless the user explicitly exports or configures their own backend/database/storage. Optional connections must identify their owner, data sent, credentials requested, cost implications, and implementation status. A guide/catalog entry is not an active connector.
+
+Every applicable Market module follows BYOK/BYOI: provider-doc-aligned setup, Keystore-backed Secure Storage, Connect/Disconnect and bounded credential/service validation, official acquisition/setup guidance, and least-privilege defaults. Do not demand an API key where a capability does not need one. Credentials go directly to the user's documented provider endpoint and never through project-controlled distribution, diagnostics, or analytics servers. Module uninstall preserves saved credentials, configuration, and user-owned external resources; any credential deletion or provider-side revocation requires a separate explicit user action. These are mandatory publication requirements, not a claim that every current catalog item meets them.
 
 ## Phased delivery gates
 

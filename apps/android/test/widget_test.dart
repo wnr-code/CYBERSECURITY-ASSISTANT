@@ -14,10 +14,13 @@ import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/core/tool_registry.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
+import 'package:cybersecurity_assistant/widgets/ai_shield_robot_mark.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/dashboard_screen.dart';
+import 'package:cybersecurity_assistant/widgets/digital_earth_hero.dart';
 import 'package:cybersecurity_assistant/widgets/floating_terminal.dart';
+import 'package:cybersecurity_assistant/widgets/market_brand_mark.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:cybersecurity_assistant/widgets/tool_runner_dialog.dart';
@@ -309,6 +312,56 @@ Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('dashboard follows the agreed Digital Earth and honest instrument hierarchy', (tester) async {
+    _useTallViewport(tester, width: 390);
+    await _pumpApp(tester);
+
+    expect(find.byType(DigitalEarthHero), findsOneWidget);
+    expect(find.byKey(const ValueKey('digital-earth-hero')), findsOneWidget);
+    expect(find.byKey(const ValueKey('instrument-security-score')), findsOneWidget);
+    expect(find.byKey(const ValueKey('instrument-risk-level')), findsOneWidget);
+    expect(find.byKey(const ValueKey('instrument-scan-progress')), findsOneWidget);
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('instrument-security-score')), matching: find.text('Belum tersedia')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('instrument-risk-level')), matching: find.text('Belum dihitung')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('instrument-scan-progress')), matching: find.text('Tidak ada assessment yang berjalan')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('digital-earth-hero')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('Ikhtisar Keamanan'), findsOneWidget);
+  });
+
+  testWidgets('Market provider marks use Cloudflare and Gemini brand artwork', (tester) async {
+    await tester.pumpWidget(const MaterialApp(
+      home: Scaffold(
+        body: Row(children: [
+          MarketBrandMark(providerId: 'cloudflare'),
+          MarketBrandMark(providerId: 'gemini'),
+          MarketBrandMark(providerId: 'local_ai'),
+          AiShieldRobotMark(progress: .5),
+        ]),
+      ),
+    ));
+    await tester.pump();
+
+    final images = tester.widgetList<Image>(find.byType(Image)).toList();
+    expect(images, hasLength(2));
+    expect((images[0].image as AssetImage).assetName, 'assets/brands/cloudflare.png');
+    expect((images[1].image as AssetImage).assetName, 'assets/brands/googlegemini.png');
+    expect(find.byIcon(Icons.memory_rounded), findsOneWidget);
+    expect(find.byType(AiShieldRobotMark), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Market keeps the package catalog in an internal tab with six honest categories', (tester) async {
     final directory = (await tester.runAsync(() => Directory.systemTemp.createTemp('market-widget-')))!;
     final manager = MarketPackageManager(
@@ -1144,6 +1197,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
+    expect(find.byKey(const ValueKey('assistant-avatar-not-connected')), findsOneWidget);
+    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
   });
 
   testWidgets('AI assistant is a secondary module, not a primary navigation destination', (tester) async {

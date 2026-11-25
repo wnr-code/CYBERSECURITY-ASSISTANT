@@ -1,6 +1,6 @@
 # Android Market & Package Manager Foundation
 
-This milestone adds a dedicated Market page and a local package-management boundary. It is intentionally a small foundation, not an embedded tool runtime or executable plugin loader.
+This milestone adds a dedicated Market page and a local package-management boundary. It is intentionally a small foundation, not an embedded tool runtime or executable plugin loader. The owner has since confirmed a broader target: Market stays in the base app while Cloudflare, Gemini, and Local AI become independently installable/removable optional modules. That target does **not** change what this milestone currently implements; see [Market Modular Delivery](market-modular-delivery.md) for the source-of-truth decision.
 
 ## Implemented now
 
@@ -12,6 +12,10 @@ This milestone adds a dedicated Market page and a local package-management bound
 - Per-package states: Available, Downloading, Downloaded, Verifying, Installed, Update Available, Incompatible, and Failed.
 - A safe offline example Knowledge Pack is downloaded from the Flutter asset bundle, SHA-256 checked, parsed as a schema/ID/version-matched JSON document, and stored under app-private support storage. It can be reloaded from the local registry, updated in a fixture, and uninstalled.
 - License acceptance precedes download. Required dependencies, supported platform/ABI, runtime availability, maximum package size, checksum, optional signature verifier, and data-only payload policy are checked before a package is marked installed.
+
+## Future provider-module contract and publication gate
+
+The current package manager is intentionally data-only; it does not yet implement provider-module runtime adapters, module lifecycle, health checks, or publishing. Any future provider modules must follow the contract and publication gates in [Market Modular Delivery](market-modular-delivery.md): signed identity/version manifest, base-owned capability registry and permissions, typed Policy Engine adapter, module-scoped configuration/storage, install/start/stop/update/uninstall with recoverable state, separate health/readiness checks, privacy-safe Diagnostics errors, and module-specific tests. A Market listing must remain draft until security/permissions, install and removal, APK integration, function tests, isolation from other modules, and user documentation all pass for the exact artifact version.
 
 ## Security model and limitations
 

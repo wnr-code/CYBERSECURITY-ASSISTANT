@@ -520,6 +520,7 @@ class AppLocalizations {
     'All': 'Semua',
     'No tools match your search.': 'Tidak ada alat yang cocok dengan pencarian.',
     'AI ASSISTANT': 'ASISTEN AI',
+    'AI assistant avatar; check mark is decorative and does not verify responses.': 'Avatar Asisten AI; tanda centang hanya dekoratif dan tidak memverifikasi jawaban.'
     'Security, with context.': 'Keamanan dengan konteks.',
     'Your assistant is not connected. Local tools remain available without an AI service.': 'Asisten belum terhubung. Alat lokal tetap dapat digunakan tanpa layanan AI.',
     'Ask about a tool or workflow…': 'Tanyakan tentang alat atau alur kerja…',
@@ -990,6 +991,10 @@ class AppLocalizations {
     "Local-first overview · no live network map": "Ringkasan lokal · tidak ada peta jaringan langsung",
     "SECURITY INSTRUMENTS": "INSTRUMEN KEAMANAN",
     "SECURITY ANALYTICS": "ANALITIK KEAMANAN",
+    "DIGITAL EARTH": "BUMI DIGITAL",
+    "IDLE": "TIDAK AKTIF",
+    "Illustrative globe; network topology is unavailable; no nodes or connections are shown.": "Globe ilustratif; topologi jaringan tidak tersedia; tidak ada node atau koneksi yang ditampilkan.",
+    "Illustrative · no nodes or connection data": "Ilustrasi · tanpa data node atau koneksi",
     "Security Score": "Skor Keamanan",
     "Methodology not defined": "Metodologi belum ditetapkan",
     "Risk Level": "Tingkat Risiko",

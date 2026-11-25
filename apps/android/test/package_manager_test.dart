@@ -155,6 +155,28 @@ void main() {
       if (await supportDirectory.exists()) await supportDirectory.delete(recursive: true);
     });
 
+    test('serializes concurrent registry updates without losing another package', () async {
+      final registry = PackageRegistry(File('${supportDirectory.path}/registry.json'));
+      final first = InstalledPackage(
+        id: 'knowledge.first',
+        version: '1.0.0',
+        relativeFile: 'knowledge.first/1.0.0/payload.json',
+        sha256: List.filled(64, 'a').join(),
+      );
+      final second = InstalledPackage(
+        id: 'knowledge.second',
+        version: '1.0.0',
+        relativeFile: 'knowledge.second/1.0.0/payload.json',
+        sha256: List.filled(64, 'b').join(),
+      );
+
+      await Future.wait([registry.record(first), registry.record(second)]);
+
+      expect(registry.installed.map((entry) => entry.id).toSet(), {'knowledge.first', 'knowledge.second'});
+      final persisted = jsonDecode(await registry.file.readAsString()) as List<dynamic>;
+      expect(persisted, hasLength(2));
+    });
+
     MarketPackageManager managerFor(List<MarketPackage> catalog, PackageDownloader downloader) => MarketPackageManager(
           catalog: catalog,
           environment: const CompatibilityEnvironment(platform: 'Android', architecture: 'arm64-v8a'),
@@ -236,6 +258,25 @@ void main() {
       expect(restored.installedById(package.id)?.sha256, installed.sha256);
       manager.dispose();
       restored.dispose();
+    });
+
+    test('installer refuses to overwrite a conflicting payload for the same version', () async {
+      final bytes = _manifestBytes('knowledge.fixture', '1.0.0');
+      final package = _fixturePackage(payload: bytes);
+      final packageDirectory = Directory('${supportDirectory.path}/market_packages');
+      final destination = File('${packageDirectory.path}/${package.id}/${package.version}/payload.json');
+      await destination.parent.create(recursive: true);
+      await destination.writeAsString('pre-existing data');
+      final registry = PackageRegistry(File('${supportDirectory.path}/registry.json'));
+      final installer = PackageInstaller(packageDirectory: packageDirectory, registry: registry);
+
+      await expectLater(
+        installer.install(VerifiedPackage(package: package, bytes: bytes, sha256: package.sha256!)),
+        throwsA(isA<PackageManagerException>()),
+      );
+
+      expect(await destination.readAsString(), 'pre-existing data');
+      expect(registry.installed, isEmpty);
     });
 
     test('installer rechecks bytes even when a caller forges a VerifiedPackage wrapper', () async {
@@ -368,6 +409,8 @@ void main() {
       final manager = managerFor([v1], downloader);
       await manager.initialize();
       final installedV1 = await manager.install(v1, licenseAccepted: true);
+      final preservedVersionData = File('${supportDirectory.path}/market_packages/${v1.id}/${v1.version}/user-kept-data.txt');
+      await preservedVersionData.writeAsString('keep across update and uninstall');
       final v2Bytes = _manifestBytes('knowledge.fixture', '1.1.0');
       final v2 = _fixturePackage(version: '1.1.0', payload: v2Bytes);
       downloader.bytes = v2Bytes;
@@ -378,12 +421,30 @@ void main() {
       expect(installedV2.version, '1.1.0');
       expect(manager.statusFor(v2), PackageStatus.installed);
       expect(await File('${supportDirectory.path}/market_packages/${installedV1.relativeFile}').exists(), isFalse);
+      expect(await preservedVersionData.readAsString(), 'keep across update and uninstall');
       expect(await File('${supportDirectory.path}/market_packages/${installedV2.relativeFile}').exists(), isTrue);
 
       await manager.uninstall(v2.id);
       expect(manager.statusFor(v2), PackageStatus.available);
       expect(manager.installedById(v2.id), isNull);
-      expect(await Directory('${supportDirectory.path}/market_packages/${v2.id}').exists(), isFalse);
+      expect(await preservedVersionData.readAsString(), 'keep across update and uninstall');
+      manager.dispose();
+    });
+
+    test('uninstall removes only the registered payload and preserves sibling data', () async {
+      final bytes = _manifestBytes('knowledge.fixture', '1.0.0');
+      final package = _fixturePackage(payload: bytes);
+      final manager = managerFor([package], _FixtureDownloader(bytes));
+      await manager.initialize();
+      final installed = await manager.install(package, licenseAccepted: true);
+      final preservedFile = File('${supportDirectory.path}/market_packages/${package.id}/user-kept-data.txt');
+      await preservedFile.writeAsString('keep this unrelated data');
+
+      await manager.uninstall(package.id);
+
+      expect(manager.installedById(package.id), isNull);
+      expect(await File('${supportDirectory.path}/market_packages/${installed.relativeFile}').exists(), isFalse);
+      expect(await preservedFile.readAsString(), 'keep this unrelated data');
       manager.dispose();
     });
 

@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/market_provider_manager.dart';
 import '../core/package_manager.dart';
 import '../l10n/app_localizations.dart';
+import 'market_brand_mark.dart';
 import 'market_provider_detail_screen.dart';
 
 class MarketScreen extends StatefulWidget {
@@ -353,16 +354,6 @@ class _MarketScreenState extends State<MarketScreen> {
       _ => context.tr('On-device AI · runtime and model inference are not integrated.'),
     };
     final status = manager.statusFor(providerId);
-    final brandColor = switch (providerId) {
-      'cloudflare' => const Color(0xFFF38020),
-      'gemini' => const Color(0xFF9A8BFF),
-      _ => const Color(0xFF20C8FF),
-    };
-    final icon = switch (providerId) {
-      'cloudflare' => Icons.cloud_rounded,
-      'gemini' => Icons.auto_awesome_rounded,
-      _ => Icons.memory_rounded,
-    };
     return Card(
       key: ValueKey('priority-provider-$providerId'),
       child: InkWell(
@@ -371,7 +362,7 @@ class _MarketScreenState extends State<MarketScreen> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 16),
           child: Row(children: [
-            CircleAvatar(backgroundColor: brandColor.withValues(alpha: .14), child: Icon(icon, color: brandColor)),
+            MarketBrandMark(providerId: providerId, diameter: 44),
             const SizedBox(width: 13),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),

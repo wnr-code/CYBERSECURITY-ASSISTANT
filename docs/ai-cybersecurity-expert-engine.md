@@ -1,11 +1,11 @@
 # AI Cybersecurity Expert Engine — Architecture Blueprint
 
-- **Status:** Approved conceptual blueprint; implementation is not started.
-- **Scope:** Architecture and delivery plan only. This document does not claim a working AI provider, knowledge base, inference engine, or automated security analysis.
+- **Status:** Approved blueprint for the full AI Expert Engine; that broader engine remains unimplemented. A narrow Gemini Assistant adapter and guarded registered-tool loop exist in the current app.
+- **Scope:** Architecture and delivery plan for capabilities beyond the narrow current Gemini path. This document does not claim a knowledge base, full reasoning/inference engine, or comprehensive automated security analysis.
 - **Platform:** Android-first; works without a cloud account. Cloud AI is opt-in and user-configured.
 - **Parent architecture:** [Final Technical Blueprint](technical-blueprint.md).
 
-> The current app has a secondary Assistant UI placeholder, a local Result Analyzer for existing tool results, a registry-only orchestration boundary, and secure-credential UI/storage wrappers. There is no connected AI model/provider, AI reasoning, knowledge retrieval, CVE intelligence service, code-analysis engine, AI router, or AI-authored report engine. Credentials entered in the prototype are not used to call providers.
+> The current app has a secondary Assistant with opt-in Gemini chat using a user-owned key, explicit per-request data-sharing consent, and a guarded registered-tool proposal loop. A local Result Analyzer also operates on existing tool results. There is no full cybersecurity reasoning engine, knowledge retrieval, CVE intelligence service, code-analysis engine, smart AI router, local model runtime, or AI-authored report engine. Do not confuse the narrow Gemini integration with the full Expert Engine.
 
 ## 1. Product role and boundaries
 
@@ -107,16 +107,13 @@ Keep the AI layer above shared result/request contracts; do not create circular 
 
 ## 5. Provider and model architecture
 
-### Planned provider support
+### Provider support and optional delivery target
 
-- Google Gemini.
-- OpenAI.
-- Anthropic Claude.
-- OpenRouter.
-- Custom OpenAI-compatible API.
-- Local inference through `llama.cpp` and compatible GGUF models, subject to supported ABI, memory, thermal, and license checks.
+- **Google Gemini:** a narrow provider adapter is currently implemented in the base app. The target is to move its provider-specific code/UI behind an optional Market module while preserving user-owned keys and per-request consent.
+- **OpenAI, Anthropic Claude, OpenRouter, custom OpenAI-compatible APIs:** catalog/guidance entries only; provider requests are not implemented.
+- **Local inference:** optional future `llama.cpp`/GGUF or another reviewed Android-compatible runtime, subject to ABI, memory, thermal, license, integrity, and actual inference checks. The target is a separately selectable Market module/runtime and model data package; neither currently exists.
 
-These are planned integrations, not available connectors today. The existing provider catalog is guide-only, and credential-entry/storage UI is not wired to provider requests.
+The owner-confirmed Market delivery target and the distinction between provider module installation, provider connection, and model readiness are specified in [Market Modular Delivery](market-modular-delivery.md). The existing credential boundary and current Gemini flow must remain intact when optional delivery is implemented.
 
 ### Provider Manager, Model Manager, and Smart AI Router
 
@@ -168,7 +165,7 @@ This sequence is a proposal for later approval and does not authorize feature im
 
 | Phase | Priority | Deliverable and exit checks |
 |---|---:|---|
-| 0. Blueprint and UX foundation | Now / documentation | Keep the Assistant visibly unconnected; approve user flows, Indonesian terminology, privacy disclosures, and this architecture. No AI runtime code. |
+| 0. Blueprint and UX foundation | Current foundation / documentation | Keep existing Gemini capability accurately disclosed; approve full-Engine and optional-module flows, Indonesian terminology, privacy disclosures, and this architecture. No claim of full AI reasoning or Local AI inference. |
 | 1. Contracts and guardrails | P0 | Typed AI request/answer, evidence/citation and finding schemas; threat model; authorization, scope, consent, audit, and refusal tests. No execution tool exposed to the model. |
 | 2. Knowledge source foundation | P0 | Curated official-source metadata/version/provenance, update policy, offline baseline, staleness behavior, license review, and citation evaluation. |
 | 3. Local result reasoning | P0 | Explain and correlate existing normalized tool results locally; label confirmed/potential/informational/false positive; demonstrate evidence traceability and limitations. |
