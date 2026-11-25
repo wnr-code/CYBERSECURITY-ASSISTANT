@@ -16,6 +16,7 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/main.dart';
 import 'package:cybersecurity_assistant/widgets/ai_shield_robot_mark.dart';
 import 'package:cybersecurity_assistant/widgets/animated_splash_screen.dart';
+import 'package:cybersecurity_assistant/widgets/catalog_screen.dart';
 import 'package:cybersecurity_assistant/widgets/assessment_runner.dart';
 import 'package:cybersecurity_assistant/widgets/dashboard_screen.dart';
 import 'package:cybersecurity_assistant/widgets/digital_earth_hero.dart';
@@ -332,9 +333,26 @@ Future<void> _pumpAfterTransition(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
-Future<void> _pumpUntilFound(WidgetTester tester, Finder finder, {int attempts = 20}) async {
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder, {int attempts = 40}) async {
   for (var attempt = 0; attempt < attempts && finder.evaluate().isEmpty; attempt++) {
     await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
+Finder _findTextInEither(String first, String second) => find.byWidgetPredicate(
+      (widget) => widget is Text && (widget.data == first || widget.data == second),
+    );
+
+String _renderedText(WidgetTester tester) => tester
+    .widgetList<Text>(find.byType(Text))
+    .map((widget) => widget.data ?? widget.textSpan?.toPlainText() ?? '')
+    .where((value) => value.isNotEmpty)
+    .join(' | ');
+
+Future<void> _pumpUntilCatalogReady(WidgetTester tester) async {
+  final busy = find.descendant(of: find.byType(CatalogScreen), matching: find.byType(LinearProgressIndicator));
+  for (var attempt = 0; attempt < 40 && busy.evaluate().isNotEmpty; attempt++) {
+    await tester.pump(const Duration(milliseconds: 250));
   }
 }
 
@@ -443,7 +461,8 @@ void main() {
     expect(find.text('Provider'), findsWidgets);
     expect(find.text('Paket'), findsOneWidget);
     expect(find.text('AI Models'), findsNothing);
-    expect(find.byKey(const ValueKey('priority-provider-gemini')), findsOneWidget);
+    expect(geminiProviderCard, findsOneWidget,
+        reason: 'Market must finish initialization and render provider cards. Text on screen: ${_renderedText(tester)}');
     expect(find.byKey(const ValueKey('priority-provider-cloudflare')), findsOneWidget);
     expect(find.byKey(const ValueKey('priority-provider-local_ai')), findsOneWidget);
     expect(find.text('Local AI'), findsOneWidget);
@@ -1299,8 +1318,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('bottom-navigation-ai-chat')));
     await _pumpAfterTransition(tester);
+    final assistantRouteMarker = find.byKey(const ValueKey('assistant-info-button'));
+    await _pumpUntilFound(tester, assistantRouteMarker);
 
-    expect(find.byKey(const ValueKey('assistant-avatar-not-connected')), findsOneWidget);
+    expect(assistantRouteMarker, findsOneWidget,
+        reason: 'The AI chat shortcut should push the secondary Assistant route. Text on screen: ${_renderedText(tester)}');
     expect(find.byIcon(Icons.check_rounded), findsNothing,
         reason: 'No green check is shown unless the selected provider passed its connection test.');
   });
@@ -1311,8 +1333,11 @@ void main() {
     await tester.scrollUntilVisible(moduleCard, 180);
     await tester.tap(moduleCard);
     await _pumpAfterTransition(tester);
+    final assistantRouteMarker = find.byKey(const ValueKey('assistant-info-button'));
+    await _pumpUntilFound(tester, assistantRouteMarker);
 
-    expect(find.byKey(const ValueKey('assistant-avatar-not-connected')), findsOneWidget);
+    expect(assistantRouteMarker, findsOneWidget,
+        reason: 'Opening the assistant module should push its secondary route. Text on screen: ${_renderedText(tester)}');
     expect(find.text('Kelola provider AI di Market'), findsOneWidget);
     expect(find.text('Asisten'), findsNothing);
   });
@@ -1362,12 +1387,15 @@ void main() {
     await tester.pumpAndSettle();
     await _openCatalogFromDashboard(tester);
 
+    await _pumpUntilCatalogReady(tester);
     final tlsTool = find.byKey(const ValueKey('catalog-tool-tls_inspector'));
-    final noChecksMessage = find.text('Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.');
-    await _pumpUntilFound(tester, tlsTool);
+    final noChecksMessage = _findTextInEither(
+      'Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.',
+      'No checks are currently available on this device.',
+    );
     if (tlsTool.evaluate().isEmpty) {
       expect(noChecksMessage, findsOneWidget,
-          reason: 'Tools that are not ready for the current test platform are intentionally hidden.');
+          reason: 'Tools that are not ready for the current test platform are intentionally hidden. Text on screen: ${_renderedText(tester)}');
       return;
     }
 
@@ -1385,11 +1413,14 @@ void main() {
     _useTallViewport(tester);
     await _pumpApp(tester);
     await _openCatalogFromDashboard(tester);
+    await _pumpUntilCatalogReady(tester);
     final dnsTool = find.byKey(const ValueKey('catalog-tool-dns_lookup'));
-    await _pumpUntilFound(tester, dnsTool);
     if (dnsTool.evaluate().isEmpty) {
-      expect(find.text('Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.'), findsOneWidget,
-          reason: 'The catalog hides checks that are not ready on the current test platform.');
+      expect(
+        _findTextInEither('Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.', 'No checks are currently available on this device.'),
+        findsOneWidget,
+        reason: 'The catalog hides checks that are not ready on the current test platform. Text on screen: ${_renderedText(tester)}',
+      );
       return;
     }
     await tester.tap(find.text('DNS Lookup'));

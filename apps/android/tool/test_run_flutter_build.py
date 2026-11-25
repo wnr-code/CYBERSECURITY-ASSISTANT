@@ -9,7 +9,7 @@ class FlutterBuildOutputTests(unittest.TestCase):
     def test_native_build_targets_only_the_supported_arm64_abi(self):
         self.assertEqual(
             flutter_build_command(native_enabled=True),
-            ["flutter", "build", "apk", "--debug", "--target-platform=android-arm64"],
+            ["flutter", "build", "apk", "--debug", "--target-platform", "android-arm64"],
         )
 
     def test_regular_build_keeps_flutter_default_platforms(self):

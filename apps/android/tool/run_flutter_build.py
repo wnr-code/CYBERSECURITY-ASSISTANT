@@ -32,7 +32,7 @@ def flutter_build_command(*, native_enabled: bool) -> list[str]:
     if native_enabled:
         # The source-native CMake target deliberately rejects every ABI except
         # arm64-v8a. Flutter otherwise requests armeabi-v7a and x86_64 too.
-        command.append("--target-platform=android-arm64")
+        command.extend(["--target-platform", "android-arm64"])
     return command
 
 
@@ -92,8 +92,10 @@ def main() -> int:
             print(f"::error title=Local AI artifact gate::{escaped}")
         return 2
 
+    build_command = flutter_build_command(native_enabled=native_enabled)
+    print(f"Running Flutter build command: {' '.join(build_command)}")
     result = subprocess.run(
-        flutter_build_command(native_enabled=native_enabled),
+        build_command,
         cwd=app_root,
         check=False,
         capture_output=True,
@@ -121,7 +123,15 @@ def main() -> int:
             cmake_cache_audits = _audit_source_cmake_caches(app_root / "android", source_commit)
             apk_report = audit_source_native_apk(apk)
         except (GateError, OSError) as error:
-            print(f"Source-built llama.cpp APK audit failed; do not distribute this APK: {error}", file=sys.stderr)
+            message = f"Source-built llama.cpp APK audit failed; do not distribute this APK: {error}"
+            print(message, file=sys.stderr)
+            if os.environ.get("GITHUB_ACTIONS"):
+                escaped = _escape_command_value(message)
+                print(f"::error title=Source-native APK audit::{escaped}")
+                summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+                if summary_path:
+                    with open(summary_path, "a", encoding="utf-8") as summary:
+                        summary.write(f"### Source-native APK audit failed\n\n```text\n{error}\n```\n")
             return 2
         report = {
             "verification_status": "source_built_cpu_native_apk_audited",
