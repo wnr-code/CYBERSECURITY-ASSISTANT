@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 ANSI_ESCAPE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
@@ -43,6 +45,12 @@ def _parse_test_summary(output: str) -> tuple[int, int] | None:
         return None
     match = matches[-1]
     return int(match.group(1)), int(match.group(2) or 0)
+
+
+def _compressed_annotation_chunks(output: str, chunk_size: int = 2800) -> list[str]:
+    """Pack already-redacted test output into GitHub's bounded annotation messages."""
+    payload = base64.urlsafe_b64encode(zlib.compress(output.encode("utf-8"), level=9)).decode("ascii")
+    return [payload[index:index + chunk_size] for index in range(0, len(payload), chunk_size)]
 
 
 def _redact_json_value(value: object) -> object:
@@ -179,12 +187,12 @@ def main() -> int:
             "see sanitized stdout.log and stderr.log in the evidence artifact if upload succeeds."
         )
         # The evidence artifact download can be unavailable to API clients when
-        # GitHub redirects it to an external storage host. Publish a bounded,
-        # already-redacted tail as an annotation so CI failures remain
-        # diagnosable from the GitHub Checks API without exposing raw secrets.
-        diagnostic_tail = ANSI_ESCAPE.sub("", combined)[-12000:]
-        escaped_tail = diagnostic_tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::error title=Sanitized Flutter test failure details::{escaped_tail}")
+        # GitHub redirects it to an external storage host. Publish the complete,
+        # already-redacted output in small compressed chunks so failures remain
+        # diagnosable through the Checks API without exposing raw secrets.
+        compressed_chunks = _compressed_annotation_chunks(ANSI_ESCAPE.sub("", combined))
+        for index, chunk in enumerate(compressed_chunks, start=1):
+            print(f"::error title=Flutter test log {index} of {len(compressed_chunks)}::{chunk}")
     if evidence_error is not None:
         print("::error title=Flutter test evidence::could not write the diagnostic files for artifact upload.")
         # Do not turn a test failure into success. If tests passed but evidence

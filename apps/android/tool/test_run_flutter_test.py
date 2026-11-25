@@ -1,14 +1,16 @@
+import base64
 import io
 import json
 import os
 import tempfile
 import unittest
+import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from run_flutter_test import _parse_test_summary, _redact_output, main
+from run_flutter_test import _compressed_annotation_chunks, _parse_test_summary, _redact_output, main
 
 
 class FlutterTestOutputTests(unittest.TestCase):
@@ -16,6 +18,14 @@ class FlutterTestOutputTests(unittest.TestCase):
         self.assertEqual(_parse_test_summary('00:04 +72: All tests passed!\n'), (72, 0))
         self.assertEqual(_parse_test_summary('00:04 +70 -2: Some tests failed.\n'), (70, 2))
         self.assertIsNone(_parse_test_summary('Test output format changed'))
+
+    def test_compressed_annotation_chunks_round_trip_without_exceeding_message_bound(self):
+        output = ('test failed: token=synthetic-secret\\n' * 5000)
+        chunks = _compressed_annotation_chunks(output)
+        self.assertTrue(chunks)
+        self.assertTrue(all(len(chunk) <= 2800 for chunk in chunks))
+        decoded = zlib.decompress(base64.urlsafe_b64decode(''.join(chunks))).decode('utf-8')
+        self.assertEqual(decoded, output)
 
     def test_redacts_common_secrets_without_dropping_diagnostic_lines(self):
         output = (
@@ -195,9 +205,18 @@ class FlutterTestOutputTests(unittest.TestCase):
             self.assertIn('tests_passed=70', metadata)
             self.assertIn('tests_failed=2', metadata)
             self.assertIn('flutter test exited with code 17', stdout.getvalue())
-            self.assertIn('::error title=Sanitized Flutter test failure details::', stdout.getvalue())
+            self.assertIn('::error title=Flutter test log 1 of 1::', stdout.getvalue())
             self.assertIn('failing test [E]', stdout.getvalue())
             self.assertIn('Actual: token=[REDACTED]', stdout.getvalue())
+            chunks = [
+                line.split('::', 2)[-1]
+                for line in stdout.getvalue().splitlines()
+                if 'title=Flutter test log ' in line
+            ]
+            decoded_log = zlib.decompress(base64.urlsafe_b64decode(''.join(chunks))).decode('utf-8')
+            self.assertIn('failing test [E]', decoded_log)
+            self.assertIn('Actual: token=[REDACTED]', decoded_log)
+            self.assertNotIn('fixture-token', decoded_log)
 
 
 if __name__ == '__main__':
