@@ -385,7 +385,7 @@ class ConfigureAndroidTests(unittest.TestCase):
             configure_local_ai_native(android, project)
 
             self.assertEqual(gradle.read_text(encoding="utf-8"), first_gradle)
-            self.assertIn('abiFilters += listOf("arm64-v8a")', first_gradle)
+            self.assertIn('abiFilters.clear(); abiFilters += listOf("arm64-v8a")', first_gradle)
             self.assertIn("GGML_OPENMP OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
             self.assertIn("GGML_CPU_KLEIDIAI OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))
             self.assertIn("GGML_VULKAN OFF", (app / "src/main/cpp/CMakeLists.txt").read_text(encoding="utf-8"))

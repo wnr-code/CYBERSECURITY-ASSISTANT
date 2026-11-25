@@ -713,7 +713,7 @@ def configure_local_ai_native(android_root: Path, project_root: Path) -> None:
         indent = default_config.group(1) + "    "
         default_block = (
             f"\n{indent}{marker}\n"
-            f'{indent}ndk {{ abiFilters += listOf("arm64-v8a") }}\n'
+            f'{indent}ndk {{ abiFilters.clear(); abiFilters += listOf("arm64-v8a") }}\n'
             f"{indent}externalNativeBuild {{\n"
             f"{indent}    cmake {{\n"
             f'{indent}        cppFlags += "-std=c++17"\n'
