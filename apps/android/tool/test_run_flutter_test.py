@@ -195,6 +195,9 @@ class FlutterTestOutputTests(unittest.TestCase):
             self.assertIn('tests_passed=70', metadata)
             self.assertIn('tests_failed=2', metadata)
             self.assertIn('flutter test exited with code 17', stdout.getvalue())
+            self.assertIn('::error title=Sanitized Flutter test failure details::', stdout.getvalue())
+            self.assertIn('failing test [E]', stdout.getvalue())
+            self.assertIn('Actual: token=[REDACTED]', stdout.getvalue())
 
 
 if __name__ == '__main__':

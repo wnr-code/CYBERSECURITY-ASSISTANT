@@ -178,6 +178,13 @@ def main() -> int:
             f"::error title=Flutter test failures::flutter test exited with code {flutter_exit_code}; "
             "see sanitized stdout.log and stderr.log in the evidence artifact if upload succeeds."
         )
+        # The evidence artifact download can be unavailable to API clients when
+        # GitHub redirects it to an external storage host. Publish a bounded,
+        # already-redacted tail as an annotation so CI failures remain
+        # diagnosable from the GitHub Checks API without exposing raw secrets.
+        diagnostic_tail = ANSI_ESCAPE.sub("", combined)[-12000:]
+        escaped_tail = diagnostic_tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        print(f"::error title=Sanitized Flutter test failure details::{escaped_tail}")
     if evidence_error is not None:
         print("::error title=Flutter test evidence::could not write the diagnostic files for artifact upload.")
         # Do not turn a test failure into success. If tests passed but evidence
