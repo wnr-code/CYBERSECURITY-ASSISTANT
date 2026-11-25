@@ -9,6 +9,7 @@ import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
 import '../l10n/app_localizations.dart';
 import 'digital_earth_hero.dart';
+import 'security_status_hero.dart';
 
 const _dashboardMint = Color(0xFF73F0C2);
 const _dashboardBlue = Color(0xFF36D9FF);
@@ -145,6 +146,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: 16),
             DigitalEarthHero(onTap: widget.onOpenSecurityOverview),
+            const SizedBox(height: 12),
+            SecurityStatusHero(
+              assessmentProgress: running,
+              activeAssessmentTarget: widget.activeAssessmentTarget,
+              latestAssessment: assessmentEvents.isEmpty ? null : assessmentEvents.first,
+              activityLoaded: widget.activityLoaded,
+              activityBusy: widget.activityBusy,
+              activityError: widget.activityError,
+              findingsCount: widget.findings.length,
+              findingsBySeverity: findingsBySeverity,
+              findingsLoaded: widget.findingsLoaded,
+              findingsBusy: widget.findingsBusy,
+              findingsError: widget.findingsError,
+              onTap: widget.onOpenSecurityOverview,
+            ),
             const SizedBox(height: 18),
             _DashboardHeading(title: context.tr('SECURITY INSTRUMENTS'), icon: Icons.tune_rounded),
             const SizedBox(height: 9),
