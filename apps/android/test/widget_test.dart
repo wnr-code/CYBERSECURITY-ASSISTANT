@@ -603,6 +603,11 @@ void main() {
     await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
     expect(manager.activeRun?.runId, originalRunId);
+    await tester.scrollUntilVisible(
+      find.textContaining('owned.example · 0 / 1 pemeriksaan'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.textContaining('owned.example · 0 / 1 pemeriksaan'), findsOneWidget,
         reason: 'The status visual uses the active run target and live progress from the application-owned manager.');
 
@@ -995,8 +1000,11 @@ void main() {
       expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
     }
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
+    final dashboardScroll = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(find.text('STATUS ASSESSMENT'), 240, scrollable: dashboardScroll);
     expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
     expect(find.text('Belum ada Assessment tersimpan'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('SKOR KEAMANAN'), 240, scrollable: dashboardScroll);
     expect(find.text('SKOR KEAMANAN'), findsOneWidget);
     expect(find.text('Belum dihitung'), findsOneWidget);
     expect(find.text('Tidak ada assessment yang berjalan'), findsOneWidget);
@@ -1061,7 +1069,7 @@ void main() {
       ),
     ));
 
-    final dashboardScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    final dashboardScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(find.text('Penganalisis Respons Keamanan'), 240, scrollable: dashboardScroll);
     expect(find.text('Penganalisis Respons Keamanan'), findsOneWidget,
         reason: 'Analyzer remains available as a result; only the metric excludes it.');
@@ -1126,7 +1134,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    final dashboardScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    final dashboardScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(find.text('STATUS ASSESSMENT'), 280, scrollable: dashboardScroll);
     expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
     expect(find.textContaining('Findings yang dimuat: 1'), findsOneWidget);
@@ -1160,7 +1168,7 @@ void main() {
 
     await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
-    final homeScroll = find.descendant(of: find.byKey(const ValueKey('dashboard-scroll-view')), matching: find.byType(Scrollable));
+    final homeScroll = find.byType(Scrollable).first;
     await tester.scrollUntilVisible(find.text('TINGGI  1'), 280, scrollable: homeScroll);
     await tester.tap(find.text('TINGGI  1'));
     await tester.pumpAndSettle();
