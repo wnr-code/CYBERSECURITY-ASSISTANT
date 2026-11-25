@@ -163,7 +163,7 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                 TextField(controller: description, minLines: 2, maxLines: 5, maxLength: 900, decoration: InputDecoration(labelText: dialogContext.tr('Apa yang terjadi?'))),
                 TextField(controller: steps, minLines: 2, maxLines: 5, maxLength: 1200, decoration: InputDecoration(labelText: dialogContext.tr('Langkah untuk mereproduksi'))),
                 DropdownButtonFormField<DiagnosticSeverity>(
-                  value: severity,
+                  initialValue: severity,
                   decoration: InputDecoration(labelText: dialogContext.tr('Severity')),
                   items: DiagnosticSeverity.values.map((value) => DropdownMenuItem(value: value, child: Text(value.name))).toList(),
                   onChanged: (value) => updateDialog(() => severity = value ?? DiagnosticSeverity.medium),

@@ -159,7 +159,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
 
   Widget _localAiContent(BuildContext context) {
     final capabilities = widget.manager.localAiCapabilities;
-    final gib = 1024 * 1024 * 1024;
+    const gib = 1024 * 1024 * 1024;
     String size(int? value) => value == null ? context.tr('Unavailable') : '${(value / gib).toStringAsFixed(2)} GiB';
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(context.tr('On-device AI Provider · Local only'), style: Theme.of(context).textTheme.titleSmall),

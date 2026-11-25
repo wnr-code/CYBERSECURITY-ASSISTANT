@@ -7,7 +7,6 @@ import '../core/security_findings.dart';
 import '../core/security_tools.dart';
 import '../core/tool_orchestrator.dart';
 import '../core/tool_registry.dart';
-import '../l10n/activity_localization.dart';
 import '../l10n/app_localizations.dart';
 import 'security_status_hero.dart';
 

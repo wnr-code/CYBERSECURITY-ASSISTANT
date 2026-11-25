@@ -619,23 +619,6 @@ class _MainShellState extends State<MainShell> {
     ));
   }
 
-  void _openMarket() {
-    final reduceMotion = MediaQuery.of(context).disableAnimations;
-    Navigator.of(context).push<void>(PageRouteBuilder<void>(
-      transitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 220),
-      reverseTransitionDuration: reduceMotion ? Duration.zero : const Duration(milliseconds: 180),
-      pageBuilder: (_, __, ___) => MarketScreen(
-        packageManager: _marketPackageManager,
-        providerManager: _marketProviderManager,
-        onOpenCloudflareDashboard: _openCloudflareDashboard,
-      ),
-      transitionsBuilder: (_, animation, __, child) => FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-        child: child,
-      ),
-    ));
-  }
-
   void _openCatalog() {
     final reduceMotion = MediaQuery.of(context).disableAnimations;
     Navigator.of(context).push<void>(PageRouteBuilder<void>(
@@ -3091,35 +3074,6 @@ TextStyle _eyebrow(BuildContext context) => TextStyle(
       letterSpacing: 1.5,
     );
 
-String _categoryLabel(ToolCategory category, BuildContext context) => switch (category) {
-      ToolCategory.webSecurity => context.tr('Web Security'),
-      ToolCategory.networkSecurity => context.tr('Network Security'),
-      ToolCategory.osint => context.tr('OSINT'),
-      ToolCategory.apkMobileSecurity => context.tr('APK / Mobile Security'),
-      ToolCategory.codeSecurity => context.tr('Code Security'),
-      ToolCategory.cloudSecurity => context.tr('Cloud Security'),
-      ToolCategory.vulnerabilityAssessment => context.tr('Vulnerability Assessment'),
-      ToolCategory.malwareAnalysis => context.tr('Malware Analysis'),
-      ToolCategory.threatIntelligence => context.tr('Threat Intelligence'),
-      ToolCategory.digitalForensics => context.tr('Digital Forensics'),
-      ToolCategory.analysis => context.tr('Analysis'),
-    };
-
-String _toolStatusLabel(ToolStatus status, BuildContext context) => switch (status) {
-      ToolStatus.ready => context.tr('Siap dijalankan'),
-      ToolStatus.installed => context.tr('Terpasang'),
-      ToolStatus.downloadRequired => context.tr('Memerlukan unduhan'),
-      ToolStatus.runtimeRequired => context.tr('Memerlukan runtime'),
-      ToolStatus.dependencyRequired => context.tr('Memerlukan dependensi'),
-      ToolStatus.permissionRequired => context.tr('Memerlukan izin'),
-      ToolStatus.notInstalled => context.tr('Belum terpasang'),
-      ToolStatus.environmentRequired => context.tr('Memerlukan konfigurasi'),
-      ToolStatus.limitedCompatibility => context.tr('Kompatibilitas terbatas'),
-      ToolStatus.unsupported => context.tr('Tidak didukung'),
-      ToolStatus.disabled => context.tr('Dinonaktifkan'),
-      ToolStatus.error => context.tr('Kesalahan kesiapan'),
-    };
-
 String _providerCategoryName(ProviderCategory category, BuildContext context) => context.tr(providerCategoryLabel(category));
 
 String _providerDescription(ProviderDefinition provider, BuildContext context) => switch (provider.id) {
@@ -3141,14 +3095,6 @@ String _providerDescription(ProviderDefinition provider, BuildContext context) =
       _ => context.tr('Integrasi belum tersedia. Lihat panduan dan status sebelum memasukkan kredensial.'),
     };
 
-String _toolDisplayDescription(String id, BuildContext context) => switch (id) {
-      'dns_lookup' => context.tr('Mencari alamat IPv4 dan IPv6 melalui resolver sistem Android; CNAME dan record lain belum tersedia.'),
-      'tls_inspector' => context.tr('Memvalidasi koneksi TLS dan memeriksa identitas serta masa berlaku sertifikat.'),
-      'http_headers' => context.tr('Mengirim satu GET HTTPS terbatas ke path yang dipilih dan memeriksa header serta body respons.'),
-      'response_analyzer' => context.tr('Merangkum temuan dari pemeriksaan yang sudah dijalankan.'),
-      _ => '',
-    };
-
 IconData _toolIcon(String id) => switch (id) {
       'dns_lookup' => Icons.hub_outlined,
       'tls_inspector' => Icons.lock_outline,
@@ -3162,11 +3108,6 @@ void _showProviderDetails(BuildContext context, ProviderDefinition provider) {
     builder: (_) => ProviderDetailsDialog(provider: provider),
   );
 }
-
-Future<void> _showReleaseCatalog(BuildContext context) => showDialog<void>(
-      context: context,
-      builder: (_) => const ReleaseCatalogDialog(),
-    );
 
 Future<bool?> _confirmSaveResult(BuildContext context) => showDialog<bool>(
       context: context,
@@ -3249,35 +3190,6 @@ Future<void> _confirmCopyReport(BuildContext context, List<ToolRunResult> result
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Clipboard sistem tidak dapat diakses.'))));
     }
   }
-}
-
-Future<void> _showToolRunner(
-  BuildContext context,
-  ToolDefinition tool,
-  List<ToolRunResult> recentResults,
-  ValueChanged<ToolRunResult> onResult, {
-  ActivityHistoryStore? activityStore,
-  void Function(ActivityEvent event)? onActivity,
-  FindingRepository? findingRepository,
-  void Function(List<FindingRecord> findings)? onFindings,
-  void Function(ToolRunResult result)? onReportSaved,
-  void Function(Object error, StackTrace stack)? onReportSaveFailed,
-}) async {
-  final result = await showDialog<ToolRunResult>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => ToolRunnerDialog(
-      tool: tool,
-      recentResults: recentResults,
-      activityStore: activityStore,
-      onActivity: onActivity,
-      findingRepository: findingRepository,
-      onFindings: onFindings,
-      onReportSaved: onReportSaved,
-      onReportSaveFailed: onReportSaveFailed,
-    ),
-  );
-  if (result != null) onResult(result);
 }
 
 void _showResultDetails(

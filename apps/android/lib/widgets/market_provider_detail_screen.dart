@@ -53,7 +53,6 @@ class MarketProviderDetailScreen extends StatelessWidget {
       );
 
   Widget _identityCard(BuildContext context, ManagedProviderStatus status) {
-    final color = _statusColor(status);
     final subtitle = switch (providerId) {
       'cloudflare' => context.tr('Cloud Infrastructure Provider'),
       'gemini' => context.tr('Cloud AI Provider'),
