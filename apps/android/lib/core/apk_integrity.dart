@@ -10,15 +10,12 @@ abstract interface class NativeAppIntegrityBridge {
 }
 
 class MethodChannelAppIntegrityBridge implements NativeAppIntegrityBridge {
-  // Keep the public injectable argument named `channel` while the field remains private.
-  // ignore: prefer_initializing_formals
-  const MethodChannelAppIntegrityBridge({MethodChannel channel = const MethodChannel('org.cybersecurityassistant/app_integrity')})
-      : _channel = channel;
+  const MethodChannelAppIntegrityBridge({this.channel = const MethodChannel('org.cybersecurityassistant/app_integrity')});
 
-  final MethodChannel _channel;
+  final MethodChannel channel;
 
   @override
-  Future<Map<String, Object?>?> readInstalledIdentity() => _channel.invokeMapMethod<String, Object?>('getInstalledIdentity');
+  Future<Map<String, Object?>?> readInstalledIdentity() => channel.invokeMapMethod<String, Object?>('getInstalledIdentity');
 }
 
 enum ApkIntegrityState { verified, unconfigured, untrusted, unavailable }

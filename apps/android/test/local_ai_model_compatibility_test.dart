@@ -63,7 +63,7 @@ void main() {
 
   test('rejects mismatched architecture, tokenizer, and insufficient memory or storage', () {
     final report = LocalAiModelCompatibilityChecker.evaluate(
-      model(format: 'unsupported-container', architecture: 'unknown-family', tokenizer: 'unsupported-tokenizer',
+      model: model(format: 'unsupported-container', architecture: 'unknown-family', tokenizer: 'unsupported-tokenizer',
           peakMemoryBytes: 7 * 1024 * 1024 * 1024, installStorageBytes: 9 * 1024 * 1024 * 1024),
       runtime: runtime,
       device: device,

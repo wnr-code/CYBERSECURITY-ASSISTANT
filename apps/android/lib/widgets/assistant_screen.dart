@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart';
 import '../core/ai_assistant_coordinator.dart';
 import '../core/ai_provider_manager.dart';
 import '../core/ai_terminal_execution_bridge.dart';
-import '../core/terminal_session_manager.dart';
 import '../l10n/app_localizations.dart';
 
 class AssistantScreen extends StatefulWidget {
@@ -80,7 +79,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: Row(children: [
                       Expanded(child: DropdownButtonFormField<String>(
-                        value: _providerId,
+                        initialValue: _providerId,
                         decoration: InputDecoration(labelText: context.tr('AI provider')),
                         items: [for (final id in _readyProviders) DropdownMenuItem(value: id, child: Text(_providerName(id, context)))],
                         onChanged: _sending ? null : (value) => setState(() => _providerId = value),
@@ -250,11 +249,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-      );
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 

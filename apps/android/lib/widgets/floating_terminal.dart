@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 
 import '../core/terminal_process_executor.dart';
 import '../core/terminal_session_manager.dart';
