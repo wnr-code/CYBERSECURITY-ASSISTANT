@@ -728,14 +728,28 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<RuntimeState> start(String id, {required bool userApproved, required bool policyAllowed}) async {
     await initializeRegistry();
+    if (_busy) throw StateError('Another runtime operation is in progress.');
     if (!userApproved || !policyAllowed) {
       DiagnosticReporter.recordGlobal(StateError('Runtime execution was denied by consent or policy.'), category: DiagnosticCategory.runtime);
       throw StateError('Runtime execution requires user approval and policy authorization.');
     }
     final adapter = _requireAdapter(id);
-    if (_states[id]?.lifecycle != RuntimeLifecycle.initialized && _states[id]?.lifecycle != RuntimeLifecycle.stopped) throw StateError('Runtime must be initialized before start.');
-    if (adapter.descriptor.requiredCapabilities.difference(_grants[id] ?? const <RuntimeCapability>{}).isNotEmpty) throw StateError('Required runtime capabilities are not granted.');
-    if (!await adapter.healthCheck()) return _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed.');
+    if (_states[id]?.lifecycle != RuntimeLifecycle.initialized && _states[id]?.lifecycle != RuntimeLifecycle.stopped) {
+      throw StateError('Runtime must be initialized before start.');
+    }
+    if (adapter.descriptor.requiredCapabilities.difference(_grants[id] ?? const <RuntimeCapability>{}).isNotEmpty) {
+      throw StateError('Required runtime capabilities are not granted.');
+    }
+    _busy = true;
+    _activeRuntimeId = id;
+    late final bool healthy;
+    try {
+      healthy = await adapter.healthCheck();
+    } finally {
+      _activeRuntimeId = null;
+      _busy = false;
+    }
+    if (!healthy) return _set(id, RuntimeLifecycle.failed, error: 'Runtime health check failed.');
     return _set(id, RuntimeLifecycle.running, version: adapter.descriptor.version);
   }
 
@@ -799,6 +813,7 @@ class RuntimeManager extends ChangeNotifier {
 
   Future<void> uninstall(String id, {required bool userApproved}) async {
     await initializeRegistry();
+    if (_busy) throw StateError('Another runtime operation is in progress.');
     if (!userApproved) {
       DiagnosticReporter.recordGlobal(StateError('Runtime uninstall was denied because required consent was not granted.'), category: DiagnosticCategory.runtime);
       throw StateError('Explicit uninstall approval is required.');
@@ -806,22 +821,52 @@ class RuntimeManager extends ChangeNotifier {
     final adapter = _requireAdapter(id);
     if (_states[id]?.lifecycle == RuntimeLifecycle.running) throw StateError('Stop the runtime before uninstalling.');
     final directory = await _workingDirectory(id);
-    await _record('uninstall-start', id);
+    if (_busy) throw StateError('Another runtime operation is in progress.');
+    final previousState = _states[id];
+    final previousGrants = _grants[id];
+    _busy = true;
     try {
+      await _record('uninstall-start', id);
       await adapter.uninstall(directory);
       if (await directory.exists()) await directory.delete(recursive: true);
+      _states.remove(id);
+      _grants.remove(id);
+      await _record('uninstall', id);
+      notifyListeners();
     } catch (error, stack) {
       DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.runtime);
-      await _record('uninstall-failed', id);
-      rethrow;
+      if (previousState != null) _states[id] = previousState;
+      if (previousGrants != null) _grants[id] = previousGrants;
+      try {
+        // Uninstall adapters may fail after partial removal. Reinstall is the
+        // only adapter-supported compensation and also restores its workspace.
+        await adapter.install(directory);
+      } catch (compensationError, compensationStack) {
+        DiagnosticReporter.recordGlobal(compensationError, stackTrace: compensationStack, category: DiagnosticCategory.runtime);
+        _states[id] = RuntimeState(
+          id: id,
+          lifecycle: RuntimeLifecycle.failed,
+          installedVersion: previousState?.installedVersion ?? adapter.descriptor.version,
+          updatedAt: _clock().toUtc(),
+          lastError: 'Uninstall compensation failed; runtime state is uncertain.',
+        );
+      }
+      notifyListeners();
+      try {
+        await _record('uninstall-failed', id);
+      } catch (auditError, auditStack) {
+        DiagnosticReporter.recordGlobal(auditError, stackTrace: auditStack, category: DiagnosticCategory.database);
+      }
+      Error.throwWithStackTrace(error, stack);
+    } finally {
+      _busy = false;
     }
-    _states.remove(id);
-    _grants.remove(id);
-    await _record('uninstall', id);
-    notifyListeners();
   }
 
   Future<RuntimeState> healthCheck(String id) async {
+    if (_busy && (_activeRuntimeId == null || _activeRuntimeId == id)) {
+      throw StateError('Runtime health check is unavailable while another operation owns this runtime.');
+    }
     final adapter = _requireAdapter(id);
     final healthy = await adapter.healthCheck();
     await _record(healthy ? 'health-ok' : 'health-failed', id);

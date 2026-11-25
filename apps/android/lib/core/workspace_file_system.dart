@@ -48,7 +48,8 @@ class WorkspaceFileSystem {
   };
   static const _blockedFileNames = {
     '.env', '.npmrc', '.pypirc', 'id_rsa', 'id_ed25519', 'credentials', 'credential',
-    'secrets', 'secret', 'google-services.json', 'service-account.json',
+    'credentials.json', 'credential.json', 'secrets.json', 'secret.json',
+    'google-services.json', 'service-account.json',
   };
   static const _blockedExtensions = {
     '.apk', '.aab', '.dex', '.so', '.o', '.a', '.class', '.jar', '.war',

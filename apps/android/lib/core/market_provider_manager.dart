@@ -64,11 +64,15 @@ class LocalAiCapabilityProbe {
 
   Future<LocalAiDeviceCapabilities?> inspect() async {
     try {
-      final result = await channel.invokeMethod<Object?>('getDeviceCapabilities');
+      final result = await channel
+          .invokeMethod<Object?>('getDeviceCapabilities')
+          .timeout(const Duration(seconds: 2));
       return LocalAiDeviceCapabilities.tryParse(result);
     } on PlatformException {
       return null;
     } on MissingPluginException {
+      return null;
+    } on TimeoutException {
       return null;
     }
   }

@@ -78,6 +78,13 @@ class _SignallingHealthAdapter extends _Adapter {
   final healthCheckStarted = Completer<void>();
 
   @override
+  RuntimeDescriptor get descriptor => const RuntimeDescriptor(
+        id: 'runtime.signalling', name: 'Signalling Runtime', version: '1.0.0', license: 'MIT',
+        supportedAbis: ['arm64-v8a'], dependencies: [], requiredCapabilities: {RuntimeCapability.filesystemRead},
+        sha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      );
+
+  @override
   Future<bool> healthCheck() async {
     if (!healthCheckStarted.isCompleted) healthCheckStarted.complete();
     return healthy;
@@ -715,8 +722,11 @@ void main() {
       expect(second.report!.persistenceFailures, isEmpty);
       expect(testManager.reportForExecution(first.report!.executionId), same(first.report));
       expect(testManager.reportForExecution(second.report!.executionId), same(second.report));
-      expect(testManager.auditEvents.where((event) => event['action'] == 'tool-complete').map((event) => event['executionId']),
-          [second.report!.executionId, first.report!.executionId]);
+      expect(
+        testManager.auditEvents.where((event) => event['action'] == 'tool-complete').map((event) => event['executionId']),
+        [second.report!.executionId],
+        reason: 'A failed audit save must not remain in the confirmed audit history; its failure stays attached to the first execution report.',
+      );
       testManager.dispose();
     });
 

@@ -123,7 +123,9 @@ class AiProviderManager {
     if (!_adapters.containsKey(providerId)) return false;
     if (providerId == 'gemini') {
       try {
-        final key = await credentialStore.read(providerId: providerId, kind: SecureCredentialKind.apiKey);
+        final key = await credentialStore
+            .read(providerId: providerId, kind: SecureCredentialKind.apiKey)
+            .timeout(const Duration(seconds: 5));
         return key != null && key.trim().isNotEmpty;
       } catch (_) {
         return false;

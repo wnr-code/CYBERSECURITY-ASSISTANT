@@ -2394,7 +2394,10 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) => Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: ListView(padding: const EdgeInsets.fromLTRB(20, 20, 20, 28), children: [
+          child: ListView(
+            key: const ValueKey('settings-scroll-view'),
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+            children: [
             Text(context.tr('SETTINGS'), style: _eyebrow(context)),
             const SizedBox(height: 8),
             Text(context.tr('Preferences and privacy'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),

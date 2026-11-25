@@ -31,7 +31,7 @@ const providerRegistry = <ProviderDefinition>[
     category: ProviderCategory.cloudInfrastructure,
     description: 'Read-only Cloudflare account and zone overview. No Cloudflare resources are modified; Workers, DNS records, and other product controls remain unavailable.',
     authType: ProviderAuthType.scopedToken,
-    setupGuidance: 'Create a narrowly scoped API token in the official Cloudflare dashboard. Account visibility is determined by GET /accounts; zone listing requires Zone Zone Read. Token verification alone does not reveal permission scopes, so each read capability is checked against its own API response.',
+    setupGuidance: 'Create a narrowly scoped API token in the official Cloudflare dashboard. Account visibility is determined by GET /accounts; zone listing requires Zone Zone Read. Token verification alone does not reveal permission scopes, so each read capability is checked against its own API response. This integration does not manage Workers, DNS records, or other Cloudflare products.',
     integrationImplemented: true,
   ),
   ProviderDefinition(

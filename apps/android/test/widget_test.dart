@@ -287,8 +287,13 @@ Future<void> _openCatalogFromEdgePanel(WidgetTester tester) async {
 }
 
 Future<void> _openConnectionsFromSettings(WidgetTester tester) async {
-  await tester.tap(find.text('Pengaturan'));
+  await tester.tap(find.byKey(const ValueKey('bottom-navigation-3')));
   await tester.pumpAndSettle();
+  final settingsScroll = find.descendant(
+    of: find.byKey(const ValueKey('settings-scroll-view')),
+    matching: find.byType(Scrollable),
+  );
+  await tester.scrollUntilVisible(find.text('Koneksi dan provider'), 240, scrollable: settingsScroll);
   await tester.tap(find.text('Koneksi dan provider'));
   await tester.pumpAndSettle();
 }
@@ -1143,7 +1148,7 @@ void main() {
 
   testWidgets('settings changes language without changing primary navigation', (tester) async {
     await _pumpApp(tester);
-    await tester.tap(find.text('Pengaturan'));
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-3')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Bahasa Indonesia'));
     await tester.pumpAndSettle();
@@ -1161,7 +1166,7 @@ void main() {
   testWidgets('Assessment is clean and Catalog is a separate destination', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment').first);
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
     await tester.pumpAndSettle();
 
     expect(find.text('Jalankan assessment'), findsOneWidget);
@@ -1178,7 +1183,7 @@ void main() {
   testWidgets('filters the tool registry by search text', (tester) async {
     _useTallViewport(tester);
     await _pumpApp(tester);
-    await tester.tap(find.text('Assessment').first);
+    await tester.tap(find.byKey(const ValueKey('bottom-navigation-1')));
     await tester.pumpAndSettle();
     await _openCatalogFromEdgePanel(tester);
 
@@ -1199,7 +1204,7 @@ void main() {
     await tester.tap(find.text('DNS Lookup'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Purpose & requirements'), findsOneWidget);
+    expect(find.text('Fungsi dan persyaratan'), findsOneWidget);
     expect(find.text('Bawaan'), findsWidgets);
     expect(find.text('Pasang'), findsNothing);
     await tester.tap(find.text('Buka Assessment'));
@@ -1297,7 +1302,7 @@ void main() {
     await tester.tap(find.byTooltip('Buka Edge Panel'));
     await tester.pumpAndSettle();
     expect(find.text('Edge Panel'), findsOneWidget);
-    expect(find.textContaining('belum menampilkan aksi provider'), findsOneWidget);
+    expect(find.textContaining('Pintasan provider belum diaktifkan'), findsOneWidget);
 
     await tester.tap(find.text('Terminal Mengambang'));
     await tester.pumpAndSettle();

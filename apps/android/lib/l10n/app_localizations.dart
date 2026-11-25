@@ -198,7 +198,7 @@ class AppLocalizations {
     'Cloudflare returned an invalid response.': 'Cloudflare mengembalikan respons yang tidak valid.',
     'Cloudflare connection test failed. The token was not written to logs.': 'Uji koneksi Cloudflare gagal. Token tidak dicatat di log.',
     'Save securely': 'Simpan dengan aman',
-    'Unavailable': 'Tidak tersedia',
+    'Unavailable': 'Belum tersedia',
     'Token secret stays masked and is saved only in Android secure storage.': 'Secret token tetap disamarkan dan hanya disimpan di penyimpanan aman Android.',
     'Account ID (optional)': 'Account ID (opsional)',
     'Used only to filter the read-only zone listing. No write operation is available.': 'Hanya digunakan untuk memfilter daftar zona baca-saja. Tidak tersedia operasi tulis.',

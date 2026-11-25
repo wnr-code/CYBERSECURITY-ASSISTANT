@@ -207,11 +207,7 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
               icon: _running
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.play_arrow_rounded),
-              label: Text(_running
-                  ? context.tr('Assessment already running')
-                  : _selected.isEmpty
-                      ? context.tr('Select at least one check')
-                      : context.tr('Run assessment')),
+              label: Text(_running ? context.tr('Assessment already running') : context.tr('Run assessment')),
             ),
             if (_running)
               OutlinedButton.icon(

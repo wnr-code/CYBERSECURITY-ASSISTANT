@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../core/market_provider_manager.dart';
@@ -199,15 +201,14 @@ class CloudflareReadOnlyPanel extends StatefulWidget {
 
 class _CloudflareReadOnlyPanelState extends State<CloudflareReadOnlyPanel> {
   bool _loading = false;
+  bool _refreshScheduled = false;
   String? _selectedZoneId;
 
   @override
   void initState() {
     super.initState();
     widget.manager.addListener(_handleManagerChange);
-    if (widget.manager.statusFor('cloudflare') == ManagedProviderStatus.connected) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
-    }
+    if (widget.manager.statusFor('cloudflare') == ManagedProviderStatus.connected) _scheduleRefresh();
   }
 
   @override
@@ -220,8 +221,17 @@ class _CloudflareReadOnlyPanelState extends State<CloudflareReadOnlyPanel> {
     final manager = widget.manager;
     if (mounted && !manager.isBusy && manager.statusFor('cloudflare') == ManagedProviderStatus.connected &&
         manager.cloudflareAccountsAccess == CloudflareAccessState.unknown && manager.cloudflareZonesAccess == CloudflareAccessState.unknown && !_loading) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+      _scheduleRefresh();
     }
+  }
+
+  void _scheduleRefresh() {
+    if (!mounted || _loading || _refreshScheduled) return;
+    _refreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshScheduled = false;
+      if (mounted) unawaited(_refresh());
+    });
   }
 
   Future<void> _refresh() async {

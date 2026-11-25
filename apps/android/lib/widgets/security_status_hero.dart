@@ -144,7 +144,7 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
         child: AnimatedContainer(
           duration: MediaQuery.of(context).disableAnimations ? Duration.zero : const Duration(milliseconds: 320),
           curve: Curves.easeInOutCubic,
-          height: 276,
+          height: MediaQuery.sizeOf(context).width < 380 ? 336 : 300,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             gradient: const LinearGradient(
@@ -157,23 +157,26 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
             child: Column(children: [
-              Row(children: [
-                Expanded(
+              if (MediaQuery.sizeOf(context).width < 380) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
                   child: Text(
                     context.tr('ASSESSMENT STATUS'),
                     style: const TextStyle(color: _securityCyan, fontWeight: FontWeight.w800, letterSpacing: .6),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: .1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: statusColor.withValues(alpha: .35)),
+                const SizedBox(height: 5),
+                Align(alignment: Alignment.centerRight, child: _statusBadge(statusLabel, statusColor)),
+              ] else
+                Row(children: [
+                  Expanded(
+                    child: Text(
+                      context.tr('ASSESSMENT STATUS'),
+                      style: const TextStyle(color: _securityCyan, fontWeight: FontWeight.w800, letterSpacing: .6),
+                    ),
                   ),
-                  child: Text(statusLabel, style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w800)),
-                ),
-              ]),
+                  _statusBadge(statusLabel, statusColor),
+                ]),
               Expanded(
                 child: AnimatedBuilder(
                   animation: _pulse,
@@ -186,8 +189,8 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
                     ),
                     child: Center(
                       child: SizedBox(
-                        width: 148,
-                        height: 148,
+                        width: MediaQuery.sizeOf(context).width < 380 ? 112 : 148,
+                        height: MediaQuery.sizeOf(context).width < 380 ? 112 : 148,
                         child: Stack(alignment: Alignment.center, children: [
                           TweenAnimationBuilder<double>(
                             tween: Tween<double>(begin: 0, end: centerProgress),
@@ -230,6 +233,17 @@ class _SecurityStatusHeroState extends State<SecurityStatusHero>
       ),
     );
   }
+
+  Widget _statusBadge(String label, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: .1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: .35)),
+        ),
+        child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800)),
+      );
 
   Widget _statusDetails(BuildContext context, bool active, AssessmentProgressSnapshot? progress) {
     final assessment = widget.latestAssessment;
