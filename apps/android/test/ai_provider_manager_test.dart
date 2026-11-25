@@ -78,7 +78,7 @@ class _FakeToolRuntime implements TerminalToolRuntime {
     return const TerminalExecutionResult.completed(
       'Resolved 2 addresses.',
       executionId: 'runtime-exec-actual-42',
-      executionData: const {'tool_id': 'dns_lookup', 'summary': 'Resolved 2 addresses.'},
+      executionData: {'tool_id': 'dns_lookup', 'summary': 'Resolved 2 addresses.'},
     );
   }
 }
