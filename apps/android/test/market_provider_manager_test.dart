@@ -88,6 +88,10 @@ void main() {
   late MarketProviderManager manager;
 
   setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      capabilityChannel,
+      (_) async => null,
+    );
     storage = _MemorySecureStore();
     credentials = SecureCredentialStore(backend: storage);
     cloudflare = _CloudflareTransport();

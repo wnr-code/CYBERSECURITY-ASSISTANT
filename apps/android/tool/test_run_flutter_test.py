@@ -7,7 +7,7 @@ import unittest
 import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 from unittest.mock import patch
 
 from run_flutter_test import _compressed_annotation_chunks, _parse_test_summary, _redact_output, main
@@ -157,12 +157,13 @@ class FlutterTestOutputTests(unittest.TestCase):
                 exit_code = main()
 
             run_flutter.assert_called_once_with(
-                ['flutter', 'test', '--reporter=expanded'],
+                ['flutter', 'test', '--reporter=expanded', '--timeout=60s'],
                 check=False,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
+                timeout=180,
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual((evidence / 'stdout.log').read_text(), completed.stdout)
@@ -173,6 +174,35 @@ class FlutterTestOutputTests(unittest.TestCase):
             self.assertIn('tests_failed=0', metadata)
             self.assertIn(completed.stdout, stdout.getvalue())
             self.assertIn(completed.stderr, stderr.getvalue())
+
+    def test_main_bounds_a_stuck_flutter_process_and_preserves_redacted_partial_logs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            evidence = Path(temp_dir) / 'evidence'
+            timeout = TimeoutExpired(
+                cmd=['flutter', 'test'],
+                timeout=180,
+                output=b'00:59 +12: still running test [E]\nActual: token=partial-secret\n',
+                stderr=b'waiting for fixture\n',
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch.dict(os.environ, {'FLUTTER_TEST_EVIDENCE_DIR': str(evidence)}), patch(
+                'run_flutter_test.subprocess.run', side_effect=timeout
+            ), redirect_stdout(stdout), redirect_stderr(stderr):
+                exit_code = main()
+
+            saved_stdout = (evidence / 'stdout.log').read_text()
+            saved_stderr = (evidence / 'stderr.log').read_text()
+            metadata = (evidence / 'metadata.txt').read_text()
+            self.assertEqual(exit_code, 124)
+            self.assertIn('still running test [E]', saved_stdout)
+            self.assertIn('Actual: token=[REDACTED]', saved_stdout)
+            self.assertIn('waiting for fixture', saved_stderr)
+            self.assertIn('Flutter test process exceeded 180 seconds', saved_stderr)
+            self.assertNotIn('partial-secret', saved_stdout + saved_stderr)
+            self.assertIn('flutter_exit_code=124', metadata)
+            self.assertIn('process_timeout_seconds=180', metadata)
+            self.assertIn('still running test [E]', stdout.getvalue())
 
     def test_main_preserves_failure_exit_and_full_sanitized_diagnostics(self):
         with tempfile.TemporaryDirectory() as temp_dir:

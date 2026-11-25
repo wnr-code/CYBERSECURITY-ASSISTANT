@@ -125,17 +125,25 @@ def main() -> int:
     stdout = ""
     stderr = ""
     try:
+        test_timeout = os.environ.get("FLUTTER_TEST_TIMEOUT", "60s")
+        process_timeout_seconds = int(os.environ.get("FLUTTER_TEST_PROCESS_TIMEOUT_SECONDS", "180"))
         result = subprocess.run(
-            ["flutter", "test", "--reporter=expanded"],
+            ["flutter", "test", "--reporter=expanded", f"--timeout={test_timeout}"],
             check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=process_timeout_seconds,
         )
         stdout = result.stdout
         stderr = result.stderr
         flutter_exit_code = result.returncode
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout.decode("utf-8", errors="replace") if isinstance(error.stdout, bytes) else error.stdout or ""
+        stderr = error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else error.stderr or ""
+        stderr += f"\nFlutter test process exceeded {process_timeout_seconds} seconds and was terminated.\n"
+        flutter_exit_code = 124
     except OSError as error:
         stderr = f"Could not start Flutter test process: {error}\n"
         flutter_exit_code = 127
@@ -164,7 +172,8 @@ def main() -> int:
         (evidence_dir / "stdout.log").write_text(safe_stdout, encoding="utf-8")
         (evidence_dir / "stderr.log").write_text(safe_stderr, encoding="utf-8")
         metadata = [
-            "command=flutter test --reporter=expanded",
+            f"command=flutter test --reporter=expanded --timeout={os.environ.get('FLUTTER_TEST_TIMEOUT', '60s')}",
+            f"process_timeout_seconds={os.environ.get('FLUTTER_TEST_PROCESS_TIMEOUT_SECONDS', '180')}",
             f"flutter_exit_code={flutter_exit_code}",
             f"evidence_redaction=enabled",
             "junit_xml=not_generated (no validated expanded-output converter)",
