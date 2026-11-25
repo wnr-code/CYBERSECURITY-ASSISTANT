@@ -52,6 +52,11 @@ class _FakeAiTransport implements AiHttpTransport {
   }
 }
 
+Future<void> _pumpAssistantFrame(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
 void main() {
   testWidgets('Assistant asks once per provider, persists consent, and asks again after revocation', (tester) async {
     tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
@@ -105,7 +110,7 @@ void main() {
         onOpenTools: () {},
       ),
     ));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
 
     expect(find.byKey(const ValueKey('assistant-floating-composer')), findsOneWidget);
     expect(find.byIcon(Icons.check_rounded), findsNothing,
@@ -117,26 +122,26 @@ void main() {
     await tester.pump();
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'Explain what this security finding means');
     await tester.tap(find.byKey(const ValueKey('assistant-info-button')));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     expect(find.text('Privacy and consent'), findsOneWidget);
     expect(find.text('Separate tool approval'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, 'Close'));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     await marketProviders.testConnection('gemini');
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     expect(find.byIcon(Icons.check_rounded), findsOneWidget,
         reason: 'The green connection check appears only after the provider test succeeds.');
     await tester.enterText(find.byType(TextField), 'Explain DNS safely');
     await tester.tap(find.byTooltip('Send'));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
 
     expect(find.text('AI data-sharing consent'), findsOneWidget);
     final continueButton = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Continue'));
     expect(continueButton.onPressed, isNull, reason: 'The agreement checkbox must be checked before continuing.');
     await tester.tap(find.byKey(const ValueKey('ai-data-sharing-consent-checkbox')));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
 
     expect(await consentStore.hasConsent('gemini'), isTrue);
     expect(transport.postCount, 1);
@@ -144,7 +149,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'What is a DNS record?');
     await tester.tap(find.byTooltip('Send'));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     expect(find.text('AI data-sharing consent'), findsNothing,
         reason: 'The saved provider-specific consent prevents repeated confirmation.');
     expect(transport.postCount, 2);
@@ -152,7 +157,7 @@ void main() {
     await consentStore.revoke('gemini');
     await tester.enterText(find.byType(TextField), 'Check this again');
     await tester.tap(find.byTooltip('Send'));
-    await tester.pumpAndSettle();
+    await _pumpAssistantFrame(tester);
     expect(find.text('AI data-sharing consent'), findsOneWidget,
         reason: 'Revoking consent requires a fresh decision before the next send.');
     expect(transport.postCount, 2, reason: 'No network request is made before renewed consent.');

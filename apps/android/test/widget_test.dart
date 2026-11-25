@@ -24,6 +24,7 @@ import 'package:cybersecurity_assistant/widgets/market_brand_mark.dart';
 import 'package:cybersecurity_assistant/widgets/market_screen.dart';
 import 'package:cybersecurity_assistant/widgets/provider_details_dialog.dart';
 import 'package:cybersecurity_assistant/widgets/tool_runner_dialog.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -281,6 +282,36 @@ Future<void> _scrollListUntilVisible(WidgetTester tester, Finder list, Finder ta
 
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
+void _installSecureStorageTestBackend(WidgetTester tester) {
+  const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  final values = <String, String>{};
+  final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(channel, (call) async {
+    final arguments = call.arguments is Map ? Map<Object?, Object?>.from(call.arguments as Map) : <Object?, Object?>{};
+    final key = arguments['key'] as String?;
+    switch (call.method) {
+      case 'read':
+        return key == null ? null : values[key];
+      case 'write':
+        if (key != null && arguments['value'] is String) values[key] = arguments['value'] as String;
+        return null;
+      case 'delete':
+        if (key != null) values.remove(key);
+        return null;
+      case 'containsKey':
+        return key != null && values.containsKey(key);
+      case 'readAll':
+        return Map<String, String>.unmodifiable(values);
+      case 'deleteAll':
+        values.clear();
+        return null;
+      default:
+        return null;
+    }
+  });
+  addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+}
+
 Future<void> _pumpAfterTransition(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
@@ -291,6 +322,7 @@ Future<void> _pumpApp(WidgetTester tester) async {
   // pumpAndSettle to settle deterministically like an accessibility user.
   tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
   addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+  _installSecureStorageTestBackend(tester);
   await tester.pumpWidget(_testApp());
   await tester.pumpAndSettle();
 }
@@ -1412,8 +1444,8 @@ void main() {
     expect(find.text('Edge Panel'), findsOneWidget);
     expect(find.textContaining('Belum ada provider yang terhubung'), findsOneWidget);
     expect(find.text('Assessment'), findsWidgets);
-    expect(find.text('Laporan'), findsNothing);
-    expect(find.text('Pengaturan'), findsNothing);
+    expect(find.text('Laporan'), findsWidgets);
+    expect(find.text('Pengaturan'), findsWidgets);
     expect(find.text('Katalog alat keamanan'), findsNothing);
     expect(find.text('Market · provider dan paket'), findsNothing);
 

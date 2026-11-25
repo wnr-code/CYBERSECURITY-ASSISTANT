@@ -201,7 +201,7 @@ void main() {
         home: MarketScreen(packageManager: manager),
       ));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Packages'));
+      await tester.tap(find.descendant(of: find.byType(TabBar), matching: find.text('Packages')));
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(manager.statusFor(incompatible), PackageStatus.incompatible);
