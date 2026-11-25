@@ -2690,7 +2690,9 @@ class ToolsScreen extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 960),
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+            // Keep the last controls clear of the floating bottom navigation
+            // on compact layouts so they remain visible and tappable.
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 112),
             children: [
               Text(context.tr('SECURITY ASSESSMENT'), style: _eyebrow(context)),
               const SizedBox(height: 8),
