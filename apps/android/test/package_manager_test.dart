@@ -203,6 +203,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.descendant(of: find.byType(TabBar), matching: find.text('Packages')));
       await tester.pump(const Duration(milliseconds: 500));
+      final packageScroll = find.descendant(of: find.byType(MarketScreen), matching: find.byType(Scrollable)).last;
+      await tester.scrollUntilVisible(find.text('Uninstall'), 180, scrollable: packageScroll);
 
       expect(manager.statusFor(incompatible), PackageStatus.incompatible);
       expect(find.widgetWithText(OutlinedButton, 'Uninstall'), findsOneWidget);
