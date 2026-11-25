@@ -271,6 +271,14 @@ void _useTallViewport(WidgetTester tester, {double width = 800}) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
+Future<void> _scrollListUntilVisible(WidgetTester tester, Finder list, Finder target, {double distance = 280}) async {
+  for (var attempt = 0; attempt < 20 && target.evaluate().isEmpty; attempt++) {
+    await tester.drag(list, Offset(0, -distance));
+    await tester.pumpAndSettle();
+  }
+  expect(target, findsOneWidget, reason: 'The target should be reachable by scrolling the dashboard list.');
+}
+
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
 Future<void> _pumpApp(WidgetTester tester) async {
@@ -603,10 +611,11 @@ void main() {
     await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
     expect(manager.activeRun?.runId, originalRunId);
-    await tester.scrollUntilVisible(
+    await _scrollListUntilVisible(
+      tester,
+      find.byKey(const ValueKey('dashboard-scroll-view')),
       find.textContaining('owned.example · 0 / 1 pemeriksaan'),
-      240,
-      scrollable: find.byType(Scrollable).first,
+      distance: 240,
     );
     expect(find.textContaining('owned.example · 0 / 1 pemeriksaan'), findsOneWidget,
         reason: 'The status visual uses the active run target and live progress from the application-owned manager.');
@@ -1000,11 +1009,10 @@ void main() {
       expect(find.byKey(ValueKey('bottom-navigation-$index')), findsOneWidget);
     }
     expect(find.text('Keamanan, kendali tetap di tangan Anda.'), findsOneWidget);
-    final dashboardScroll = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(find.text('STATUS ASSESSMENT'), 240, scrollable: dashboardScroll);
-    expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
+    final dashboardList = find.byKey(const ValueKey('dashboard-scroll-view'));
+    await _scrollListUntilVisible(tester, dashboardList, find.text('STATUS ASSESSMENT'), distance: 240);
     expect(find.text('Belum ada Assessment tersimpan'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('SKOR KEAMANAN'), 240, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.text('SKOR KEAMANAN'), distance: 240);
     expect(find.text('SKOR KEAMANAN'), findsOneWidget);
     expect(find.text('Belum dihitung'), findsOneWidget);
     expect(find.text('Tidak ada assessment yang berjalan'), findsOneWidget);
@@ -1069,11 +1077,11 @@ void main() {
       ),
     ));
 
-    final dashboardScroll = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(find.text('Penganalisis Respons Keamanan'), 240, scrollable: dashboardScroll);
+    final dashboardList = find.byKey(const ValueKey('dashboard-scroll-view'));
+    await _scrollListUntilVisible(tester, dashboardList, find.text('Penganalisis Respons Keamanan'), distance: 240);
     expect(find.text('Penganalisis Respons Keamanan'), findsOneWidget,
         reason: 'Analyzer remains available as a result; only the metric excludes it.');
-    await tester.scrollUntilVisible(find.text('Pemeriksaan sesi'), 240, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.text('Pemeriksaan sesi'), distance: 240);
     final sessionMetric = find.ancestor(of: find.text('Pemeriksaan sesi'), matching: find.byType(Card)).first;
     expect(find.descendant(of: sessionMetric, matching: find.text('1')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1134,8 +1142,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    final dashboardScroll = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(find.text('STATUS ASSESSMENT'), 280, scrollable: dashboardScroll);
+    final dashboardList = find.byKey(const ValueKey('dashboard-scroll-view'));
+    await _scrollListUntilVisible(tester, dashboardList, find.text('STATUS ASSESSMENT'));
     expect(find.text('STATUS ASSESSMENT'), findsOneWidget);
     expect(find.textContaining('Findings yang dimuat: 1'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('security-status-hero')));
@@ -1144,21 +1152,21 @@ void main() {
     expect(find.text('Peta jaringan belum tersedia'), findsOneWidget);
     await tester.tap(find.byTooltip('Kembali'));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.textContaining('1 sesi assessment dalam data yang dimuat'), 280, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.textContaining('1 sesi assessment dalam data yang dimuat'));
     expect(find.textContaining('1 sesi assessment dalam data yang dimuat'), findsOneWidget);
     final securityHero = find.byKey(const ValueKey('security-status-hero'));
     expect(find.descendant(of: securityHero, matching: find.text('Selesai')), findsOneWidget);
     expect(find.descendant(of: securityHero, matching: find.textContaining('owned.example')), findsOneWidget);
     expect(find.descendant(of: securityHero, matching: find.textContaining('1 pemeriksaan selesai.')), findsOneWidget);
     expect(find.descendant(of: securityHero, matching: find.textContaining('Findings yang dimuat: 1')), findsOneWidget);
-    await tester.scrollUntilVisible(find.textContaining('1 temuan dalam data yang dimuat'), 280, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.textContaining('1 temuan dalam data yang dimuat'));
     expect(find.textContaining('1 temuan dalam data yang dimuat'), findsOneWidget);
-    await tester.scrollUntilVisible(find.text('Pencarian DNS'), 280, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.text('Pencarian DNS'));
     expect(find.text('Pencarian DNS'), findsOneWidget);
     expect(find.text('owned.example'), findsWidgets);
     expect(find.text('Aktivitas terbaru'), findsOneWidget);
 
-    await tester.scrollUntilVisible(find.text('Buka Temuan'), 280, scrollable: dashboardScroll);
+    await _scrollListUntilVisible(tester, dashboardList, find.text('Buka Temuan'));
     await tester.tap(find.text('Buka Temuan'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('finding-search-filter')), findsOneWidget,
@@ -1168,8 +1176,8 @@ void main() {
 
     await _tapPrimaryDestination(tester, 0);
     await tester.pumpAndSettle();
-    final homeScroll = find.byType(Scrollable).first;
-    await tester.scrollUntilVisible(find.text('TINGGI  1'), 280, scrollable: homeScroll);
+    final homeList = find.byKey(const ValueKey('dashboard-scroll-view'));
+    await _scrollListUntilVisible(tester, homeList, find.text('TINGGI  1'));
     await tester.tap(find.text('TINGGI  1'));
     await tester.pumpAndSettle();
     severityFilter = tester.widget<DropdownButton<FindingSeverity?>>(find.byKey(const ValueKey('finding-severity-filter')));
