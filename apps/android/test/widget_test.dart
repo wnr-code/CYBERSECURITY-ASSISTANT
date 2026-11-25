@@ -561,7 +561,9 @@ void main() {
     expect(find.text('Batalkan pemeriksaan'), findsOneWidget, reason: 'The recreated Runner controls the existing run.');
     expect(orchestrator.calls, 1, reason: 'Rebuilding the Runner must not start another assessment.');
 
-    await tester.tap(find.text('Batalkan pemeriksaan'));
+    final cancelAssessment = find.text('Batalkan pemeriksaan');
+    await tester.ensureVisible(cancelAssessment);
+    await tester.tap(cancelAssessment);
     await tester.pumpAndSettle();
     expect(orchestrator.receivedToken?.isCancelled, isTrue);
     expect(manager.currentRun?.runId, originalRunId);
@@ -1184,7 +1186,7 @@ void main() {
     expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsNothing);
 
     await _openCatalogFromEdgePanel(tester);
-    expect(find.text('DISCOVER CAPABILITIES'), findsOneWidget);
+    expect(find.text('TEMUKAN KAPABILITAS'), findsOneWidget);
     expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari kapabilitas katalog'), findsOneWidget);
     expect(find.text('Katalog alat'), findsNothing);
     expect(tester.takeException(), isNull);
