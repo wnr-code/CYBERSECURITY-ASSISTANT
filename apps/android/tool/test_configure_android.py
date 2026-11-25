@@ -54,6 +54,7 @@ class ConfigureAndroidTests(unittest.TestCase):
             configure_gradle(gradle)
 
             self.assertIn("minSdk = 29", first_result)
+            self.assertIn("buildFeatures {\n        buildConfig = true\n    }", first_result)
             self.assertEqual(gradle.read_text(encoding="utf-8"), first_result)
 
     def test_groovy_template_preserves_a_higher_minimum(self):
@@ -66,7 +67,9 @@ class ConfigureAndroidTests(unittest.TestCase):
 
             configure_gradle(gradle)
 
-            self.assertIn("minSdkVersion 33", gradle.read_text(encoding="utf-8"))
+            configured = gradle.read_text(encoding="utf-8")
+            self.assertIn("minSdkVersion 33", configured)
+            self.assertIn("buildFeatures {\n        buildConfig true\n    }", configured)
 
     def test_configure_raises_a_numeric_minimum_below_android_10(self):
         with tempfile.TemporaryDirectory() as temporary:

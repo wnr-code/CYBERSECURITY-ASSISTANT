@@ -38,6 +38,46 @@ def _minimum_sdk(match: re.Match[str]) -> str:
     return f"{match.group(1)}{sdk}{match.group(3)}"
 
 
+def _enable_build_config(source: str, gradle_file: Path) -> str:
+    kotlin_dsl = gradle_file.suffix == ".kts"
+    setting = "buildConfig = true" if kotlin_dsl else "buildConfig true"
+    setting_pattern = re.compile(r"(?m)^(\s*)buildConfig\s*(?:=\s*)?(true|false)\s*(?://.*)?$")
+    settings = list(setting_pattern.finditer(source))
+    if len(settings) > 1:
+        raise RuntimeError(f"Expected at most one buildConfig feature setting in {gradle_file}.")
+    if settings:
+        match = settings[0]
+        return source[:match.start()] + f"{match.group(1)}{setting}" + source[match.end():]
+
+    android = re.search(r"(?m)^([ \t]*)android\s*\{", source)
+    if android is None:
+        raise RuntimeError(f"Could not find Android Gradle configuration in {gradle_file}.")
+    opening = source.find("{", android.start())
+    depth = 1
+    closing = None
+    for index in range(opening + 1, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                closing = index
+                break
+    if closing is None:
+        raise RuntimeError(f"Unclosed Android Gradle configuration in {gradle_file}.")
+
+    android_indent = android.group(1)
+    feature_indent = android_indent + "    "
+    block = source[opening + 1:closing]
+    features = re.search(r"(?m)^([ \t]*)buildFeatures\s*\{", block)
+    if features:
+        insert_at = opening + 1 + features.end()
+        return source[:insert_at] + f"\n{features.group(1)}    {setting}" + source[insert_at:]
+
+    feature_block = f"\n{feature_indent}buildFeatures {{\n{feature_indent}    {setting}\n{feature_indent}}}\n{android_indent}"
+    return source[:closing] + feature_block + source[closing:]
+
+
 def configure_gradle(gradle_file: Path) -> None:
     source = gradle_file.read_text(encoding="utf-8")
     matches = list(KOTLIN_MIN_SDK.finditer(source))
@@ -61,6 +101,7 @@ def configure_gradle(gradle_file: Path) -> None:
             configured = configured[:insertion] + f"\n{indent}{declaration}" + configured[insertion:]
         else:
             configured = configured.rstrip() + f"\n\ndependencies {{\n    {declaration}\n}}\n"
+    configured = _enable_build_config(configured, gradle_file)
     gradle_file.write_text(configured, encoding="utf-8")
 
 
