@@ -159,7 +159,9 @@ class _MarketScreenState extends State<MarketScreen> {
       return false;
     }
     final status = widget.packageManager.statusFor(package);
+    final installed = widget.packageManager.installedById(package.id) != null;
     return widget.packageManager.canInstall(package) ||
+        (installed && status == PackageStatus.incompatible) ||
         status == PackageStatus.installed ||
         status == PackageStatus.updateAvailable ||
         status == PackageStatus.downloading ||

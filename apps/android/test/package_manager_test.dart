@@ -203,7 +203,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.descendant(of: find.byType(TabBar), matching: find.text('Packages')));
       await tester.pump(const Duration(milliseconds: 500));
-      final packageScroll = find.descendant(of: find.byType(MarketScreen), matching: find.byType(Scrollable)).last;
+      final packageCard = find.byKey(const ValueKey('market-package-knowledge.fixture'));
+      expect(packageCard, findsOneWidget,
+          reason: 'Previously installed content remains visible when updated catalog metadata is incompatible.');
+      final packageScroll = find.byKey(const ValueKey('market-packages-list'));
       await tester.scrollUntilVisible(find.text('Uninstall'), 180, scrollable: packageScroll);
 
       expect(manager.statusFor(incompatible), PackageStatus.incompatible);

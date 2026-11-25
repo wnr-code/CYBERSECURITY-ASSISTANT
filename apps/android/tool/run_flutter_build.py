@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,11 +27,30 @@ def _escape_command_value(value: str) -> str:
     return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
+def flutter_build_command(*, native_enabled: bool) -> list[str]:
+    command = ["flutter", "build", "apk", "--debug"]
+    if native_enabled:
+        # The source-native CMake target deliberately rejects every ABI except
+        # arm64-v8a. Flutter otherwise requests armeabi-v7a and x86_64 too.
+        command.append("--target-platform=android-arm64")
+    return command
+
+
 def failure_annotations(exit_code: int, output: str) -> list[str]:
     prefix = f"flutter build apk --debug failed (exit {exit_code}).\n\n"
     output_budget = MAX_FAILURE_CHARS - len(prefix)
     if len(output) > output_budget:
-        output = "… build output truncated; showing tail …\n" + output[-(output_budget - 48) :]
+        diagnostic_lines = [
+            line for line in output.splitlines()
+            if re.search(r"(?i)(cmake error|fatal error:|\berror:|undefined reference|ninja: build stopped)", line)
+        ]
+        diagnostic_summary = "\n".join(diagnostic_lines[-12:])[-1600:]
+        tail_budget = output_budget - len(diagnostic_summary) - 96
+        output = (
+            (f"Relevant compiler/build diagnostics:\n{diagnostic_summary}\n\n" if diagnostic_summary else "")
+            + "… build output truncated; showing tail …\n"
+            + output[-max(0, tail_budget):]
+        )
     message = prefix + output
     return [message[start : start + MAX_ANNOTATION_CHARS] for start in range(0, len(message), MAX_ANNOTATION_CHARS)]
 
@@ -73,7 +93,7 @@ def main() -> int:
         return 2
 
     result = subprocess.run(
-        ["flutter", "build", "apk", "--debug"],
+        flutter_build_command(native_enabled=native_enabled),
         cwd=app_root,
         check=False,
         capture_output=True,
