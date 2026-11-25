@@ -335,7 +335,8 @@ Future<void> _pumpAfterTransition(WidgetTester tester) async {
 
 Future<void> _pumpUntilFound(WidgetTester tester, Finder finder, {int attempts = 40}) async {
   for (var attempt = 0; attempt < attempts && finder.evaluate().isEmpty; attempt++) {
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pump(const Duration(milliseconds: 80));
   }
 }
 
@@ -352,7 +353,8 @@ String _renderedText(WidgetTester tester) => tester
 Future<void> _pumpUntilCatalogReady(WidgetTester tester) async {
   final busy = find.descendant(of: find.byType(CatalogScreen), matching: find.byType(LinearProgressIndicator));
   for (var attempt = 0; attempt < 40 && busy.evaluate().isNotEmpty; attempt++) {
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
+    await tester.pump(const Duration(milliseconds: 225));
   }
 }
 

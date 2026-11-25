@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/ai_assistant_coordinator.dart';
@@ -80,7 +81,7 @@ void main() {
       aiProviders: providers,
     );
     await marketProviders.initialize();
-    debugPrint('CONSENT_TEST_STAGE manager-initialized');
+    stderr.writeln('CONSENT_TEST_STAGE manager-initialized');
     final consentStore = AiDataSharingConsentStore(backend: backend);
     final activityStore = MemoryActivityHistoryStore();
     final coordinator = AiAssistantCoordinator(
@@ -112,7 +113,7 @@ void main() {
       ),
     ));
     await _pumpAssistantFrame(tester);
-    debugPrint('CONSENT_TEST_STAGE assistant-rendered');
+    stderr.writeln('CONSENT_TEST_STAGE assistant-rendered');
 
     expect(find.byKey(const ValueKey('assistant-floating-composer')), findsOneWidget);
     expect(find.byIcon(Icons.check_rounded), findsNothing,
@@ -130,7 +131,7 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, 'Close'));
     await _pumpAssistantFrame(tester);
     await marketProviders.testConnection('gemini');
-    debugPrint('CONSENT_TEST_STAGE provider-checked');
+    stderr.writeln('CONSENT_TEST_STAGE provider-checked');
     await _pumpAssistantFrame(tester);
     expect(find.byIcon(Icons.check_rounded), findsOneWidget,
         reason: 'The green connection check appears only after the provider test succeeds.');
@@ -139,19 +140,19 @@ void main() {
     await _pumpAssistantFrame(tester);
 
     expect(find.text('AI data-sharing consent'), findsOneWidget);
-    debugPrint('CONSENT_TEST_STAGE consent-dialog-open');
+    stderr.writeln('CONSENT_TEST_STAGE consent-dialog-open');
     final continueButton = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Continue'));
     expect(continueButton.onPressed, isNull, reason: 'The agreement checkbox must be checked before continuing.');
     await tester.tap(find.byKey(const ValueKey('ai-data-sharing-consent-checkbox')));
     await _pumpAssistantFrame(tester);
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
     await _pumpAssistantFrame(tester);
-    debugPrint('CONSENT_TEST_STAGE first-consent-accepted');
+    stderr.writeln('CONSENT_TEST_STAGE first-consent-accepted');
 
     expect(await consentStore.hasConsent('gemini'), isTrue);
     expect(transport.postCount, 1);
     expect(find.text('Fake Gemini reply'), findsOneWidget);
-    debugPrint('CONSENT_TEST_STAGE first-response-rendered');
+    stderr.writeln('CONSENT_TEST_STAGE first-response-rendered');
 
     await tester.enterText(find.byType(TextField), 'What is a DNS record?');
     await tester.tap(find.byTooltip('Send'));
@@ -159,7 +160,7 @@ void main() {
     expect(find.text('AI data-sharing consent'), findsNothing,
         reason: 'The saved provider-specific consent prevents repeated confirmation.');
     expect(transport.postCount, 2);
-    debugPrint('CONSENT_TEST_STAGE second-response-rendered');
+    stderr.writeln('CONSENT_TEST_STAGE second-response-rendered');
 
     await consentStore.revoke('gemini');
     await tester.enterText(find.byType(TextField), 'Check this again');
