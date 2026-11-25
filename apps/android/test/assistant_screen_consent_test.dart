@@ -54,6 +54,8 @@ class _FakeAiTransport implements AiHttpTransport {
 
 void main() {
   testWidgets('Assistant asks once per provider, persists consent, and asks again after revocation', (tester) async {
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(800, 1200);
     addTearDown(tester.view.resetPhysicalSize);
@@ -92,12 +94,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('en'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [
-        AppLocalizationsDelegate(),
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
       home: AssistantScreen(
         providers: providers,
         marketProviders: marketProviders,

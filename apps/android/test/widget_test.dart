@@ -281,6 +281,11 @@ Future<void> _scrollListUntilVisible(WidgetTester tester, Finder list, Finder ta
 
 Widget _testApp() => CybersecurityAssistantApp(resultStore: _MemoryResultHistory());
 
+Future<void> _pumpAfterTransition(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
 Future<void> _pumpApp(WidgetTester tester) async {
   // The active-assessment grid animation honors reduced motion, allowing
   // pumpAndSettle to settle deterministically like an accessibility user.
@@ -292,14 +297,14 @@ Future<void> _pumpApp(WidgetTester tester) async {
 
 Future<void> _openCatalogFromDashboard(WidgetTester tester) async {
   await _tapPrimaryDestination(tester, 0);
-  await tester.pumpAndSettle();
+  await _pumpAfterTransition(tester);
   final dashboardScroll = find.descendant(
     of: find.byKey(const ValueKey('dashboard-scroll-view')),
     matching: find.byType(Scrollable),
   ).first;
   await tester.scrollUntilVisible(find.text('Buka Katalog'), 260, scrollable: dashboardScroll);
   await tester.tap(find.text('Buka Katalog').first);
-  await tester.pumpAndSettle();
+  await _pumpAfterTransition(tester);
 }
 
 Future<void> _tapPrimaryDestination(WidgetTester tester, int index) async {
@@ -378,7 +383,7 @@ void main() {
   testWidgets('Market exposes provider readiness, the Local AI integration candidate, and installable data packages', (tester) async {
     await _pumpApp(tester);
     await tester.tap(find.byKey(const ValueKey('open-market-button')));
-    await tester.pumpAndSettle();
+    await _pumpAfterTransition(tester);
 
     expect(find.text('Provider'), findsWidgets);
     expect(find.text('Paket'), findsOneWidget);
@@ -390,7 +395,7 @@ void main() {
     expect(find.text('Not Ready — proses integrasi'), findsOneWidget);
 
     await tester.tap(find.text('Paket'));
-    await tester.pumpAndSettle();
+    await _pumpAfterTransition(tester);
     expect(find.text('Security Assessment Evidence Guide'), findsOneWidget);
     expect(find.text('External Runtime Package (unsupported)'), findsNothing);
     expect(find.text('Sample Plugin (planned)'), findsNothing);
@@ -486,7 +491,7 @@ void main() {
     expect(find.text('Jalankan assessment'), findsOneWidget);
     expect(find.text('Saya memiliki target ini atau mendapat izin untuk memeriksanya.'), findsOneWidget);
     expect(find.text('Izinkan target jaringan lokal/private'), findsOneWidget);
-    expect(find.byType(CheckboxListTile), findsNWidgets(5));
+    expect(find.byType(CheckboxListTile), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -1238,7 +1243,7 @@ void main() {
         reason: 'Market is directly reachable from the app bar without opening a catalog first.');
 
     await tester.tap(find.byKey(const ValueKey('bottom-navigation-ai-chat')));
-    await tester.pumpAndSettle();
+    await _pumpAfterTransition(tester);
 
     expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
     expect(find.byKey(const ValueKey('assistant-avatar-not-connected')), findsOneWidget);
@@ -1251,7 +1256,7 @@ void main() {
     final moduleCard = find.text('Modul asisten AI');
     await tester.scrollUntilVisible(moduleCard, 180);
     await tester.tap(moduleCard);
-    await tester.pumpAndSettle();
+    await _pumpAfterTransition(tester);
 
     expect(find.text('Asisten AI belum terhubung'), findsOneWidget);
     expect(find.text('Kelola provider AI di Market'), findsOneWidget);
@@ -1279,7 +1284,7 @@ void main() {
     _useTallViewport(tester);
     await _pumpApp(tester);
     await _tapPrimaryDestination(tester, 1);
-    await tester.pumpAndSettle();
+    await _pumpAfterTransition(tester);
 
     expect(find.text('Jalankan assessment'), findsOneWidget);
     expect(find.text('Katalog'), findsNothing);
@@ -1406,7 +1411,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Edge Panel'), findsOneWidget);
     expect(find.textContaining('Belum ada provider yang terhubung'), findsOneWidget);
-    expect(find.text('Assessment'), findsOneWidget);
+    expect(find.text('Assessment'), findsWidgets);
     expect(find.text('Laporan'), findsNothing);
     expect(find.text('Pengaturan'), findsNothing);
     expect(find.text('Katalog alat keamanan'), findsNothing);

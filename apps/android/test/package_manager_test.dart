@@ -201,6 +201,8 @@ void main() {
         home: MarketScreen(packageManager: manager),
       ));
       await tester.pumpAndSettle();
+      await tester.tap(find.text('Packages'));
+      await tester.pump(const Duration(milliseconds: 500));
 
       expect(manager.statusFor(incompatible), PackageStatus.incompatible);
       expect(find.widgetWithText(OutlinedButton, 'Uninstall'), findsOneWidget);

@@ -178,7 +178,8 @@ void main() {
     for (final section in ['Device Compatibility', 'Runtime Information', 'Model Catalog', 'Storage Management']) {
       expect(find.text(section), findsOneWidget);
     }
-    expect(find.text('Not Ready — the official llama.cpp source/JNI build path is implemented as an opt-in, but has not been built or device-tested. No verified model is enabled; inference and cloud fallback are unavailable.'), findsOneWidget);
+    expect(find.text('Not Ready: the runtime, compatible model, and successful local inference are not all available.'), findsOneWidget);
+    expect(find.textContaining('The app uses official llama.cpp source pinned to a commit'), findsOneWidget);
     expect(find.text('Pinned llama.cpp source commit'), findsOneWidget);
     expect(find.text('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'), findsOneWidget);
     expect(find.text('Offline Inference Test'), findsWidgets);
