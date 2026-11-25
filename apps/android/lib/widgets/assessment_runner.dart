@@ -129,6 +129,17 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
             context.tr('Choose an authorized target and run multiple local checks in one assessment. Checks run sequentially; each outcome is reported separately.'),
             style: TextStyle(color: Colors.white.withValues(alpha: .7), height: 1.4, fontSize: 12),
           ),
+          if (_running) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _cancelRequested ? null : _cancel,
+                icon: const Icon(Icons.stop_circle_outlined),
+                label: Text(_cancelRequested ? context.tr('Stopping…') : context.tr('Cancel checks')),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           TextField(
             controller: _targetController,
@@ -209,12 +220,6 @@ class _AssessmentRunnerState extends State<AssessmentRunner> {
                   : const Icon(Icons.play_arrow_rounded),
               label: Text(_running ? context.tr('Assessment already running') : context.tr('Run assessment')),
             ),
-            if (_running)
-              OutlinedButton.icon(
-                onPressed: _cancelRequested ? null : _cancel,
-                icon: const Icon(Icons.stop_circle_outlined),
-                label: Text(_cancelRequested ? context.tr('Stopping…') : context.tr('Cancel checks')),
-              ),
           ]),
           if (_error != null) ...[
             const SizedBox(height: 8),
