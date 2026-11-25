@@ -178,7 +178,6 @@ class WorkspaceFileSystem {
     }
     await _authorize(actor, WorkspaceAction.write, safeRelative);
     final destinationPath = await _resolve(safeRelative, allowRoot: false, directory: false, createParents: true);
-    final destination = File(destinationPath);
     final type = await FileSystemEntity.type(destinationPath, followLinks: false);
     if (type == FileSystemEntityType.link || (type == FileSystemEntityType.file && !overwrite)) {
       throw const WorkspaceSecurityException('Workspace file already exists or is unsafe to replace.');
@@ -298,7 +297,9 @@ class WorkspaceFileSystem {
       if (directory && type != FileSystemEntityType.directory) {
         throw const WorkspaceSecurityException('Workspace directory path is occupied by an unsafe entry.');
       }
-      final canonical = await FileSystemEntity.resolveSymbolicLinks(target);
+      final canonical = type == FileSystemEntityType.directory
+          ? await Directory(target).resolveSymbolicLinks()
+          : await File(target).resolveSymbolicLinks();
       if (!_isWithinRoot(canonical)) throw const WorkspaceSecurityException('Workspace path resolved outside its root.');
     }
     return target;

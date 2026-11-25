@@ -10,6 +10,8 @@ abstract interface class NativeAppIntegrityBridge {
 }
 
 class MethodChannelAppIntegrityBridge implements NativeAppIntegrityBridge {
+  // Keep the public injectable argument named `channel` while the field remains private.
+  // ignore: prefer_initializing_formals
   const MethodChannelAppIntegrityBridge({MethodChannel channel = const MethodChannel('org.cybersecurityassistant/app_integrity')})
       : _channel = channel;
 

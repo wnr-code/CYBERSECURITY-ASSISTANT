@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 
 import 'activity_timeline.dart';
 import 'ai_provider_manager.dart';
-import 'provider_registry.dart';
 import 'secure_credential_store.dart';
 
 enum ManagedProviderStatus { installed, connected, disconnected, error, notReady }

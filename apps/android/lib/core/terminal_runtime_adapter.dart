@@ -22,6 +22,7 @@ class TerminalRuntimeAdapter implements TerminalToolRuntime {
   final ToolOrchestrator orchestrator;
   final Future<TerminalExecutionResult?> Function(String toolId, String? target, {String? correlationId}) runAfterConsent;
 
+  @override
   Future<List<String>> readyToolIds() async {
     final available = <String>[];
     for (final definition in orchestrator.registry.definitions) {
@@ -36,6 +37,7 @@ class TerminalRuntimeAdapter implements TerminalToolRuntime {
     return List.unmodifiable(available);
   }
 
+  @override
   Future<TerminalExecutionResult> executeTool(
     String toolId,
     String? target, {

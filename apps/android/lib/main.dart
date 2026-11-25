@@ -292,7 +292,7 @@ class _MainShellState extends State<MainShell> {
   late final ToolOrchestrator _terminalOrchestrator;
   late final TerminalSessionManager _terminalSession;
   late final SafeTerminalProcessExecutor _terminalExecutor;
-  final ChangeNotifier _securityOverviewChanges = ChangeNotifier();
+  final ValueNotifier<int> _securityOverviewChanges = ValueNotifier<int>(0);
   bool _edgePanelOpen = false;
   bool _terminalOpen = false;
   bool _terminalMinimized = false;
@@ -458,7 +458,7 @@ class _MainShellState extends State<MainShell> {
   }
 
   void _notifySecurityOverview() {
-    if (mounted) _securityOverviewChanges.notifyListeners();
+    if (mounted) _securityOverviewChanges.value++;
   }
 
   Future<bool> _reviewAiTool(AiTerminalToolProposal proposal) async {

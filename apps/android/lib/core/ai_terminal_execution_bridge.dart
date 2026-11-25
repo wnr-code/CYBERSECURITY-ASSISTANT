@@ -74,7 +74,7 @@ class AiTerminalExecutionBridge {
       }
       final approved = await reviewWithUser(proposal);
       if (!approved) return TerminalExecutionResult.cancelled(translate('AI tool request declined; no tool was run.'));
-      return runtime.executeTool(
+      return await runtime.executeTool(
         proposal.toolId,
         proposal.target,
         translate: translate,

@@ -60,8 +60,9 @@ class TerminalExecutionResult {
 /// It survives tab changes because MainShell owns this notifier for its lifetime.
 class TerminalSessionManager extends ChangeNotifier {
   TerminalSessionManager({ActivityHistoryStore? activityStore, void Function(ActivityEvent)? onActivity})
-      : _activityStore = activityStore,
-        _onActivity = onActivity {
+      : this._(activityStore, onActivity);
+
+  TerminalSessionManager._(this._activityStore, this._onActivity) {
     _startNewSession();
   }
 
