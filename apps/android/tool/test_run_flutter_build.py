@@ -29,6 +29,7 @@ class FlutterBuildOutputTests(unittest.TestCase):
         self.assertIn("unsupported ABI", combined)
         self.assertTrue(messages[0].startswith("flutter build apk --debug failed"))
 
+    @patch.dict("os.environ", {"GITHUB_ACTIONS": ""})
     @patch("run_flutter_build.subprocess.run")
     @patch("run_flutter_build.preflight_runtime_build", side_effect=GateError("runtime artifact unverified"))
     def test_runtime_artifact_gate_blocks_flutter_build(self, preflight, flutter_run):
