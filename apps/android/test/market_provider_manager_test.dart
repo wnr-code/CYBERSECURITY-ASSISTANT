@@ -157,8 +157,8 @@ void main() {
     await tester.pumpWidget(const MaterialApp(
       locale: Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
-      home: const Scaffold(body: LocalAiDiagnosticAction(status: ManagedProviderStatus.notReady)),
+      localizationsDelegates: [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: Scaffold(body: LocalAiDiagnosticAction(status: ManagedProviderStatus.notReady)),
     ));
     await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     await tester.pumpAndSettle();
