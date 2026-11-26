@@ -71,20 +71,21 @@ class _LocalAiDiagnosticDialogState extends State<_LocalAiDiagnosticDialog> {
       results.add('Native/JNI load: BLOCKED — ${_safeError(error)}; install the source-native ARM64 APK after its CI audit passes.');
     }
     if (runtime?['pinnedModelRevision'] is String) {
-      results.add('Pinned model metadata: ${runtime?['pinnedModelRepository']} @ ${runtime?['pinnedModelRevision']} · ${runtime?['pinnedModelLicense']}');
+      results.add('Configured model pin (not independently verified): ${runtime?['pinnedModelRepository']} @ ${runtime?['pinnedModelRevision']} · ${runtime?['pinnedModelLicense']}. Publisher metadata and actual GGUF bytes have not been independently verified.');
     }
     final name = runtime?['modelName'];
     final digest = runtime?['modelSha256'];
     const modelPin = LocalAiModelManifest.qwenQ4Km;
-    final modelLoaded = runtime?['modelLoaded'] == true && name == modelPin.fileName && digest == modelPin.sha256Hex;
+    final modelLoaded = LocalAiModelManifest.qwenArtifactIndependentlyVerified &&
+        runtime?['modelLoaded'] == true && name == modelPin.fileName && digest == modelPin.sha256Hex;
     final installedCount = capabilities?['installedModelCount'];
     final inventory = runtime?['installedModels'];
     final modelInventory = inventory is List ? inventory.whereType<Map>().toList() : <Map>[];
     final inventoryLines = modelInventory.map((item) => '${item['fileName']}: ${item['sizeBytes']} bytes, SHA-256 ${item['sha256']} (${item['trusted'] == true ? 'trusted' : 'UNTRUSTED'})').join('; ');
-    final trustedFileInstalled = modelInventory.any((item) =>
+    final trustedFileInstalled = LocalAiModelManifest.qwenArtifactIndependentlyVerified && modelInventory.any((item) =>
         item['fileName'] == modelPin.fileName && item['sizeBytes'] == modelPin.fileSizeBytes &&
         item['sha256'] == modelPin.sha256Hex && item['trusted'] == true);
-    results.add('Installed GGUF integrity: ${trustedFileInstalled ? 'PASS' : 'BLOCKED'} — ${inventoryLines.isNotEmpty ? inventoryLines : '${installedCount is int ? installedCount : 'unknown'} installed model(s); no readable GGUF inventory'}${trustedFileInstalled ? '' : '; required pinned filename, exact size, and SHA-256 were not verified. Import the exact publisher file; mismatches are rejected.'}');
+    results.add('Installed GGUF integrity: ${trustedFileInstalled ? 'PASS' : 'BLOCKED'} — ${inventoryLines.isNotEmpty ? inventoryLines : '${installedCount is int ? installedCount : 'unknown'} installed model(s); no readable GGUF inventory'}${trustedFileInstalled ? '' : '; publisher metadata and the actual GGUF bytes have not been independently verified, so import and native loading remain disabled.'}');
     results.add('Model load: ${modelLoaded ? 'PASS' : 'BLOCKED'} — ${modelLoaded ? 'verified model is loaded in the runtime.' : trustedFileInstalled ? 'the verified file is installed but native model load has not completed; use Choose GGUF, verify, and load.' : 'a compatible model with an app-approved publisher digest is not loaded; model loading correctly fails closed.'}');
     if (modelLoaded) {
       try {

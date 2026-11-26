@@ -170,11 +170,14 @@ hooks:
         installer = (app / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
         runtime = (app / "lib/core/local_ai_inference_runtime.dart").read_text(encoding="utf-8")
         widget = (app / "lib/widgets/local_ai_model_install_action.dart").read_text(encoding="utf-8")
+        diagnostic = (app / "lib/widgets/local_ai_diagnostic_test.dart").read_text(encoding="utf-8")
         self.assertIn("const bool qwenArtifactIndependentlyVerified = false;", status)
         self.assertIn("if (!_artifactPinApproved)", installer)
         self.assertIn("if (!qwenArtifactIndependentlyVerified) return false;", runtime)
         self.assertIn("if (!qwenArtifactIndependentlyVerified)", runtime)
         self.assertIn("!LocalAiModelManifest.qwenArtifactIndependentlyVerified ? null", widget)
+        self.assertIn("LocalAiModelManifest.qwenArtifactIndependentlyVerified && modelInventory.any", diagnostic)
+        self.assertIn("publisher metadata and the actual GGUF bytes have not been independently verified", diagnostic)
 
     def test_model_audit_reports_hash_but_never_enables_install(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
