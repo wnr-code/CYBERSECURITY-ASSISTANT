@@ -35,14 +35,19 @@ internal object LocalAiInferenceBridge {
     // App-pinned immutable upstream revision. Runtime installation still
     // verifies publisher metadata and complete file bytes before JNI sees it.
     // This digest is an identity check, not a guarantee that model content is risk-free.
-    private data class ModelPin(val repository: String, val revision: String, val license: String, val size: Long, val sha256: String)
+    private data class ModelPin(val repository: String, val revision: String, val license: String, val size: Long, val sha256: String, val licenseRepository: String, val licenseRevision: String)
     private val trustedModels = mapOf(
         "qwen2.5-1.5b-instruct-q4_k_m.gguf" to ModelPin(
-            repository = "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-            revision = "91cad51170dc346986eccefdc2dd33a9da36ead9",
-            license = "Apache-2.0",
-            size = 1_117_320_736L,
-            sha256 = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+            "Qwen/Qwen2.5-1.5B-Instruct-GGUF", "dd26da440ef0330c47919d1ecae0966d24022222", "Apache-2.0", 1_117_320_736L,
+            "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e", "Qwen/Qwen2.5-1.5B-Instruct", "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+        ),
+        "qwen2.5-0.5b-instruct-q4_k_m.gguf" to ModelPin(
+            "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "6dd44a1fb35d11b5d1b28902876ce3cc9e882d0e", "Apache-2.0", 491_400_032L,
+            "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db", "Qwen/Qwen2.5-0.5B-Instruct", "7ae557604adf67be50417f59c2c2f167def9a775",
+        ),
+        "smollm2-1.7b-instruct-q4_k_m.gguf" to ModelPin(
+            "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF", "6a7e79393ef2957e087f11fce1e50476799e313c", "Apache-2.0", 1_055_609_536L,
+            "decd2598bc2c8ed08c19adc3c8fdd461ee19ed5708679d1c54ef54a5a30d4f33", "HuggingFaceTB/SmolLM2-1.7B-Instruct", "31b70e2e869a7173562077fd711b654946d38674",
         ),
     )
 
@@ -63,6 +68,24 @@ internal object LocalAiInferenceBridge {
                 "getDiagnosticStatus" -> runOnWorker(result) { restorePersistedModel(activity); statusMap(activity, includeInventory = true) }
                 "loadVerifiedModel" -> runOnWorker(result) { loadVerifiedModel(activity, call) }
                 "deleteInstalledModel" -> runOnWorker(result) { deleteInstalledModel(activity) }
+                "startModelDownload" -> {
+                    if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                        activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7843)
+                        result.error("notification_permission_required", "Allow notifications, then tap Download Model again so Android can keep the foreground download visible.", null)
+                        return@setMethodCallHandler
+                    }
+                    runCatching {
+                        val values = call.arguments as? Map<String, Any?> ?: throw IllegalArgumentException("Pinned model download request is required.")
+                        LocalAiModelDownloadService.start(activity, values)
+                        result.success(true)
+                    }.onFailure { result.error("local_ai_download", it.message ?: "Could not start the model download.", null) }
+                }
+                "getModelDownloadStatus" -> result.success(LocalAiModelDownloadService.status(activity))
+                "cancelModelDownload" -> {
+                    LocalAiModelDownloadService.cancel(activity)
+                    result.success(true)
+                }
                 "cancelInference" -> {
                     inferenceRequestId.incrementAndGet()
                     nativeCancelInference()
@@ -93,7 +116,9 @@ internal object LocalAiInferenceBridge {
         }
     }
 
-    private fun statusMap(activity: Activity, includeInventory: Boolean = false): Map<String, Any?> = mapOf(
+    private fun statusMap(activity: Activity, includeInventory: Boolean = false): Map<String, Any?> {
+        val pin = loadedModelName?.let { trustedModels[it] } ?: trustedModels.values.firstOrNull()
+        return mapOf(
         "sourceCommit" to "ea722948146befb23c9529c1ec7f59fb2f34911f",
         "runtimeLoaded" to true,
         "modelLoaded" to (loadedModelName != null),
@@ -102,13 +127,14 @@ internal object LocalAiInferenceBridge {
         "publisherMetadataVerified" to loadedPublisherMetadataVerified,
         "inferenceSucceeded" to loadedInferenceSucceeded,
         "offlineInferenceSucceeded" to loadedOfflineInferenceSucceeded,
-        "pinnedModelRepository" to trustedModels.values.firstOrNull()?.repository,
-        "pinnedModelRevision" to trustedModels.values.firstOrNull()?.revision,
-        "pinnedModelLicense" to trustedModels.values.firstOrNull()?.license,
+        "pinnedModelRepository" to pin?.repository,
+        "pinnedModelRevision" to pin?.revision,
+        "pinnedModelLicense" to pin?.license,
         "installedModels" to if (includeInventory) installedModelInventory(activity) else emptyList<Map<String, Any?>>(),
         "abi" to "arm64-v8a",
         "backend" to "cpu",
-    )
+        )
+    }
 
     private fun installedModelInventory(activity: Activity): List<Map<String, Any?>> {
         val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
@@ -121,7 +147,7 @@ internal object LocalAiInferenceBridge {
                     "fileName" to file.name,
                     "sizeBytes" to file.length(),
                     "sha256" to actual,
-                    "trusted" to (loadedPublisherMetadataVerified && trustedModels[file.name]?.let { it.sha256 == actual && it.size == file.length() } == true),
+                    "trusted" to (trustedModels[file.name]?.let { it.sha256 == actual && it.size == file.length() } == true),
                 )
             }?.toList() ?: emptyList()
     }
@@ -129,17 +155,19 @@ internal object LocalAiInferenceBridge {
     /** Restore only a receipt that exactly matches this build's static pin, and rehash the private file before JNI load. */
     private fun restorePersistedModel(activity: Activity): Boolean {
         if (loadedModelName != null && loadedPublisherMetadataVerified) return true
-        val pin = trustedModels.values.firstOrNull() ?: return false
         val receipt = activity.getSharedPreferences(MODEL_RECEIPT_PREFERENCES, Context.MODE_PRIVATE)
-        val receiptMatches = receipt.getString("fileName", null) == trustedModels.entries.firstOrNull { it.value == pin }?.key &&
+        val name = receipt.getString("fileName", null) ?: return false
+        val pin = trustedModels[name] ?: return false
+        val receiptMatches =
             receipt.getString("repository", null) == pin.repository &&
             receipt.getString("author", null) == pin.repository.substringBefore('/') &&
             receipt.getString("revision", null) == pin.revision &&
             receipt.getString("license", null)?.equals(pin.license, ignoreCase = true) == true &&
             receipt.getLong("sizeBytes", -1L) == pin.size &&
-            receipt.getString("sha256", null)?.equals(pin.sha256, ignoreCase = true) == true
+            receipt.getString("sha256", null)?.equals(pin.sha256, ignoreCase = true) == true &&
+            receipt.getString("licenseRepository", null) == pin.licenseRepository &&
+            receipt.getString("licenseRevision", null) == pin.licenseRevision
         if (!receiptMatches) return false
-        val name = trustedModels.entries.firstOrNull { it.value == pin }?.key ?: return false
         val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
         val modelFile = File(modelRoot, name).canonicalFile
         if (modelFile.parentFile != modelRoot || !modelFile.isFile || modelFile.length() != pin.size || modelFile.length() > MAX_MODEL_BYTES) {
@@ -165,10 +193,9 @@ internal object LocalAiInferenceBridge {
     }
 
     private fun deleteInstalledModel(activity: Activity): Boolean {
-        val name = trustedModels.keys.singleOrNull() ?: throw IllegalStateException("No single pinned Local AI model is configured.")
         val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
         if (!modelRoot.exists() && !modelRoot.mkdirs()) throw IllegalStateException("Could not access the private Local AI model directory.")
-        val targets = listOf(File(modelRoot, name), File(modelRoot, "$name.part"))
+        val targets = trustedModels.keys.flatMap { name -> listOf(File(modelRoot, name), File(modelRoot, "$name.part"), File(modelRoot, "$name.segments.json"), File(modelRoot, "$name.segments.json.tmp"), File(modelRoot, "$name.previous")) }
         targets.forEach { file ->
             val canonical = file.canonicalFile
             if (canonical.parentFile != modelRoot) throw SecurityException("Model removal path escaped private storage.")
@@ -199,6 +226,8 @@ internal object LocalAiInferenceBridge {
             .putString("license", pin.license)
             .putLong("sizeBytes", pin.size)
             .putString("sha256", pin.sha256)
+            .putString("licenseRepository", pin.licenseRepository)
+            .putString("licenseRevision", pin.licenseRevision)
             .commit()
 
     private fun loadVerifiedModel(activity: Activity, call: MethodCall): Map<String, Any?> {
@@ -216,7 +245,10 @@ internal object LocalAiInferenceBridge {
         val publisherLicense = call.argument<String>("publisherLicense")
         val publisherSizeBytes = (call.argument<Number>("publisherSizeBytes"))?.toLong()
         val publisherSha256 = call.argument<String>("publisherSha256")?.lowercase()
-        if (publisherRepository != pin.repository || publisherAuthor != pin.repository.substringBefore('/') ||
+        val licenseRepository = call.argument<String>("licenseRepository")
+        val licenseRevision = call.argument<String>("licenseRevision")
+        if (licenseRepository != pin.licenseRepository || licenseRevision != pin.licenseRevision ||
+            publisherRepository != pin.repository || publisherAuthor != pin.repository.substringBefore('/') ||
             publisherRevision != pin.revision || publisherLicense?.lowercase() != pin.license.lowercase() ||
             publisherSizeBytes != pin.size || publisherSha256 != pin.sha256) {
             throw SecurityException("Official publisher metadata verification did not match the native model pin.")

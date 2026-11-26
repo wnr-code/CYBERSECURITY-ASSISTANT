@@ -29,8 +29,8 @@ class LocalAiInstallProgress {
 
 typedef LocalAiProgressCallback = void Function(LocalAiInstallProgress progress);
 
-/// Imports an exact pinned model for tests, and downloads the production Qwen
-/// artifact only after live verification against the official Hub API.
+/// Downloads an explicitly selected app-pinned candidate only after live
+/// verification against the official Hugging Face Hub API.
 class LocalAiModelInstaller {
   LocalAiModelInstaller({
     this.manifest = LocalAiModelManifest.qwenQ4Km,
@@ -107,8 +107,17 @@ class LocalAiModelInstaller {
 
   Future<bool> hasLocalModelData() async => await hasInstalledModelFile() || await hasPartialDownload();
 
-  Future<bool> deleteInstalledModel() async =>
-      await const MethodChannel('org.cybersecurityassistant/local_ai_runtime').invokeMethod<bool>('deleteInstalledModel') ?? false;
+  Future<bool> deleteInstalledModel() async {
+    const channel = MethodChannel('org.cybersecurityassistant/local_ai_runtime');
+    await channel.invokeMethod<bool>('cancelModelDownload');
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (DateTime.now().isBefore(deadline)) {
+      final status = await channel.invokeMapMethod<Object?, Object?>('getModelDownloadStatus');
+      if (!{'downloading', 'verifying'}.contains(status?['state'])) break;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    return await channel.invokeMethod<bool>('deleteInstalledModel') ?? false;
+  }
 
   /// Downloads from Hugging Face after checking the immutable model record,
   /// then hashes the complete private file before native loading.
@@ -120,22 +129,23 @@ class LocalAiModelInstaller {
     var discardPartial = false;
     var phase = LocalAiInstallPhase.checkingPublisher;
     try {
-      final isPinnedQwen = manifest.repository == LocalAiModelManifest.qwenQ4Km.repository &&
-          manifest.revision == LocalAiModelManifest.qwenQ4Km.revision &&
-          manifest.fileName == LocalAiModelManifest.qwenQ4Km.fileName &&
-          manifest.license == LocalAiModelManifest.qwenQ4Km.license &&
-          manifest.fileSizeBytes == LocalAiModelManifest.qwenQ4Km.fileSizeBytes &&
-          manifest.sha256Hex == LocalAiModelManifest.qwenQ4Km.sha256Hex &&
-          manifest.downloadUrl == LocalAiModelManifest.qwenQ4Km.downloadUrl;
-      if (!isPinnedQwen && !_allowUnverifiedManifestForTests) {
-        throw const LocalAiModelInstallException('Only the app-pinned Qwen candidate is enabled for this on-device installation flow.');
+      final isPinnedCandidate = LocalAiModelManifest.candidates.any((candidate) =>
+          candidate.id == manifest.id && candidate.repository == manifest.repository &&
+          candidate.revision == manifest.revision && candidate.fileName == manifest.fileName &&
+          candidate.license == manifest.license && candidate.fileSizeBytes == manifest.fileSizeBytes &&
+          candidate.sha256Hex == manifest.sha256Hex && candidate.downloadUrl == manifest.downloadUrl &&
+          candidate.licenseRepository == manifest.licenseRepository && candidate.licenseRevision == manifest.licenseRevision);
+      if (!isPinnedCandidate && !_allowUnverifiedManifestForTests) {
+        throw const LocalAiModelInstallException('Only candidates present in the app-owned Local AI catalog may be installed.');
       }
       _validateManifestPin();
       final publisherFile = await _artifactSource.fetchPublisherMetadata(manifest);
       if (publisherFile.repository != manifest.repository || publisherFile.author != manifest.repository.split('/').first ||
           publisherFile.revision != manifest.revision || publisherFile.license.toLowerCase() != manifest.license.toLowerCase() ||
           publisherFile.fileName != manifest.fileName || publisherFile.sizeBytes != manifest.fileSizeBytes ||
-          publisherFile.sha256Hex != manifest.sha256Hex) {
+          publisherFile.sha256Hex != manifest.sha256Hex ||
+          publisherFile.licenseRepository != manifest.licenseRepository ||
+          publisherFile.licenseRevision != manifest.licenseRevision) {
         throw const LocalAiModelInstallException('Official publisher metadata did not match every app-pinned model field. Installation was blocked.');
       }
 
@@ -161,6 +171,14 @@ class LocalAiModelInstaller {
         // Keep any pre-existing file until a fresh download has passed both
         // complete-size and complete-digest checks. The verified temp file
         // replaces it atomically below; failed retries preserve prior data.
+      }
+
+      if (!_allowUnverifiedManifestForTests) {
+        return await _downloadUsingForegroundService(
+          publisherFile: publisherFile,
+          finalFile: finalFile,
+          onProgress: onProgress,
+        );
       }
 
       temporaryFile = File('${finalFile.path}.part');
@@ -289,6 +307,95 @@ class LocalAiModelInstaller {
       await _recordLocalFailure(error, phase);
       if (error is LocalAiModelInstallException) rethrow;
       throw const LocalAiModelInstallException('Local AI installation failed safely. Check network/storage and retry; no unverified model was loaded.');
+    }
+  }
+
+  Future<VerifiedLocalAiModel> _downloadUsingForegroundService({
+    required LocalAiPublisherFile publisherFile,
+    required File finalFile,
+    LocalAiProgressCallback? onProgress,
+  }) async {
+    const channel = MethodChannel('org.cybersecurityassistant/local_ai_runtime');
+    Map<Object?, Object?>? status;
+    try {
+      status = await channel.invokeMapMethod<Object?, Object?>('getModelDownloadStatus');
+      var existing = status?['state'] == 'completed' && status?['modelId'] == manifest.id && await finalFile.exists();
+      if (existing) {
+        existing = await finalFile.length() == manifest.fileSizeBytes &&
+            (await sha256.bind(finalFile.openRead()).first).toString() == manifest.sha256Hex;
+      }
+      if (!existing) {
+        final available = await _availableStorageBytes();
+        final part = File('${finalFile.path}.part');
+        final checkpoint = File('${finalFile.path}.segments.json');
+        final hasValidCheckpoint = await part.exists() && await checkpoint.exists() && await part.length() == manifest.fileSizeBytes;
+        final minimumFree = (hasValidCheckpoint ? 0 : manifest.fileSizeBytes) + 64 * 1024 * 1024;
+        if (available == null || available < minimumFree) {
+          throw const LocalAiModelInstallException('Free storage is unknown or insufficient for the selected model plus a safety margin.');
+        }
+        final startedAtMillis = DateTime.now().millisecondsSinceEpoch;
+        await channel.invokeMethod<bool>('startModelDownload', <String, Object?>{
+          'modelId': manifest.id,
+          'repository': manifest.repository,
+          'revision': manifest.revision,
+          'fileName': manifest.fileName,
+          'license': manifest.license,
+          'size': manifest.fileSizeBytes,
+          'sha256': manifest.sha256Hex,
+          'url': manifest.downloadUrl,
+          'licenseRepository': manifest.licenseRepository,
+          'licenseRevision': manifest.licenseRevision,
+          'publisherAuthor': publisherFile.author,
+          'metadataVerified': true,
+        });
+        _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.downloading, totalBytes: manifest.fileSizeBytes));
+        final statusDeadline = DateTime.now().add(const Duration(seconds: 30));
+        var serviceStarted = false;
+        while (true) {
+          await Future<void>.delayed(const Duration(seconds: 1));
+          status = await channel.invokeMapMethod<Object?, Object?>('getModelDownloadStatus');
+          final received = status?['bytesReceived'];
+          final total = status?['totalBytes'];
+          final statusMatchesModel = status?['modelId'] == manifest.id;
+          if (!statusMatchesModel) {
+            if (DateTime.now().isBefore(statusDeadline)) continue;
+            throw const LocalAiModelInstallException('The native foreground service is not working on the selected pinned model.');
+          }
+          if (status?['state'] == 'downloading' || status?['state'] == 'verifying') serviceStarted = true;
+          if (received is int && total is int) {
+            final phase = status?['state'] == 'verifying' ? LocalAiInstallPhase.verifying : LocalAiInstallPhase.downloading;
+            _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: received, totalBytes: total));
+          }
+          if (status?['state'] == 'completed' && await finalFile.exists()) break;
+          final updatedAt = status?['updatedAt'];
+          if ((status?['state'] == 'failed' || status?['state'] == 'cancelled') &&
+              updatedAt is int && updatedAt > startedAtMillis) {
+            final details = status?['error'] is String ? status!['error'] as String : 'Download stopped before complete-file verification.';
+            throw LocalAiModelInstallException(details);
+          }
+          if (!serviceStarted && DateTime.now().isAfter(statusDeadline)) {
+            throw const LocalAiModelInstallException('The foreground download did not report progress or complete within the startup window. It can be retried from the saved checkpoint.');
+          }
+        }
+      }
+
+      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.verifying, bytesReceived: manifest.fileSizeBytes, totalBytes: manifest.fileSizeBytes));
+      if (!await finalFile.exists() || await finalFile.length() != manifest.fileSizeBytes) {
+        throw const LocalAiModelInstallException('The foreground service reported completion without the exact pinned model size.');
+      }
+      final actualSha = (await sha256.bind(finalFile.openRead()).first).toString();
+      if (actualSha != publisherFile.sha256Hex || actualSha != manifest.sha256Hex) {
+        await finalFile.delete();
+        throw const LocalAiModelInstallException('Final foreground-service model SHA-256 did not match both the official publisher metadata and the app pin.');
+      }
+      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.loading, bytesReceived: manifest.fileSizeBytes, totalBytes: manifest.fileSizeBytes));
+      await _loadPinnedModel(publisherFile);
+      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.complete, bytesReceived: manifest.fileSizeBytes, totalBytes: manifest.fileSizeBytes));
+      return VerifiedLocalAiModel(fileName: manifest.fileName, sizeBytes: manifest.fileSizeBytes, sha256Hex: actualSha);
+    } on PlatformException catch (error) {
+      throw LocalAiModelInstallException(error.message ?? 'Native foreground model download is unavailable.');
+    } on MissingPluginException {
+      throw const LocalAiModelInstallException('Native foreground model download service is unavailable.');
     }
   }
 

@@ -14,6 +14,8 @@ class LocalAiPublisherFile {
     required this.fileName,
     required this.sizeBytes,
     required this.sha256Hex,
+    this.licenseRepository = '',
+    this.licenseRevision = '',
   });
 
   final String repository;
@@ -23,6 +25,8 @@ class LocalAiPublisherFile {
   final String fileName;
   final int sizeBytes;
   final String sha256Hex;
+  final String licenseRepository;
+  final String licenseRevision;
 }
 
 class LocalAiDownloadResponse {
@@ -66,6 +70,42 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
     if (uri.scheme != 'https' || uri.host != 'huggingface.co') {
       throw const LocalAiModelInstallException('Publisher metadata URL is not the official HTTPS Hugging Face API.');
     }
+    final repositoryMetadata = await _fetchHubJson(uri);
+    final licenseUri = Uri.parse('$_apiOrigin/api/models/${manifest.licenseRepository}/revision/${manifest.licenseRevision}?full=true');
+    final licenseMetadata = await _fetchHubJson(licenseUri);
+    final expectedOwner = manifest.repository.split('/').first;
+    final officialLicense = licenseMetadata['cardData'];
+    if (licenseMetadata['id'] != manifest.licenseRepository ||
+        licenseMetadata['author'] != expectedOwner ||
+        licenseMetadata['sha'] != manifest.licenseRevision ||
+        officialLicense is! Map<String, dynamic> ||
+        officialLicense['license'] is! String ||
+        (officialLicense['license'] as String).toLowerCase() != manifest.license.toLowerCase()) {
+      throw const LocalAiModelInstallException('The pinned official base-model license record did not match the publisher, revision, or app license pin. Installation was blocked.');
+    }
+
+    final publisherFile = parsePublisherMetadataJson(
+      jsonEncode(repositoryMetadata),
+      manifest,
+      verifiedLicense: officialLicense['license'] as String,
+    );
+    return LocalAiPublisherFile(
+      repository: publisherFile.repository,
+      author: publisherFile.author,
+      revision: publisherFile.revision,
+      license: publisherFile.license,
+      fileName: publisherFile.fileName,
+      sizeBytes: publisherFile.sizeBytes,
+      sha256Hex: publisherFile.sha256Hex,
+      licenseRepository: manifest.licenseRepository,
+      licenseRevision: manifest.licenseRevision,
+    );
+  }
+
+  Future<Map<String, dynamic>> _fetchHubJson(Uri uri) async {
+    if (uri.scheme != 'https' || uri.host != 'huggingface.co' || !uri.path.startsWith('/api/models/')) {
+      throw const LocalAiModelInstallException('Metadata URL is not the official HTTPS Hugging Face API.');
+    }
     final response = await _request(uri, allowCdnRedirects: false);
     try {
       if (response.statusCode != HttpStatus.ok) {
@@ -85,14 +125,17 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
       } catch (_) {
         throw const LocalAiModelInstallException('Could not read official publisher metadata. Check internet and retry.');
       }
-
-      return parsePublisherMetadataJson(utf8.decode(bytes.takeBytes(), allowMalformed: false), manifest);
+      final decoded = jsonDecode(utf8.decode(bytes.takeBytes(), allowMalformed: false));
+      if (decoded is! Map<String, dynamic>) throw const LocalAiModelInstallException('Official metadata had an unexpected structure.');
+      return decoded;
+    } on FormatException {
+      throw const LocalAiModelInstallException('Official publisher metadata was not valid UTF-8 JSON.');
     } finally {
       await response.dispose();
     }
   }
 
-  static LocalAiPublisherFile parsePublisherMetadataJson(String body, LocalAiModelManifest manifest) {
+  static LocalAiPublisherFile parsePublisherMetadataJson(String body, LocalAiModelManifest manifest, {String? verifiedLicense}) {
     final Object? decoded;
     try {
       decoded = jsonDecode(body);
@@ -107,10 +150,14 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
     final author = decoded['author'];
     final revision = decoded['sha'];
     final cardData = decoded['cardData'];
-    final license = cardData is Map<String, dynamic> ? cardData['license'] : null;
+    final repositoryLicense = cardData is Map<String, dynamic> ? cardData['license'] : null;
+    if (repositoryLicense is String && verifiedLicense != null && repositoryLicense.toLowerCase() != verifiedLicense.toLowerCase()) {
+      throw const LocalAiModelInstallException('The GGUF repository and pinned base-model license records conflict. Installation was blocked.');
+    }
+    final license = repositoryLicense is String ? repositoryLicense : verifiedLicense;
     final siblings = decoded['siblings'];
     if (repository != manifest.repository || author != owner || revision != manifest.revision ||
-        license is! String || license.toLowerCase() != manifest.license.toLowerCase()) {
+        license == null || license.toLowerCase() != manifest.license.toLowerCase()) {
       throw const LocalAiModelInstallException('Official publisher, repository, immutable revision, or license does not match the app pin. Installation was blocked.');
     }
     if (siblings is! List) {

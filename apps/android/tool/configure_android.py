@@ -283,14 +283,20 @@ def configure_splash_resources(android_root: Path) -> None:
     ET.ElementTree(v31_styles).write(v31_styles_file, encoding="utf-8", xml_declaration=True)
 
 
-def configure_manifest(manifest_file: Path) -> None:
+def configure_manifest(manifest_file: Path, *, local_ai_native: bool = False) -> None:
     tree = ET.parse(manifest_file)
     manifest = tree.getroot()
     if manifest.tag != "manifest":
         raise RuntimeError(f"Unexpected Android manifest root in {manifest_file}.")
 
     permission_name = _android_attribute("name")
-    permissions = ("android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE")
+    permissions = ["android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"]
+    if local_ai_native:
+        permissions.extend((
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+            "android.permission.POST_NOTIFICATIONS",
+        ))
     for permission_name_value in permissions:
         if not any(node.get(permission_name) == permission_name_value for node in manifest.findall("uses-permission")):
             permission = ET.Element("uses-permission", {permission_name: permission_name_value})
@@ -306,6 +312,17 @@ def configure_manifest(manifest_file: Path) -> None:
     application.set(_android_attribute("allowBackup"), "false")
     application.set(_android_attribute("fullBackupContent"), "@xml/backup_rules")
     application.set(_android_attribute("dataExtractionRules"), "@xml/data_extraction_rules")
+    service_class = ".LocalAiModelDownloadService"
+    service = next((node for node in application.findall("service") if node.get(permission_name) == service_class), None)
+    if local_ai_native:
+        if service is None:
+            service = ET.SubElement(application, "service")
+        service.set(permission_name, service_class)
+        service.set(_android_attribute("exported"), "false")
+        service.set(_android_attribute("stopWithTask"), "false")
+        service.set(_android_attribute("foregroundServiceType"), "dataSync")
+    elif service is not None:
+        application.remove(service)
 
     launcher_activities = []
     for activity in application.findall("activity"):
@@ -673,6 +690,13 @@ def configure_local_ai_native(android_root: Path, project_root: Path) -> None:
         raise RuntimeError(f"Refusing to overwrite unrecognized Local AI bridge: {bridge_target}")
     bridge_target.write_text(bridge_source, encoding="utf-8")
 
+    download_service_template = Path(__file__).resolve().parent / "native" / "LocalAiModelDownloadService.kt"
+    download_service_target = activity.parent / "LocalAiModelDownloadService.kt"
+    download_service_source = download_service_template.read_text(encoding="utf-8").replace("__ANDROID_PACKAGE__", package_name)
+    if download_service_target.exists() and download_service_target.read_text(encoding="utf-8") != download_service_source:
+        raise RuntimeError(f"Refusing to overwrite unrecognized Local AI download service: {download_service_target}")
+    download_service_target.write_text(download_service_source, encoding="utf-8")
+
     upstream_license = source_root / "LICENSE"
     if not upstream_license.is_file():
         raise RuntimeError("Pinned llama.cpp source is missing its upstream MIT license notice.")
@@ -759,7 +783,7 @@ def configure_project(android_root: Path, *, local_ai_native: bool = False) -> N
         raise RuntimeError(f"Android manifest not found: {manifest_file}")
 
     configure_gradle(gradle_files[0])
-    configure_manifest(manifest_file)
+    configure_manifest(manifest_file, local_ai_native=local_ai_native)
     configure_trusted_signer_resource(android_root)
     configure_splash_activity(android_root)
     _write_backup_rules(android_root)

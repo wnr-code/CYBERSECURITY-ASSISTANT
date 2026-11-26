@@ -33,8 +33,8 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
           status['modelLoaded'] == true &&
           status['publisherMetadataVerified'] == true &&
           (!requireSuccessfulInference || (status['inferenceSucceeded'] == true && status['offlineInferenceSucceeded'] == true)) &&
-          status['modelName'] == LocalAiModelManifest.qwenQ4Km.fileName &&
-          status['modelSha256'] == LocalAiModelManifest.qwenQ4Km.sha256Hex &&
+          LocalAiModelManifest.candidates.any((manifest) =>
+              status['modelName'] == manifest.fileName && status['modelSha256'] == manifest.sha256Hex) &&
           status['abi'] == 'arm64-v8a' &&
           status['backend'] == 'cpu' &&
           status['modelName'] is String &&
@@ -50,15 +50,13 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
   }
 
   Future<void> loadVerifiedModel(String fileName, String sha256Hex, LocalAiPublisherFile publisherFile) async {
-    if (fileName != 'qwen2.5-1.5b-instruct-q4_k_m.gguf' ||
-        sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e' ||
-        publisherFile.repository != 'Qwen/Qwen2.5-1.5B-Instruct-GGUF' ||
-        publisherFile.author != 'Qwen' ||
-        publisherFile.revision != '91cad51170dc346986eccefdc2dd33a9da36ead9' ||
-        publisherFile.license.toLowerCase() != 'apache-2.0' ||
-        publisherFile.fileName != fileName ||
-        publisherFile.sizeBytes != 1117320736 ||
-        publisherFile.sha256Hex != sha256Hex) {
+    final manifest = LocalAiModelManifest.candidates.where((candidate) =>
+        candidate.fileName == fileName && candidate.sha256Hex == sha256Hex &&
+        candidate.repository == publisherFile.repository && candidate.revision == publisherFile.revision &&
+        candidate.license == publisherFile.license && candidate.fileSizeBytes == publisherFile.sizeBytes &&
+        candidate.licenseRepository == publisherFile.licenseRepository && candidate.licenseRevision == publisherFile.licenseRevision).firstOrNull;
+    if (manifest == null || publisherFile.author != manifest.repository.split('/').first ||
+        publisherFile.fileName != fileName || publisherFile.sha256Hex != sha256Hex) {
       throw const AiProviderException('Model is not present in the app-pinned trust manifest.');
     }
     try {
@@ -71,6 +69,8 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
         'publisherLicense': publisherFile.license,
         'publisherSizeBytes': publisherFile.sizeBytes,
         'publisherSha256': publisherFile.sha256Hex,
+        'licenseRepository': publisherFile.licenseRepository,
+        'licenseRevision': publisherFile.licenseRevision,
       }).timeout(const Duration(minutes: 5));
     } on PlatformException catch (error) {
       throw AiProviderException(error.message ?? 'Verified local model could not be loaded.');

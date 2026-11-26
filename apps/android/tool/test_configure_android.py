@@ -258,13 +258,24 @@ class ConfigureAndroidTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            configure_manifest(manifest)
-            configure_manifest(manifest)
+            configure_manifest(manifest, local_ai_native=True)
+            configure_manifest(manifest, local_ai_native=True)
             root = ET.parse(manifest).getroot()
             application = root.find("application")
             self.assertIsNotNone(application)
             permissions = {node.get(f"{android_ns}name") for node in root.findall("uses-permission")}
-            self.assertTrue({"android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"}.issubset(permissions))
+            self.assertTrue({
+                "android.permission.INTERNET",
+                "android.permission.ACCESS_NETWORK_STATE",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+                "android.permission.POST_NOTIFICATIONS",
+            }.issubset(permissions))
+            service = application.find("service")
+            self.assertIsNotNone(service)
+            self.assertEqual(service.get(f"{android_ns}name"), ".LocalAiModelDownloadService")
+            self.assertEqual(service.get(f"{android_ns}exported"), "false")
+            self.assertEqual(service.get(f"{android_ns}foregroundServiceType"), "dataSync")
             self.assertEqual(application.get(f"{android_ns}label"), "Cybersecurity Assistant")
             self.assertEqual(application.get(f"{android_ns}icon"), "@mipmap/ic_launcher")
             self.assertEqual(application.get(f"{android_ns}roundIcon"), "@mipmap/ic_launcher")
@@ -390,7 +401,14 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertIn('"qwen2.5-1.5b-instruct-q4_k_m.gguf"', bridge_source)
             self.assertIn("1_117_320_736L", bridge_source)
             self.assertIn("6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e", bridge_source)
-            self.assertIn("91cad51170dc346986eccefdc2dd33a9da36ead9", bridge_source)
+            self.assertIn("dd26da440ef0330c47919d1ecae0966d24022222", bridge_source)
+            generated_service = activity.parent / "LocalAiModelDownloadService.kt"
+            service_source = generated_service.read_text(encoding="utf-8")
+            self.assertIn("Range", service_source)
+            self.assertIn("MessageDigest", service_source)
+            self.assertIn("startForegroundCompat", service_source)
+            self.assertIn("qwen2.5-0.5b-instruct-q4_k_m.gguf", bridge_source)
+            self.assertIn("smollm2-1.7b-instruct-q4_k_m.gguf", bridge_source)
             generated_jni = (app / "src/main/cpp/llama_jni.cpp").read_text(encoding="utf-8")
             self.assertIn('FindClass("org/example/LocalAiInferenceBridge")', generated_jni)
             self.assertIn("LocalAiInferenceBridge.attachChannel(this, flutterEngine)", activity.read_text(encoding="utf-8"))

@@ -80,12 +80,25 @@ void main() {
     const qwen = LocalAiModelManifest.qwenQ4Km;
     expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
     expect(qwen.repository, 'Qwen/Qwen2.5-1.5B-Instruct-GGUF');
-    expect(qwen.revision, '91cad51170dc346986eccefdc2dd33a9da36ead9');
+    expect(qwen.revision, 'dd26da440ef0330c47919d1ecae0966d24022222');
     expect(qwen.fileName, 'qwen2.5-1.5b-instruct-q4_k_m.gguf');
     expect(qwen.license, 'Apache-2.0');
     expect(qwen.fileSizeBytes, 1117320736);
     expect(qwen.sha256Hex, '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e');
     expect(qwen.downloadUrl, contains('/resolve/${qwen.revision}/'));
+  });
+
+  test('three official model candidates have immutable revisions and separately pinned license sources', () {
+    expect(LocalAiModelManifest.candidates, hasLength(3));
+    for (final candidate in LocalAiModelManifest.candidates) {
+      expect(candidate.revision, matches(RegExp(r'^[0-9a-f]{40}$')));
+      expect(candidate.sha256Hex, matches(RegExp(r'^[0-9a-f]{64}$')));
+      expect(candidate.downloadUrl, contains('/resolve/${candidate.revision}/${candidate.fileName}'));
+      expect(candidate.licenseRepository, isNotEmpty);
+      expect(candidate.licenseRevision, matches(RegExp(r'^[0-9a-f]{40}$')));
+      expect(candidate.license, 'Apache-2.0');
+    }
+    expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
   });
 
   test('production file-picker import stays disabled; verified on-device download is the only production path', () async {
@@ -136,6 +149,24 @@ void main() {
       () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(missingLicense), manifest),
       throwsA(isA<LocalAiModelInstallException>()),
       reason: 'License verification must fail closed when the Hub response omits full model-card metadata.',
+    );
+
+    final inheritedLicense = HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(
+      jsonEncode(missingLicense),
+      manifest,
+      verifiedLicense: manifest.license,
+    );
+    expect(inheritedLicense.license, manifest.license);
+
+    final conflictingLicense = Map<String, dynamic>.from(jsonDecode(jsonEncode(valid)) as Map<String, dynamic>);
+    conflictingLicense['cardData']['license'] = 'MIT';
+    expect(
+      () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(
+        jsonEncode(conflictingLicense),
+        manifest,
+        verifiedLicense: manifest.license,
+      ),
+      throwsA(isA<LocalAiModelInstallException>()),
     );
 
     final legacyOid = Map<String, dynamic>.from(jsonDecode(jsonEncode(valid)) as Map<String, dynamic>);

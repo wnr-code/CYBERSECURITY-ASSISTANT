@@ -145,7 +145,7 @@ void main() {
       'runtimeLoaded': true,
       'abi': 'arm64-v8a',
       'pinnedModelRepository': 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
-      'pinnedModelRevision': '91cad51170dc346986eccefdc2dd33a9da36ead9',
+      'pinnedModelRevision': 'dd26da440ef0330c47919d1ecae0966d24022222',
       'pinnedModelLicense': 'Apache-2.0',
       'modelLoaded': false,
       'installedModels': [],
@@ -639,7 +639,7 @@ void main() {
     expect(MarketProviderManager.localAiBuildDocs.toString(), contains('/docs/android.md'));
     expect(MarketProviderManager.localAiLicenseDocs.toString(), endsWith('/LICENSE'));
     expect(MarketProviderManager.localAiSourceArchiveSha256, '05b362e97564f2e449440f13878c43991a13b6029214dbcb0d1b116b20365ec2');
-    expect(MarketProviderManager.localAiModelsDocs.toString(), 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf');
+    expect(MarketProviderManager.localAiModelsDocs.toString(), 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/tree/dd26da440ef0330c47919d1ecae0966d24022222');
   });
 
   test('Local AI remains Not Ready and never invokes cloud or a fake inference', () async {

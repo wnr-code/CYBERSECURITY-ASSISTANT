@@ -12,7 +12,8 @@ class LocalAiModelInstallAction extends StatefulWidget {
 }
 
 class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
-  final _installer = LocalAiModelInstaller();
+  LocalAiModelManifest _selectedModel = LocalAiModelManifest.qwenQ4Km;
+  LocalAiModelInstaller get _installer => LocalAiModelInstaller(manifest: _selectedModel);
   bool _busy = false;
   bool _checkingInstalled = true;
   bool _installed = false;
@@ -150,9 +151,30 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
         null => context.tr('Ready to download the pinned model on this phone.'),
       };
 
+  Future<void> _showGuidance() => showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(dialogContext.tr('Panduan & Informasi')),
+          content: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text(dialogContext.tr('Pilih satu model sesuai ruang penyimpanan dan kemampuan perangkat. Unduhan berjalan di latar depan dengan satu progres keseluruhan; Android menampilkan notifikasi dan menyediakan tindakan pembatalan. Model hanya dapat dimuat setelah revisi dan lisensi sumber resmi, ukuran file, serta SHA-256 seluruh file cocok. Setelah terputus, buka Local AI dan tap Download Model lagi; checkpoint dipakai bila server mendukung byte range, sedangkan server non-range memulai ulang transfer berurutan dengan aman. Pemeriksaan ini membuktikan identitas file, bukan keamanan perilaku model. Inferensi lokal tetap memerlukan pengujian langsung di perangkat.'),
+              const SizedBox(height: 12),
+              SelectableText('https://huggingface.co/${_selectedModel.repository}/tree/${_selectedModel.revision}', style: const TextStyle(fontSize: 12)),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: 'https://huggingface.co/${_selectedModel.repository}/tree/${_selectedModel.revision}'));
+              if (dialogContext.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Official source link copied.'))));
+            }, child: Text(dialogContext.tr('Copy source link'))),
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: Text(dialogContext.tr('Close'))),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
-    const manifest = LocalAiModelManifest.qwenQ4Km;
+    final manifest = _selectedModel;
     final progress = _progress;
     final fraction = progress?.fraction;
     return Card(
@@ -163,7 +185,37 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           const SizedBox(height: 6),
           Text(context.tr('The app first checks the official Hugging Face repository, publisher, immutable revision, license, exact file size, and publisher SHA-256. It then downloads only this model, hashes every byte saved on this phone, and loads it only if all checks match. A matching digest verifies identity, not every possible model risk.'), style: const TextStyle(fontSize: 12, height: 1.45)),
           const SizedBox(height: 8),
+          DropdownButtonFormField<LocalAiModelManifest>(
+            key: const ValueKey('local-ai-model-choice'),
+            value: manifest,
+            decoration: InputDecoration(labelText: context.tr('Model')),
+            items: LocalAiModelManifest.candidates.map((candidate) => DropdownMenuItem(
+              value: candidate,
+              child: Text(candidate.displayName, overflow: TextOverflow.ellipsis),
+            )).toList(),
+            onChanged: _busy ? null : (candidate) {
+              if (candidate == null) return;
+              setState(() {
+                _selectedModel = candidate;
+                _installed = false;
+                _partialDownload = false;
+                _modelLoaded = false;
+                _message = null;
+                _verified = null;
+                _progress = null;
+                _checkingInstalled = true;
+                _userActionStarted = false;
+              });
+              _refreshInstallState();
+            },
+          ),
+          const SizedBox(height: 6),
           SelectableText('${manifest.repository}\n${manifest.fileName}\n${manifest.license} · ${manifest.fileSizeBytes} ${context.tr('bytes')}\n${context.tr('Revision')} ${manifest.revision}\nSHA-256 ${manifest.sha256Hex}', style: const TextStyle(fontSize: 11, height: 1.45)),
+          Align(alignment: Alignment.centerLeft, child: TextButton.icon(
+            onPressed: _showGuidance,
+            icon: const Icon(Icons.info_outline_rounded),
+            label: Text(context.tr('Panduan & Informasi')),
+          )),
           const SizedBox(height: 8),
           Text(_checkingInstalled ? context.tr('Checking for an installed verified model…') : _phaseLabel(context, progress?.phase), style: const TextStyle(fontSize: 12, height: 1.4)),
           if (_installed && _modelLoaded)
@@ -171,7 +223,7 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           if (_installed && !_modelLoaded)
             Text(context.tr('An installed model file is present. Verify its pinned metadata and bytes before it can be loaded.'), style: const TextStyle(fontSize: 12, height: 1.4)),
           if (_partialDownload && !_installed)
-            Text(context.tr('The partial download is kept privately. Resume continues from the last saved byte.'), style: const TextStyle(fontSize: 12, height: 1.4)),
+            Text(context.tr('Partial data stays in private storage. Supported range downloads resume from saved checkpoints; non-range transfers restart safely.'), style: const TextStyle(fontSize: 12, height: 1.4)),
           if (_busy) ...[
             const SizedBox(height: 8),
             LinearProgressIndicator(value: fraction),
@@ -187,12 +239,7 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
             icon: _busy
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                 : Icon(_installed && _modelLoaded ? Icons.verified_outlined : _partialDownload ? Icons.restart_alt_rounded : Icons.download_for_offline_outlined),
-            label: Text(context.tr(
-              _busy ? 'Working…' : _checkingInstalled ? 'Check / continue model setup' :
-              _installed && _modelLoaded ? 'Model already installed and loaded' :
-              _installed ? 'Re-verify and load installed model' :
-              _partialDownload ? 'Resume interrupted download' : 'Download, verify, and load on this phone',
-            )),
+            label: Text(context.tr(_busy ? 'Working…' : 'Download Model')),
           ),
           if (_installed || _partialDownload) ...[
             const SizedBox(height: 4),

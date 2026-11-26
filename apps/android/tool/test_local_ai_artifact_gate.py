@@ -249,21 +249,26 @@ hooks:
         self.assertIn("requireManualReview: providerId == 'local_ai'", manager)
         self.assertIn("report.component.startsWith('local_ai_')", diagnostics)
 
-    def test_qwen_model_pin_matches_flutter_importer_and_native_bridge(self):
+    def test_model_catalog_pins_match_flutter_and_native_bridge(self):
         tool_dir = Path(__file__).resolve().parent
         flutter_pin = (tool_dir.parent / "lib/core/local_ai_model_manifest.dart").read_text(encoding="utf-8")
         flutter_pin += (tool_dir.parent / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
         native_bridge = (tool_dir / "native/LocalAiInferenceBridge.kt").read_text(encoding="utf-8")
         for token in (
-            "91cad51170dc346986eccefdc2dd33a9da36ead9",
+            "dd26da440ef0330c47919d1ecae0966d24022222",
             "qwen2.5-1.5b-instruct-q4_k_m.gguf",
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
             "1_117_320_736",
+            "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+            "smollm2-1.7b-instruct-q4_k_m.gguf",
+            "decd2598bc2c8ed08c19adc3c8fdd461ee19ed5708679d1c54ef54a5a30d4f33",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, flutter_pin)
                 self.assertIn(token, native_bridge)
         self.assertIn("Apache-2.0", flutter_pin)
+        self.assertIn("LocalAiModelDownloadService", native_bridge)
 
     def test_source_apk_audit_accepts_only_static_arm64_jni_payload(self):
         with tempfile.TemporaryDirectory() as directory:
