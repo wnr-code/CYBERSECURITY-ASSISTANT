@@ -383,7 +383,7 @@ jobs:
             echo '- Static native APK/JNI audit: not passed; see build/audit diagnostics.' >> "$GITHUB_STEP_SUMMARY"
           fi
           echo '- JNI library load on a physical ARM64 device: NOT RUN (no compatible device attached to GitHub-hosted runner).' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Verified model load, inference, and airplane-mode inference: NOT RUN; no approved GGUF digest/model is configured.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Verified model load, Chat inference, and airplane-mode inference on a physical phone: NOT RUN; the pinned GGUF is intentionally not bundled in the APK.' >> "$GITHUB_STEP_SUMMARY"
           echo '- Local AI readiness remains NOT READY.' >> "$GITHUB_STEP_SUMMARY"
         timeout-minutes: 2
 
