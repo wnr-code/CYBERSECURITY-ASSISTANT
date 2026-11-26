@@ -62,6 +62,9 @@ void main() {
     supportDirectory = await Directory.systemTemp.createTemp('local-ai-model-installer-test-');
     modelDigest = sha256.convert(utf8.encode(modelBytes)).toString();
     manifest = LocalAiModelManifest(
+      id: 'test-pinned-model',
+      displayName: 'Test pinned model',
+      summary: 'Only for installer unit tests.',
       repository: 'test/pinned-model',
       revision: List.filled(40, 'a').join(),
       fileName: 'test.gguf',

@@ -210,7 +210,7 @@ internal class LocalAiModelDownloadService : Service() {
                         try {
                             val (segment, result) = completion.take().get()
                             successes++
-                            if (result.status == HttpURLConnection.HTTP_TOO_MANY_REQUESTS || result.status == HttpURLConnection.HTTP_UNAVAILABLE) limited = true
+                            if (result.status == HTTP_TOO_MANY_REQUESTS || result.status == HttpURLConnection.HTTP_UNAVAILABLE) limited = true
                             if (identity.get() == null && result.etag != null) identity.compareAndSet(null, result.etag)
                             failures.remove(segment.index)
                         } catch (failure: Throwable) {
@@ -569,6 +569,7 @@ internal class LocalAiModelDownloadService : Service() {
         private const val PROGRESS_UPDATE_INTERVAL_BYTES = 1L * 1024 * 1024
         private const val MIN_RAMP_BYTES_PER_SECOND = 512L * 1024
         private const val MAX_SEGMENT_ATTEMPTS = 5
+        private const val HTTP_TOO_MANY_REQUESTS = 429
         private const val MAX_REDIRECTS = 5
         private const val CONNECT_TIMEOUT_MS = 20_000
         private const val READ_TIMEOUT_MS = 60_000

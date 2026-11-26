@@ -165,7 +165,8 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           actions: [
             TextButton(onPressed: () async {
               await Clipboard.setData(ClipboardData(text: 'https://huggingface.co/${_selectedModel.repository}/tree/${_selectedModel.revision}'));
-              if (dialogContext.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Official source link copied.'))));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(dialogContext.tr('Official source link copied.'))));
             }, child: Text(dialogContext.tr('Copy source link'))),
             TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: Text(dialogContext.tr('Close'))),
           ],
@@ -187,7 +188,7 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           const SizedBox(height: 8),
           DropdownButtonFormField<LocalAiModelManifest>(
             key: const ValueKey('local-ai-model-choice'),
-            value: manifest,
+            initialValue: manifest,
             decoration: InputDecoration(labelText: context.tr('Model')),
             items: LocalAiModelManifest.candidates.map((candidate) => DropdownMenuItem(
               value: candidate,
