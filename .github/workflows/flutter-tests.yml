@@ -421,13 +421,21 @@ jobs:
         timeout-minutes: 10
 
       - name: Publish bounded native build and audit diagnostics
-        if: always() && (steps.native_build.outcome == 'failure' || steps.native_audit.outcome == 'failure') && hashFiles('apps/android/build/local-ai-native-diagnostics.txt') != ''
+        if: always() && (steps.native_build.outcome == 'failure' || steps.native_audit.outcome == 'failure')
         working-directory: apps/android
+        env:
+          BUILD_OUTCOME: ${{ steps.native_build.outcome }}
+          AUDIT_OUTCOME: ${{ steps.native_audit.outcome }}
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path('build/local-ai-native-diagnostics.txt')
-          text = path.read_text(encoding='utf-8', errors='replace')[-6000:]
+          if path.is_file():
+              text = path.read_text(encoding='utf-8', errors='replace')[-6000:]
+          else:
+              text = f'No diagnostic file was produced. Native build outcome={__import__("os").environ["BUILD_OUTCOME"]}; APK audit outcome={__import__("os").environ["AUDIT_OUTCOME"]}. See preceding failed step output.'
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text + '\n', encoding='utf-8')
           for index, start in enumerate(range(0, len(text), 1500), 1):
               chunk = text[start:start + 1500]
               escaped = chunk.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')

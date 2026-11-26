@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from local_ai_artifact_gate import (
@@ -213,36 +214,40 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(apk_report, indent=2, sort_keys=True))
 
     if native_enabled:
-        from prepare_llama_cpp_source import SOURCE_COMMIT
-        source_commit = SOURCE_COMMIT
+        diagnostics_path = app_root / "build" / "local-ai-native-diagnostics.txt"
+        diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+        diagnostics_path.write_text("Stage: source-native APK audit started\n", encoding="utf-8")
         try:
+            from prepare_llama_cpp_source import SOURCE_COMMIT
+
+            source_commit = SOURCE_COMMIT
             cmake_cache_audits = _audit_source_cmake_caches(app_root / "android", source_commit)
             apk_report = audit_source_native_apk(apk)
-        except (GateError, OSError) as error:
-            message = f"Source-built llama.cpp APK audit failed; do not distribute this APK: {error}"
-            _write_native_diagnostics(app_root, "source-native CMake/APK/JNI audit", message)
+            report = {
+                "verification_status": "source_built_cpu_native_apk_audited",
+                "readiness": "not_ready_model_and_device_inference_unverified",
+                "device_runtime_validation": "not_run_no_compatible_physical_arm64_device_attached_to_ci",
+                "apk": str(apk),
+                "apk_sha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
+                "llama_cpp_source_commit": source_commit,
+                "effective_cmake_cache_audits": cmake_cache_audits,
+                "source_native_audit": apk_report,
+                "jni_validation": "static_apk_dex_and_elf_registration_markers_only; not_runtime_loaded",
+            }
+            report_path = app_root / "build" / "local-ai-audit-report.json"
+            report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except Exception as error:
+            trace = _redact_diagnostics(traceback.format_exc())
+            message = f"Source-built llama.cpp APK audit failed; do not distribute this APK: {type(error).__name__}: {error}"
+            _write_native_diagnostics(app_root, "source-native CMake/APK/JNI audit", f"{message}\n\n{trace}")
             print(message, file=sys.stderr)
             if os.environ.get("GITHUB_ACTIONS"):
                 print(f"::error title=Source-native APK audit::{_escape_command_value(message)}")
                 summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
                 if summary_path:
                     with open(summary_path, "a", encoding="utf-8") as summary:
-                        summary.write(f"### Source-native APK audit failed\n\n```text\n{error}\n```\n")
+                        summary.write(f"### Source-native APK audit failed\n\n```text\n{type(error).__name__}: {error}\n```\n")
             return 2
-        report = {
-            "verification_status": "source_built_cpu_native_apk_audited",
-            "readiness": "not_ready_model_and_device_inference_unverified",
-            "device_runtime_validation": "not_run_no_compatible_physical_arm64_device_attached_to_ci",
-            "apk": str(apk),
-            "apk_sha256": hashlib.sha256(apk.read_bytes()).hexdigest(),
-            "llama_cpp_source_commit": source_commit,
-            "effective_cmake_cache_audits": cmake_cache_audits,
-            "source_native_audit": apk_report,
-            "jni_validation": "static_apk_dex_and_elf_registration_markers_only; not_runtime_loaded",
-        }
-        report_path = app_root / "build" / "local-ai-audit-report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2, sort_keys=True))
     return 0
 
