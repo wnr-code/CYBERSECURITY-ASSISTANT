@@ -287,6 +287,7 @@ void _installSecureStorageTestBackend(WidgetTester tester) {
   const channel = MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
   const pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
   const localAiCapabilityChannel = MethodChannel('org.cybersecurityassistant/local_ai_capabilities');
+  const localAiRuntimeChannel = MethodChannel('org.cybersecurityassistant/local_ai_runtime');
   final values = <String, String>{};
   final testSupportDirectory = Directory.systemTemp.createTempSync('csa-widget-support-');
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -297,9 +298,14 @@ void _installSecureStorageTestBackend(WidgetTester tester) {
     return null;
   });
   messenger.setMockMethodCallHandler(localAiCapabilityChannel, (call) async => null);
+  // App startup probes optional on-device inference. Complete that probe as
+  // Not Ready immediately instead of leaving a three-second fake-async timer
+  // behind in every widget test that mounts the production app shell.
+  messenger.setMockMethodCallHandler(localAiRuntimeChannel, (call) async => null);
   addTearDown(() {
     messenger.setMockMethodCallHandler(pathProviderChannel, null);
     messenger.setMockMethodCallHandler(localAiCapabilityChannel, null);
+    messenger.setMockMethodCallHandler(localAiRuntimeChannel, null);
     if (testSupportDirectory.existsSync()) testSupportDirectory.deleteSync(recursive: true);
   });
   messenger.setMockMethodCallHandler(channel, (call) async {
@@ -1337,6 +1343,7 @@ void main() {
     await _pumpAfterTransition(tester);
     final assistantRouteMarker = find.byKey(const ValueKey('assistant-info-button'));
     await _pumpUntilFound(tester, assistantRouteMarker);
+    await _pumpUntilFound(tester, find.text('Kelola provider AI di Market'));
 
     expect(assistantRouteMarker, findsOneWidget,
         reason: 'Opening the assistant module should push its secondary route. Text on screen: ${_renderedText(tester)}');
