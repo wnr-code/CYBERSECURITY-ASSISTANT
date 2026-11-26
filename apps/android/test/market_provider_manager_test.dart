@@ -131,6 +131,49 @@ void main() {
     expect(geminiTransport.getRequests, 0);
   });
 
+  testWidgets('Local AI physical-device diagnostic report is localized in Indonesian', (tester) async {
+    const capabilityChannel = MethodChannel('org.cybersecurityassistant/local_ai_capabilities');
+    const runtimeChannel = MethodChannel('org.cybersecurityassistant/local_ai_runtime');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(capabilityChannel, (call) async => {
+      'supportedAbis': ['arm64-v8a'],
+      'availableRamBytes': 2048,
+      'availableStorageBytes': 4096,
+      'installedModelCount': 0,
+    });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(runtimeChannel, (call) async => {
+      'runtimeLoaded': true,
+      'abi': 'arm64-v8a',
+      'pinnedModelRepository': 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
+      'pinnedModelRevision': 'dd26da440ef0330c47919d1ecae0966d24022222',
+      'pinnedModelLicense': 'Apache-2.0',
+      'modelLoaded': false,
+      'installedModels': [],
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(capabilityChannel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(runtimeChannel, null);
+    });
+
+    await tester.pumpWidget(MaterialApp(
+      locale: const Locale('id'),
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+      home: const Scaffold(body: LocalAiDiagnosticAction(status: ManagedProviderStatus.notReady)),
+    ));
+    await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+    await tester.pumpAndSettle();
+    expect(find.text('Diagnostik Local AI'), findsOneWidget);
+    await tester.tap(find.text('Jalankan diagnostik'));
+    await tester.pumpAndSettle();
+
+    final report = tester.widget<SelectableText>(find.byType(SelectableText).last).data!;
+    expect(report, contains('ABI perangkat: LULUS'));
+    expect(report, contains('Kesiapan: BELUM SIAP'));
+    expect(report, contains('Integritas GGUF terpasang: TERBLOKIR'));
+    expect(report, contains('impor dan pemuatan native tetap dinonaktifkan'));
+    expect(report, isNot(contains('Device ABI:')));
+  });
+
   testWidgets('provider detail screens separate configuration and accurately label unavailable Local AI actions', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(800, 1400);

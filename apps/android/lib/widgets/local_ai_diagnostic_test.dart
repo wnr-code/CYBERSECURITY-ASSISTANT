@@ -43,9 +43,14 @@ class _LocalAiDiagnosticDialogState extends State<_LocalAiDiagnosticDialog> {
   bool _running = false;
   String? _report;
 
+  String _text(String english, String indonesian) =>
+      AppLocalizations.of(context).locale.languageCode == 'id' ? indonesian : english;
+
   Future<void> _run() async {
     setState(() { _running = true; _report = null; });
     final results = <String>[];
+    final pass = _text('PASS', 'LULUS');
+    final blocked = _text('BLOCKED', 'TERBLOKIR');
     Map<Object?, Object?>? capabilities;
     Map<Object?, Object?>? runtime;
     try {
@@ -54,24 +59,24 @@ class _LocalAiDiagnosticDialogState extends State<_LocalAiDiagnosticDialog> {
       capabilities = value;
       final abis = value?['supportedAbis'];
       final arm64 = abis is List && abis.contains('arm64-v8a');
-      results.add('Device ABI: ${arm64 ? 'PASS' : 'BLOCKED'} — ${abis is List ? abis.join(', ') : 'probe unavailable'}${arm64 ? '' : '; install the audited arm64-v8a APK on a compatible ARM64 phone.'}');
+      results.add('${_text('Device ABI', 'ABI perangkat')}: ${arm64 ? pass : blocked} — ${abis is List ? abis.join(', ') : _text('probe unavailable', 'pemeriksaan tidak tersedia')}${arm64 ? '' : _text('; install the audited arm64-v8a APK on a compatible ARM64 phone.', '; pasang APK arm64-v8a yang sudah diaudit pada ponsel ARM64 yang kompatibel.')}');
       final ram = value?['availableRamBytes'];
       final storage = value?['availableStorageBytes'];
       final resourcesAvailable = ram is int && ram > 0 && storage is int && storage > 0;
-      results.add('Resource telemetry: ${resourcesAvailable ? 'PASS' : 'BLOCKED'} — available RAM: ${ram is int ? '$ram bytes' : 'unknown'}; available storage: ${storage is int ? '$storage bytes' : 'unknown'}${resourcesAvailable ? '' : '; Android capability probe did not return positive RAM and storage values. Check device permissions/storage and retry.'}');
+      results.add('${_text('Resource telemetry', 'Telemetri sumber daya')}: ${resourcesAvailable ? pass : blocked} — ${_text('available RAM', 'RAM tersedia')}: ${ram is int ? '$ram ${_text('bytes', 'byte')}' : _text('unknown', 'tidak diketahui')}; ${_text('available storage', 'penyimpanan tersedia')}: ${storage is int ? '$storage ${_text('bytes', 'byte')}' : _text('unknown', 'tidak diketahui')}${resourcesAvailable ? '' : _text('; Android capability probe did not return positive RAM and storage values. Check device permissions/storage and retry.', '; pemeriksaan Android tidak mengembalikan nilai RAM dan penyimpanan yang valid. Periksa izin/penyimpanan perangkat lalu coba lagi.')}');
     } catch (error) {
-      results.add('Device ABI/resources: BLOCKED — Android capability probe failed (${_safeError(error)}); install the audited Android ARM64 APK and retry.');
+      results.add('${_text('Device ABI/resources', 'ABI/sumber daya perangkat')}: $blocked — ${_text('Android capability probe failed', 'pemeriksaan kapabilitas Android gagal')} (${_safeError(error)}); ${_text('install the audited Android ARM64 APK and retry.', 'pasang APK Android ARM64 yang sudah diaudit lalu coba lagi.')}');
     }
     try {
       runtime = await _runtimeChannel.invokeMapMethod<Object?, Object?>('getDiagnosticStatus')
           .timeout(const Duration(seconds: 90));
       final loaded = runtime?['runtimeLoaded'] == true && runtime?['abi'] == 'arm64-v8a';
-      results.add('Native/JNI load: ${loaded ? 'PASS' : 'BLOCKED'} — ${runtime?['abi'] ?? 'runtime status unavailable'}${loaded ? '' : '; install the source-native ARM64 APK; this APK/device did not report a loaded ARM64 JNI runtime.'}');
+      results.add('${_text('Native/JNI load', 'Pemuatan Native/JNI')}: ${loaded ? pass : blocked} — ${runtime?['abi'] ?? _text('runtime status unavailable', 'status runtime tidak tersedia')}${loaded ? '' : _text('; install the source-native ARM64 APK; this APK/device did not report a loaded ARM64 JNI runtime.', '; pasang APK ARM64 dengan native hasil build sumber; APK/perangkat ini belum melaporkan runtime JNI ARM64 yang berhasil dimuat.')}');
     } catch (error) {
-      results.add('Native/JNI load: BLOCKED — ${_safeError(error)}; install the source-native ARM64 APK after its CI audit passes.');
+      results.add('${_text('Native/JNI load', 'Pemuatan Native/JNI')}: $blocked — ${_safeError(error)}; ${_text('install the source-native ARM64 APK after its CI audit passes.', 'pasang APK ARM64 native setelah audit CI lulus.')}');
     }
     if (runtime?['pinnedModelRevision'] is String) {
-      results.add('Configured model pin (not independently verified): ${runtime?['pinnedModelRepository']} @ ${runtime?['pinnedModelRevision']} · ${runtime?['pinnedModelLicense']}. Publisher metadata and actual GGUF bytes have not been independently verified.');
+      results.add('${_text('Configured model pin (not independently verified)', 'Pin model yang dikonfigurasi (belum diverifikasi independen)')}: ${runtime?['pinnedModelRepository']} @ ${runtime?['pinnedModelRevision']} · ${runtime?['pinnedModelLicense']}. ${_text('Publisher metadata and actual GGUF bytes have not been independently verified.', 'Metadata penerbit dan byte GGUF sebenarnya belum diverifikasi secara independen.')}');
     }
     final name = runtime?['modelName'];
     final digest = runtime?['modelSha256'];
@@ -81,27 +86,40 @@ class _LocalAiDiagnosticDialogState extends State<_LocalAiDiagnosticDialog> {
     final installedCount = capabilities?['installedModelCount'];
     final inventory = runtime?['installedModels'];
     final modelInventory = inventory is List ? inventory.whereType<Map>().toList() : <Map>[];
-    final inventoryLines = modelInventory.map((item) => '${item['fileName']}: ${item['sizeBytes']} bytes, SHA-256 ${item['sha256']} (${item['trusted'] == true ? 'trusted' : 'UNTRUSTED'})').join('; ');
+    final inventoryLines = modelInventory.map((item) => '${item['fileName']}: ${item['sizeBytes']} ${_text('bytes', 'byte')}, SHA-256 ${item['sha256']} (${item['trusted'] == true ? _text('trusted', 'tepercaya') : _text('UNTRUSTED', 'TIDAK TEPERCAYA')})').join('; ');
     final trustedFileInstalled = LocalAiModelManifest.qwenArtifactIndependentlyVerified && modelInventory.any((item) =>
         item['fileName'] == modelPin.fileName && item['sizeBytes'] == modelPin.fileSizeBytes &&
         item['sha256'] == modelPin.sha256Hex && item['trusted'] == true);
-    results.add('Installed GGUF integrity: ${trustedFileInstalled ? 'PASS' : 'BLOCKED'} — ${inventoryLines.isNotEmpty ? inventoryLines : '${installedCount is int ? installedCount : 'unknown'} installed model(s); no readable GGUF inventory'}${trustedFileInstalled ? '' : '; publisher metadata and the actual GGUF bytes have not been independently verified, so import and native loading remain disabled.'}');
-    results.add('Model load: ${modelLoaded ? 'PASS' : 'BLOCKED'} — ${modelLoaded ? 'verified model is loaded in the runtime.' : trustedFileInstalled ? 'the verified file is installed but native model load has not completed; use Choose GGUF, verify, and load.' : 'a compatible model with an app-approved publisher digest is not loaded; model loading correctly fails closed.'}');
+    final noInventory = inventoryLines.isNotEmpty
+        ? inventoryLines
+        : '${installedCount is int ? installedCount : _text('unknown', 'tidak diketahui')} ${_text('installed model(s); no readable GGUF inventory', 'model terpasang; inventaris GGUF tidak dapat dibaca')}';
+    results.add('${_text('Installed GGUF integrity', 'Integritas GGUF terpasang')}: ${trustedFileInstalled ? pass : blocked} — $noInventory${trustedFileInstalled ? '' : _text('; publisher metadata and the actual GGUF bytes have not been independently verified, so import and native loading remain disabled.', '; metadata penerbit dan byte GGUF sebenarnya belum diverifikasi secara independen, jadi impor dan pemuatan native tetap dinonaktifkan.')}');
+    final loadDetail = modelLoaded
+        ? _text('verified model is loaded in the runtime.', 'model terverifikasi sudah dimuat ke runtime.')
+        : trustedFileInstalled
+            ? _text('the verified file is installed but native model load has not completed.', 'file terverifikasi sudah terpasang tetapi belum dimuat ke runtime native.')
+            : _text('a compatible model with an app-approved publisher digest is not loaded; model loading correctly fails closed.', 'model kompatibel dengan digest penerbit yang disetujui aplikasi belum dimuat; pemuatan model ditolak secara aman.');
+    results.add('${_text('Model load', 'Pemuatan model')}: ${modelLoaded ? pass : blocked} — $loadDetail');
     if (modelLoaded) {
       try {
         final reply = await _runtimeChannel.invokeMethod<Object?>('complete', {
           'messages': [{'role': 'user', 'content': 'Reply with the word local.'}],
           'maxTokens': 16,
         }).timeout(const Duration(minutes: 2));
-        results.add('Local inference: ${reply is String && reply.trim().isNotEmpty ? 'PASS' : 'BLOCKED'} — ${reply is String && reply.trim().isNotEmpty ? 'non-empty response returned by the local runtime.' : 'runtime returned no response; inspect the native runtime.'}');
+        final succeeded = reply is String && reply.trim().isNotEmpty;
+        results.add('${_text('Local inference', 'Inferensi lokal')}: ${succeeded ? pass : blocked} — ${succeeded ? _text('non-empty response returned by the local runtime.', 'runtime lokal mengembalikan respons.') : _text('runtime returned no response; inspect the native runtime.', 'runtime tidak mengembalikan respons; periksa runtime native.')}');
       } catch (error) {
-        results.add('Local inference: BLOCKED — ${_safeError(error)}; inspect device memory, model compatibility, and native logs. No cloud fallback is attempted.');
+        results.add('${_text('Local inference', 'Inferensi lokal')}: $blocked — ${_safeError(error)}; ${_text('inspect device memory, model compatibility, and native logs. No cloud fallback is attempted.', 'periksa memori perangkat, kompatibilitas model, dan log native. Tidak ada fallback ke cloud.')}');
       }
     } else {
-      results.add('Local inference: BLOCKED — no publisher-verified GGUF model is loaded; approved model provenance and SHA-256 are required.');
+      results.add('${_text('Local inference', 'Inferensi lokal')}: $blocked — ${_text('no publisher-verified GGUF model is loaded; approved model provenance and SHA-256 are required.', 'belum ada model GGUF terverifikasi penerbit yang dimuat; asal model dan SHA-256 harus disetujui.')}');
     }
-    results.add('Offline/no-cloud-fallback: MANUAL — enable airplane mode, verify Wi-Fi and mobile data are off, then repeat a local inference test when a verified model is available. This diagnostic makes no network request and does not prove offline inference.');
-    if (mounted) setState(() { _report = 'Local AI physical-device diagnostic\nUTC: ${DateTime.now().toUtc().toIso8601String()}\nReadiness: NOT READY (diagnostics never change readiness)\n\n${results.join('\n')}'; _running = false; });
+    results.add('${_text('Offline/no-cloud-fallback', 'Offline/tanpa fallback cloud')}: ${_text('MANUAL', 'MANUAL')} — ${_text('enable airplane mode, verify Wi-Fi and mobile data are off, then repeat a local inference test when a verified model is available. This diagnostic makes no network request and does not prove offline inference.', 'aktifkan mode pesawat, pastikan Wi-Fi dan data seluler mati, lalu ulangi uji inferensi lokal setelah model terverifikasi tersedia. Diagnostik ini tidak membuat permintaan jaringan dan belum membuktikan inferensi offline.')}');
+    if (mounted) {
+      final reportTitle = _text('Local AI physical-device diagnostic', 'Diagnostik Local AI di perangkat fisik');
+      final readiness = _text('Readiness: NOT READY (diagnostics never change readiness)', 'Kesiapan: BELUM SIAP (diagnostik tidak mengubah status kesiapan)');
+      setState(() { _report = '$reportTitle\nUTC: ${DateTime.now().toUtc().toIso8601String()}\n$readiness\n\n${results.join('\n')}'; _running = false; });
+    }
   }
 
   String _safeError(Object error) {
