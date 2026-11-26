@@ -234,13 +234,13 @@ void main() {
     final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     expect(diagnostic.onPressed, isNotNull);
     await tester.ensureVisible(find.byKey(const ValueKey('local-ai-diagnostic-test')));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Local AI Diagnostic Test'), findsOneWidget);
     expect(manager.statusFor('local_ai'), ManagedProviderStatus.notReady);
     await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(tester.takeException(), isNull);
   });
 
