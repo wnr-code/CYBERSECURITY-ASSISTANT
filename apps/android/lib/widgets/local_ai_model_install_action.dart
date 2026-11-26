@@ -38,12 +38,14 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
         _message = '${context.tr('Publisher metadata and downloaded GGUF verified and model loaded')}: ${model.fileName} · ${model.sizeBytes} ${context.tr('bytes')} · SHA-256 ${model.sha256Hex}. ${context.tr('You can now test a real prompt in Chat; no cloud fallback is used.')}';
       });
     } on LocalAiModelInstallException catch (error) {
-      if (mounted) setState(() {
-        _busy = false;
-        _verified = false;
-        _progress = const LocalAiInstallProgress(phase: LocalAiInstallPhase.failed);
-        _message = '${context.tr('Download or installation failed safely. Check connection and storage, then retry. No unverified model was loaded.')}\n${context.tr('Technical detail')}: ${error.message}';
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _verified = false;
+          _progress = const LocalAiInstallProgress(phase: LocalAiInstallPhase.failed);
+          _message = '${context.tr('Download or installation failed safely. Check connection and storage, then retry. No unverified model was loaded.')}\n${context.tr('Technical detail')}: ${error.message}';
+        });
+      }
     } catch (_) {
       if (mounted) {
         setState(() {

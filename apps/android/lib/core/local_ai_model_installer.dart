@@ -188,7 +188,7 @@ class LocalAiModelInstaller {
         try { if (await temporaryFile.exists()) await temporaryFile.delete(); } catch (_) {}
       }
       try { await response?.dispose(); } catch (_) {}
-      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.failed));
+      _emit(onProgress, const LocalAiInstallProgress(phase: LocalAiInstallPhase.failed));
       await _recordLocalFailure(error, phase);
       if (error is LocalAiModelInstallException) rethrow;
       throw const LocalAiModelInstallException('Local AI installation failed safely. Check network/storage and retry; no unverified model was loaded.');

@@ -81,7 +81,7 @@ void main() {
     );
     await expectLater(
       installer.chooseVerifyAndLoad(),
-      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('file-picker model import is disabled'))),
+      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('File-picker model import is disabled'))),
     );
     expect(pickerCalled, isFalse);
     expect(await supportDirectory.list().toList(), isEmpty);

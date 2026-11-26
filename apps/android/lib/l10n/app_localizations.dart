@@ -102,7 +102,7 @@ class AppLocalizations {
     'Download, verify, and load on this phone': 'Unduh, verifikasi, dan muat di HP ini',
     'Publisher metadata and downloaded GGUF verified and model loaded': 'Metadata penerbit dan GGUF hasil unduhan terverifikasi, model dimuat',
     'You can now test a real prompt in Chat; no cloud fallback is used.': 'Sekarang Anda dapat menguji prompt langsung di Chat; tidak ada fallback cloud.',
-    'Offline inference test required': 'Perlu tes inferensi offline',
+    'Local AI (offline test needed)': 'Local AI (perlu tes offline)',
     'Local Chat is available, but readiness stays Not Ready until a real response succeeds with airplane mode on and no internet network.': 'Chat Lokal tersedia, tetapi status tetap Belum Siap sampai respons nyata berhasil saat mode pesawat aktif dan tidak ada jaringan internet.',
     'Download or installation failed safely. Check connection and storage, then retry. No unverified model was loaded.': 'Unduhan atau pemasangan gagal dengan aman. Periksa koneksi dan penyimpanan lalu coba lagi. Tidak ada model yang belum diverifikasi yang dimuat.',
     'Error details copied. Paste them into Diagnostics if you want help.': 'Detail kesalahan disalin. Tempelkan ke Diagnostik jika Anda membutuhkan bantuan.',

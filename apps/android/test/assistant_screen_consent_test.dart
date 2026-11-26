@@ -99,7 +99,7 @@ void main() {
       credentialStore: credentials,
       adapters: [
         GeminiAiProviderAdapter(credentialStore: credentials, transport: transport),
-        LocalAiProviderAdapter(AndroidLlamaCppInferenceRuntime(channel: localRuntimeChannel)),
+        const LocalAiProviderAdapter(AndroidLlamaCppInferenceRuntime(channel: localRuntimeChannel)),
       ],
     );
     final marketProviders = MarketProviderManager(
@@ -145,7 +145,7 @@ void main() {
     expect(find.byKey(const ValueKey('assistant-floating-composer')), findsOneWidget);
     await tester.tap(find.byType(DropdownButtonFormField<String>));
     await _pumpAssistantFrame(tester);
-    const localProviderLabel = 'Local AI runtime · Offline inference test required';
+    const localProviderLabel = 'Local AI (perlu tes offline)';
     expect(find.text(localProviderLabel), findsOneWidget,
         reason: 'The verified model must be selectable for a first Chat attempt without being labelled Ready.');
     await tester.tap(find.text(localProviderLabel));

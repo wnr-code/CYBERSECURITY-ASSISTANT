@@ -619,7 +619,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
   String _providerDisplayName(String id, BuildContext context) {
     final name = _providerName(id, context);
     return id == 'local_ai' && _providersNeedingInference.contains(id)
-        ? '$name · ${context.tr('Offline inference test required')}'
+        ? context.tr('Local AI (offline test needed)')
         : name;
   }
 

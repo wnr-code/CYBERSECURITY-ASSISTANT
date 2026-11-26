@@ -170,7 +170,7 @@ void main() {
     expect(report, contains('ABI perangkat: LULUS'));
     expect(report, contains('Kesiapan: BELUM SIAP'));
     expect(report, contains('Integritas GGUF terpasang: TERBLOKIR'));
-    expect(report, contains('impor dan pemuatan native tetap dinonaktifkan'));
+    expect(report, contains('metadata penerbit resmi dan byte GGUF sebenarnya harus lulus pemeriksaan unduhan di dalam aplikasi'));
     expect(report, isNot(contains('Device ABI:')));
   });
 
@@ -223,9 +223,9 @@ void main() {
       expect(find.text(section), findsOneWidget);
     }
     expect(find.text('Not Ready: the runtime, compatible model, and successful local inference are not all available.'), findsOneWidget);
-    expect(find.textContaining('The source-built CPU-only ARM64 APK passed CI static audit.'), findsOneWidget);
+    expect(find.textContaining('The source-built CPU-only ARM64 APK passed static audit, which does not prove this phone can load the model or infer.'), findsOneWidget);
     expect(find.textContaining('Pinned llama.cpp source commit:'), findsOneWidget);
-    expect(find.textContaining('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision'), findsOneWidget);
+    expect(find.textContaining('The Qwen2.5 1.5B Instruct Q4_K_M candidate is pinned to an immutable Qwen repository revision.'), findsOneWidget);
     final installModel = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-install-model')));
     expect(installModel.onPressed, isNotNull, reason: 'The APK must fetch and check official metadata before enabling native load.');
     expect(find.text('Offline Inference Test'), findsOneWidget);
