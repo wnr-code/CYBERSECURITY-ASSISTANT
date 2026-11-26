@@ -188,6 +188,8 @@ void main() {
     expect(find.text('Offline Inference Test'), findsOneWidget);
     final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     expect(diagnostic.onPressed, isNotNull);
+    await tester.ensureVisible(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     await tester.pumpAndSettle();
     expect(find.text('Local AI Diagnostic Test'), findsOneWidget);

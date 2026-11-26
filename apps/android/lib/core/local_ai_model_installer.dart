@@ -63,14 +63,14 @@ class VerifiedLocalAiModel {
 class LocalAiModelInstaller {
   LocalAiModelInstaller({
     this.manifest = LocalAiModelManifest.qwenQ4Km,
+    bool testOnlyAllowUnverifiedManifest = false,
     Future<XFile?> Function()? pickFile,
     Future<Directory> Function()? supportDirectory,
     Future<void> Function(String fileName, String sha256Hex)? loadModel,
-    bool allowUnverifiedManifestForTests = false,
   })  : _pickFile = pickFile ?? _pickGguf,
         _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
         _loadModel = loadModel ?? const AndroidLlamaCppInferenceRuntime().loadVerifiedModel,
-        _allowUnverifiedManifestForTests = allowUnverifiedManifestForTests;
+        _allowUnverifiedManifestForTests = testOnlyAllowUnverifiedManifest;
 
   final LocalAiModelManifest manifest;
   final Future<XFile?> Function() _pickFile;

@@ -61,7 +61,7 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
-      allowUnverifiedManifestForTests: true,
+      testOnlyAllowUnverifiedManifest: true,
       loadModel: (name, digest) async { loadedName = name; loadedDigest = digest; },
     );
 
@@ -83,7 +83,7 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
-      allowUnverifiedManifestForTests: true,
+      testOnlyAllowUnverifiedManifest: true,
       loadModel: (_, __) async { loaderCalled = true; },
     );
 
@@ -102,7 +102,7 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
-      allowUnverifiedManifestForTests: true,
+      testOnlyAllowUnverifiedManifest: true,
       loadModel: (_, __) async {
         fail('Loader must not run for a filename mismatch.');
       },
