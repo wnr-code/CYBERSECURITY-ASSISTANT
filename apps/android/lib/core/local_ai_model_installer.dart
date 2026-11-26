@@ -195,7 +195,7 @@ class LocalAiModelInstaller {
           Object? lastRangeError;
 
           for (var attempt = 0; attempt < maxRangeAttempts && !rangeComplete; attempt++) {
-            byteCount = await temporaryFile.length();
+            byteCount = await temporaryFile.exists() ? await temporaryFile.length() : 0;
             if (byteCount >= manifest.fileSizeBytes) {
               rangeComplete = byteCount == manifest.fileSizeBytes;
               break;

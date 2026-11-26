@@ -206,7 +206,7 @@ void main() {
     );
 
     final result = await installer.downloadVerifyAndLoad();
-    expect(source.requestedRanges, ['${checkpoint}-${bytes.length - 1}']);
+    expect(source.requestedRanges, ['$checkpoint-${bytes.length - 1}']);
     expect(await File('${modelDirectory.path}/${manifest.fileName}').readAsBytes(), bytes);
     expect(result.sha256Hex, modelDigest);
     expect(await partial.exists(), isFalse);
