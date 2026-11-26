@@ -145,7 +145,7 @@ void main() {
     expect(find.byKey(const ValueKey('assistant-floating-composer')), findsOneWidget);
     await tester.tap(find.byType(DropdownButtonFormField<String>));
     await _pumpAssistantFrame(tester);
-    const localProviderLabel = 'Local AI (perlu tes offline)';
+    const localProviderLabel = 'Local AI (offline test needed)';
     expect(find.text(localProviderLabel), findsOneWidget,
         reason: 'The verified model must be selectable for a first Chat attempt without being labelled Ready.');
     await tester.tap(find.text(localProviderLabel));
