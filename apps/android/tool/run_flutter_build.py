@@ -39,6 +39,19 @@ def flutter_build_command(*, native_enabled: bool) -> list[str]:
     return command
 
 
+def _write_native_diagnostics(app_root: Path, stage: str, output: str) -> None:
+    """Persist bounded, redacted source-native failure evidence for CI artifacts."""
+    if os.environ.get("LOCAL_AI_NATIVE_BUILD", "").strip() != "1":
+        return
+    output = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1[redacted]", output)
+    output = re.sub(r"(?i)(token|api[_-]?key|password|secret)(\s*[:=]\s*)[^\s,;]+", r"\1\2[redacted]", output)
+    output = re.sub(r"https?://\S+", "[url]", output)
+    output = output[-100_000:]
+    path = app_root / "build" / "local-ai-native-diagnostics.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"Stage: {stage}\n\n{output}\n", encoding="utf-8")
+
+
 def failure_annotations(exit_code: int, output: str) -> list[str]:
     prefix = f"flutter build apk --debug failed (exit {exit_code}).\n\n"
     output_budget = MAX_FAILURE_CHARS - len(prefix)
@@ -93,6 +106,7 @@ def main() -> int:
         runtime_included = preflight_runtime_build(app_root / "pubspec.yaml")
     except GateError as error:
         message = f"Local AI runtime build gate blocked: {error}"
+        _write_native_diagnostics(app_root, setup_stage, message)
         print(message, file=sys.stderr)
         if os.environ.get("GITHUB_ACTIONS"):
             escaped = _escape_command_value(message)
@@ -100,6 +114,7 @@ def main() -> int:
         return 2
     except Exception as error:
         message = f"Android build setup failed during {setup_stage}: {type(error).__name__}: {error}"
+        _write_native_diagnostics(app_root, setup_stage, message)
         print(message, file=sys.stderr)
         if os.environ.get("GITHUB_ACTIONS"):
             escaped = _escape_command_value(message)
@@ -127,6 +142,8 @@ def main() -> int:
         print(f"Transient dependency repository HTTP error; retrying Flutter build in {delay} seconds.")
         time.sleep(delay)
     print(output, end="" if output.endswith("\n") else "\n")
+    if result.returncode:
+        _write_native_diagnostics(app_root, "Flutter/CMake/NDK native build", output)
     if result.returncode and os.environ.get("GITHUB_ACTIONS"):
         for index, message in enumerate(failure_annotations(result.returncode, output), start=1):
             escaped = _escape_command_value(f"Build failure details {index}: {message}")
@@ -148,6 +165,7 @@ def main() -> int:
             apk_report = audit_source_native_apk(apk)
         except (GateError, OSError) as error:
             message = f"Source-built llama.cpp APK audit failed; do not distribute this APK: {error}"
+            _write_native_diagnostics(app_root, "source-native CMake/APK audit", message)
             print(message, file=sys.stderr)
             if os.environ.get("GITHUB_ACTIONS"):
                 escaped = _escape_command_value(message)

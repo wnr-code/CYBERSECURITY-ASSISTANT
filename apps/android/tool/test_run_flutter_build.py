@@ -2,7 +2,10 @@ import unittest
 from unittest.mock import patch
 
 from local_ai_artifact_gate import GateError
-from run_flutter_build import failure_annotations, flutter_build_command, main
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from run_flutter_build import _write_native_diagnostics, failure_annotations, flutter_build_command, main
 
 
 class FlutterBuildOutputTests(unittest.TestCase):
@@ -14,6 +17,19 @@ class FlutterBuildOutputTests(unittest.TestCase):
 
     def test_regular_build_keeps_flutter_default_platforms(self):
         self.assertEqual(flutter_build_command(native_enabled=False), ["flutter", "build", "apk", "--debug"])
+
+    @patch.dict("os.environ", {"LOCAL_AI_NATIVE_BUILD": "1"})
+    def test_native_failure_diagnostics_are_bounded_and_redacted(self):
+        with TemporaryDirectory() as directory:
+            _write_native_diagnostics(
+                Path(directory), "CMake", "Authorization: Bearer top.secret\napi_key=hidden\nhttps://private.invalid/path\n"
+            )
+            diagnostic = (Path(directory) / "build/local-ai-native-diagnostics.txt").read_text()
+            self.assertIn("Stage: CMake", diagnostic)
+            self.assertIn("Bearer [redacted]", diagnostic)
+            self.assertIn("api_key=[redacted]", diagnostic)
+            self.assertNotIn("top.secret", diagnostic)
+            self.assertNotIn("private.invalid", diagnostic)
 
     def test_failure_output_is_split_into_bounded_annotations(self):
         messages = failure_annotations(1, "x" * 5000)
