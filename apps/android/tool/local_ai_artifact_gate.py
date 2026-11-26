@@ -22,6 +22,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from process_utils import run_bounded
+
 MANIFEST_PATH = Path(__file__).resolve().parents[3] / "docs" / "local-ai-artifact-manifest.json"
 RUNTIME_DEPENDENCIES = {"local_inference", "local_inference_flutter", "llamadart"}
 RUNTIME_PREFIXES = ("libggml", "libllama", "libllamadart", "libmtmd")
@@ -222,7 +224,7 @@ def _elf_header(path: Path) -> dict[str, Any]:
 
 def _readelf_needed(path: Path, readelf: str) -> list[str]:
     try:
-        result = subprocess.run([readelf, "-d", str(path)], check=False, capture_output=True, text=True, timeout=15)
+        result = run_bounded([readelf, "-d", str(path)], check=False, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired as exc:
         raise GateError(f"readelf timed out for {path.name}") from exc
     if result.returncode != 0:
@@ -455,7 +457,7 @@ def audit_source_build_config(cache_path: Path, expected_commit: str) -> dict[st
 
 def _readelf_symbols(path: Path, readelf: str) -> set[str]:
     try:
-        result = subprocess.run([readelf, "-Ws", str(path)], check=False, capture_output=True, text=True, timeout=15)
+        result = run_bounded([readelf, "-Ws", str(path)], check=False, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired as exc:
         raise GateError(f"readelf symbol inspection timed out for {path.name}") from exc
     if result.returncode != 0:

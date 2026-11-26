@@ -7,6 +7,8 @@ import os
 import re
 import subprocess
 import sys
+
+from process_utils import run_bounded
 from dataclasses import dataclass
 
 DIAGNOSTIC = re.compile(
@@ -54,12 +56,27 @@ def _emit_github_annotations(diagnostics: list[Diagnostic]) -> None:
 
 
 def main() -> int:
-    result = subprocess.run(
-        ["flutter", "analyze"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    timeout_seconds = int(os.environ.get("FLUTTER_ANALYZE_TIMEOUT_SECONDS", "300"))
+    try:
+        result = run_bounded(
+            ["flutter", "analyze"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        partial = error.output or b""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        message = f"Flutter analyze timed out after {timeout_seconds}s; its process group was terminated.\\n{partial[-4000:]}"
+        escaped = _escape_command_value(message)
+        print(f"::error title=Flutter analyzer timeout::{escaped}" if os.environ.get("GITHUB_ACTIONS") else message, file=sys.stderr)
+        return 124
+    except OSError as error:
+        message = f"Could not start Flutter analyzer: {error}"
+        print(f"::error title=Flutter analyzer::{message}" if os.environ.get("GITHUB_ACTIONS") else message, file=sys.stderr)
+        return 127
     output = result.stdout + result.stderr
     print(output, end="" if output.endswith("\n") else "\n")
     diagnostics = parse_diagnostics(output)

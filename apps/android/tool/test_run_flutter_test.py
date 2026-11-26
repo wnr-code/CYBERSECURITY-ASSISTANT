@@ -111,7 +111,7 @@ class FlutterTestOutputTests(unittest.TestCase):
             console_out = io.StringIO()
             console_err = io.StringIO()
             with patch.dict(os.environ, {'FLUTTER_TEST_EVIDENCE_DIR': str(evidence)}), \
-                    patch('run_flutter_test.subprocess.run', return_value=completed), \
+                    patch('run_flutter_test.run_bounded', return_value=completed), \
                     redirect_stdout(console_out), redirect_stderr(console_err):
                 exit_code = main()
 
@@ -152,7 +152,7 @@ class FlutterTestOutputTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with patch.dict(os.environ, {'FLUTTER_TEST_EVIDENCE_DIR': str(evidence)}), \
-                    patch('run_flutter_test.subprocess.run', return_value=completed) as run_flutter, \
+                    patch('run_flutter_test.run_bounded', return_value=completed) as run_flutter, \
                     redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main()
 
@@ -187,7 +187,7 @@ class FlutterTestOutputTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with patch.dict(os.environ, {'FLUTTER_TEST_EVIDENCE_DIR': str(evidence)}), patch(
-                'run_flutter_test.subprocess.run', side_effect=timeout
+                'run_flutter_test.run_bounded', side_effect=timeout
             ), redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main()
 
@@ -218,7 +218,7 @@ class FlutterTestOutputTests(unittest.TestCase):
             stdout = io.StringIO()
             stderr = io.StringIO()
             with patch.dict(os.environ, {'FLUTTER_TEST_EVIDENCE_DIR': str(evidence)}), \
-                    patch('run_flutter_test.subprocess.run', return_value=completed), \
+                    patch('run_flutter_test.run_bounded', return_value=completed), \
                     redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = main()
 

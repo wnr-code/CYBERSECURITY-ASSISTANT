@@ -1,9 +1,24 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from capture_android_cold_start import _startup_markers
+from capture_android_cold_start import _startup_markers, main
 
 
 class ColdStartMarkerTests(unittest.TestCase):
+    def test_failure_always_writes_a_diagnostic_file(self):
+        with TemporaryDirectory() as temporary:
+            output_dir = Path(temporary) / "api-30"
+            result = main([
+                "--apk", str(Path(temporary) / "missing.apk"),
+                "--output-dir", str(output_dir),
+                "--api-level", "30",
+            ])
+            self.assertEqual(result, 1)
+            diagnostics = (output_dir / "failure-diagnostics.txt").read_text()
+            self.assertIn("APK not found", diagnostics)
+            self.assertIn("API 30", diagnostics)
+
     def test_extracts_dart_stage_times_and_native_activity_markers(self):
         lines = "\n".join(
             [

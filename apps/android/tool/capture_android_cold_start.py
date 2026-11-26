@@ -12,16 +12,44 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+from process_utils import run_bounded
+
 PACKAGE = "org.cybersecurityassistant.cybersecurity_assistant"
 CAPTURE_TIMES_MS = (80, 180, 350, 650, 1_000, 1_800, 3_500, 6_500, 8_500)
+MAX_CAPTURE_BYTES = 32 * 1024 * 1024
+MAX_LOGCAT_BYTES = 2 * 1024 * 1024
+_DEADLINE = 0.0
 
 
-def adb(arguments: Sequence[str], *, timeout: int = 45) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(["adb", *arguments], check=True, capture_output=True, timeout=timeout)
+def _remaining_timeout(timeout: float) -> float:
+    remaining = _DEADLINE - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Cold-start test exceeded its overall time limit.")
+    return min(timeout, remaining)
 
 
-def output(arguments: Sequence[str]) -> str:
-    return adb(arguments).stdout.decode("utf-8", errors="replace").strip()
+def adb(arguments: Sequence[str], *, timeout: int = 45) -> subprocess.CompletedProcess:
+    command = ["adb", *arguments]
+    effective_timeout = _remaining_timeout(timeout)
+    try:
+        return run_bounded(command, check=True, capture_output=True, timeout=effective_timeout)
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError(
+            f"ADB command timed out after {effective_timeout:.1f}s: {' '.join(command)}"
+        ) from error
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else str(error.stderr or "")
+        raise RuntimeError(f"ADB command failed ({error.returncode}): {' '.join(command)}; {detail[-1500:]}") from error
+
+
+def output(arguments: Sequence[str], *, timeout: int = 45) -> str:
+    return adb(arguments, timeout=timeout).stdout.decode("utf-8", errors="replace").strip()
+
+
+def _redact(text: str) -> str:
+    text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)(token|api[_-]?key|password|secret)(\s*[:=]\s*)[^\s,;]+", r"\1\2[redacted]", text)
+    return re.sub(r"https?://\S+", "[url]", text)
 
 
 def _startup_markers(logcat: str) -> list[dict[str, object]]:
@@ -36,12 +64,14 @@ def _startup_markers(logcat: str) -> list[dict[str, object]]:
     return markers
 
 
-def run(apk: Path, output_dir: Path, api_level: int) -> dict[str, object]:
-    _ = output(["get-state"])
+def run(apk: Path, output_dir: Path, api_level: int, *, overall_timeout: int = 720) -> dict[str, object]:
+    global _DEADLINE
     output_dir.mkdir(parents=True, exist_ok=True)
+    _DEADLINE = time.monotonic() + overall_timeout
     apk = apk.resolve()
     if not apk.is_file():
         raise RuntimeError(f"APK not found: {apk}")
+    _ = output(["get-state"], timeout=30)
 
     install = adb(["install", "-r", str(apk)], timeout=180)
     clear = adb(["shell", "pm", "clear", PACKAGE], timeout=60)
@@ -59,19 +89,24 @@ def run(apk: Path, output_dir: Path, api_level: int) -> dict[str, object]:
         raise RuntimeError(f"Expected emulator API {api_level}, got {device['api_level']}")
 
     launch_started = time.monotonic()
-    launcher = subprocess.Popen(
-        ["adb", "shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
+    launcher = adb(
+        ["shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"],
+        timeout=20,
     )
+    launcher_output = launcher.stdout.decode("utf-8", errors="replace")
+    if launcher.returncode != 0:
+        raise RuntimeError(f"Android launcher command failed: {launcher_output[-1500:]}")
+
     screenshots: list[dict[str, object]] = []
     for requested_ms in CAPTURE_TIMES_MS:
-        remaining = requested_ms / 1000 - (time.monotonic() - launch_started)
-        if remaining > 0:
-            time.sleep(remaining)
+        remaining = _remaining_timeout(overall_timeout)
+        delay = requested_ms / 1000 - (time.monotonic() - launch_started)
+        if delay > 0:
+            time.sleep(min(delay, remaining))
         capture_started = time.monotonic()
         frame = adb(["exec-out", "screencap", "-p"], timeout=40).stdout
+        if len(frame) > MAX_CAPTURE_BYTES:
+            raise RuntimeError(f"Screenshot exceeded the {MAX_CAPTURE_BYTES}-byte safety limit.")
         actual_ms = int((time.monotonic() - launch_started) * 1000)
         filename = f"cold-start-{actual_ms:05d}ms.png"
         (output_dir / filename).write_bytes(frame)
@@ -79,16 +114,10 @@ def run(apk: Path, output_dir: Path, api_level: int) -> dict[str, object]:
                             "capture_duration_ms": int((time.monotonic() - capture_started) * 1000),
                             "png_bytes": len(frame)})
 
-    try:
-        launcher_output, _ = launcher.communicate(timeout=15)
-    except subprocess.TimeoutExpired:
-        launcher.kill()
-        launcher_output, _ = launcher.communicate()
-        raise RuntimeError("Launcher tap command did not return")
-    if launcher.returncode != 0:
-        raise RuntimeError(f"Android launcher command failed: {launcher_output}")
-
-    logcat = output(["logcat", "-d", "-v", "epoch"])
+    logcat = output(["logcat", "-d", "-v", "epoch"], timeout=60)
+    logcat = _redact(logcat)
+    if len(logcat.encode("utf-8")) > MAX_LOGCAT_BYTES:
+        logcat = "[logcat truncated to the last 2 MiB]\n" + logcat[-MAX_LOGCAT_BYTES:]
     (output_dir / "cold-start-logcat.txt").write_text(logcat + "\n", encoding="utf-8")
     markers = _startup_markers(logcat)
     events = [str(marker["event"]) for marker in markers]
@@ -103,7 +132,7 @@ def run(apk: Path, output_dir: Path, api_level: int) -> dict[str, object]:
     report: dict[str, object] = {
         "package": PACKAGE,
         "device": device,
-        "cold_start": True,
+        "cold_start": not missing,
         "launch_method": "force-stop then monkey MAIN/LAUNCHER tap",
         "apk": apk.name,
         "install_output": install.stdout.decode("utf-8", errors="replace").strip(),
@@ -120,16 +149,20 @@ def run(apk: Path, output_dir: Path, api_level: int) -> dict[str, object]:
     return report
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apk", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--api-level", type=int, required=True)
-    args = parser.parse_args()
+    parser.add_argument("--overall-timeout-seconds", type=int, default=720)
+    args = parser.parse_args(argv)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     try:
-        run(args.apk, args.output_dir, args.api_level)
-    except (OSError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        print(f"Android cold-start test failed: {error}", file=sys.stderr)
+        run(args.apk, args.output_dir, args.api_level, overall_timeout=args.overall_timeout_seconds)
+    except (OSError, RuntimeError, TimeoutError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        detail = _redact(f"Android cold-start test failed for API {args.api_level}: {type(error).__name__}: {error}")
+        (args.output_dir / "failure-diagnostics.txt").write_text(detail + "\n", encoding="utf-8")
+        print(detail, file=sys.stderr)
         return 1
     return 0
 

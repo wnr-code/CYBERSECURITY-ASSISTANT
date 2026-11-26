@@ -9,6 +9,8 @@ import os
 import re
 import subprocess
 import sys
+
+from process_utils import run_bounded
 import tempfile
 import zlib
 from pathlib import Path
@@ -127,7 +129,7 @@ def main() -> int:
     try:
         test_timeout = os.environ.get("FLUTTER_TEST_TIMEOUT", "60s")
         process_timeout_seconds = int(os.environ.get("FLUTTER_TEST_PROCESS_TIMEOUT_SECONDS", "180"))
-        result = subprocess.run(
+        result = run_bounded(
             ["flutter", "test", "--reporter=expanded", f"--timeout={test_timeout}"],
             check=False,
             capture_output=True,

@@ -119,7 +119,7 @@ hooks:
             manifest_path = root / "manifest.json"
             _write_manifest(manifest_path, manifest)
             readelf_result = SimpleNamespace(returncode=0, stdout="Dynamic section:\n", stderr="")
-            with patch("local_ai_artifact_gate.subprocess.run", return_value=readelf_result):
+            with patch("local_ai_artifact_gate.run_bounded", return_value=readelf_result):
                 report = audit_runtime_archive(archive_path, manifest_path, readelf="readelf")
             self.assertEqual(report["archive"]["expected_sha256"], archive_sha)
             self.assertEqual(report["archive"]["actual_sha256"], archive_sha)

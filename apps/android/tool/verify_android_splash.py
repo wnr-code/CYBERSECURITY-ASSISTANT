@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
+
+from process_utils import run_bounded
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -211,8 +213,8 @@ def verify_apk(apk: Path, android_root: Path) -> None:
         _require("resources.arsc" in names, "APK has no compiled Android resource table")
 
     aapt = _find_aapt()
-    manifest_result = subprocess.run([aapt, "dump", "xmltree", str(apk), "AndroidManifest.xml"], check=True, capture_output=True, text=True)
-    resources_result = subprocess.run([aapt, "dump", "--values", "resources", str(apk)], check=True, capture_output=True, text=True)
+    manifest_result = run_bounded([aapt, "dump", "xmltree", str(apk), "AndroidManifest.xml"], check=True, capture_output=True, text=True, timeout=30)
+    resources_result = run_bounded([aapt, "dump", "--values", "resources", str(apk)], check=True, capture_output=True, text=True, timeout=30)
     manifest_dump = manifest_result.stdout
     resources_dump = resources_result.stdout
     _require("android.intent.action.MAIN" in manifest_dump and "android.intent.category.LAUNCHER" in manifest_dump,
@@ -229,7 +231,7 @@ def verify_apk(apk: Path, android_root: Path) -> None:
         _require(marker in resources_dump, f"Compiled APK is missing required Android resource: {marker}")
 
     apksigner = _find_apksigner()
-    signature = subprocess.run([apksigner, "verify", "--verbose", "--print-certs", str(apk)], check=True, capture_output=True, text=True)
+    signature = run_bounded([apksigner, "verify", "--verbose", "--print-certs", str(apk)], check=True, capture_output=True, text=True, timeout=30)
     signature_output = signature.stdout + signature.stderr
     signer_result = _validate_apk_signers(signature_output, _trusted_signer_pins(android_root))
 
@@ -249,7 +251,7 @@ def main() -> int:
         verify_sources(arguments.android_root)
         if arguments.apk:
             verify_apk(arguments.apk, arguments.android_root)
-    except (OSError, RuntimeError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
+    except (OSError, RuntimeError, ET.ParseError, zipfile.BadZipFile, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         message = f"Android verification failed: {error}"
         print(message, file=sys.stderr)
         if os.environ.get("GITHUB_ACTIONS"):
