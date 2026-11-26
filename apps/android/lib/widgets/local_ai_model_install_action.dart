@@ -18,6 +18,7 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
   bool _installed = false;
   bool _partialDownload = false;
   bool _modelLoaded = false;
+  bool _userActionStarted = false;
   String? _message;
   bool? _verified;
   LocalAiInstallProgress? _progress;
@@ -34,7 +35,7 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
       final restored = await _installer.restoreVerifiedInstalledModel();
       final installed = await _installer.hasInstalledModelFile();
       final partial = await _installer.hasPartialDownload();
-      if (!mounted) return;
+      if (!mounted || _userActionStarted) return;
       setState(() {
         _checkingInstalled = false;
         _installed = installed;
@@ -59,7 +60,8 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
   }
 
   Future<void> _downloadVerifyAndLoad() async {
-    setState(() { _busy = true; _message = null; _verified = null; _progress = null; });
+    _userActionStarted = true;
+    setState(() { _busy = true; _checkingInstalled = false; _message = null; _verified = null; _progress = null; });
     try {
       final restored = await _installer.restoreVerifiedInstalledModel();
       final model = restored ?? await _installer.downloadVerifyAndLoad(onProgress: (progress) {
@@ -119,7 +121,8 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
       ),
     );
     if (remove != true || !mounted) return;
-    setState(() { _busy = true; _message = null; });
+    _userActionStarted = true;
+    setState(() { _busy = true; _checkingInstalled = false; _message = null; });
     try {
       final removed = await _installer.deleteInstalledModel();
       if (!mounted) return;
@@ -180,12 +183,12 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           const SizedBox(height: 10),
           OutlinedButton.icon(
             key: const ValueKey('local-ai-install-model'),
-            onPressed: _busy || _checkingInstalled || (_installed && _modelLoaded && _verified == true) ? null : _downloadVerifyAndLoad,
-            icon: _busy || _checkingInstalled
+            onPressed: _busy || (_installed && _modelLoaded && _verified == true) ? null : _downloadVerifyAndLoad,
+            icon: _busy
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                 : Icon(_installed && _modelLoaded ? Icons.verified_outlined : _partialDownload ? Icons.restart_alt_rounded : Icons.download_for_offline_outlined),
             label: Text(context.tr(
-              _busy ? 'Working…' : _checkingInstalled ? 'Checking installed model…' :
+              _busy ? 'Working…' : _checkingInstalled ? 'Check / continue model setup' :
               _installed && _modelLoaded ? 'Model already installed and loaded' :
               _installed ? 'Re-verify and load installed model' :
               _partialDownload ? 'Resume interrupted download' : 'Download, verify, and load on this phone',

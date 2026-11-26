@@ -100,6 +100,7 @@ class AppLocalizations {
     'Ready to download the pinned model on this phone.': 'Siap mengunduh model yang dipatok ke HP ini.',
     'Working…': 'Sedang diproses…',
     'Checking for an installed verified model…': 'Memeriksa model terverifikasi yang sudah terpasang…',
+    'Check / continue model setup': 'Periksa / lanjutkan penyiapan model',
     'Checking installed model…': 'Memeriksa model terpasang…',
     'A previously verified model was rechecked and restored from this phone.': 'Model yang sebelumnya terverifikasi diperiksa ulang dan dipulihkan dari HP ini.',
     'An installed model file was found. Re-verify its official metadata and bytes to load it; the file will not be downloaded again if it matches.': 'Berkas model ditemukan. Verifikasi ulang metadata resmi dan byte-nya untuk memuat model; berkas tidak akan diunduh lagi jika cocok.',
