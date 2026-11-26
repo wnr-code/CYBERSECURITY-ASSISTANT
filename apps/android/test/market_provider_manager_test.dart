@@ -154,8 +154,8 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(runtimeChannel, null);
     });
 
-    await tester.pumpWidget(MaterialApp(
-      locale: const Locale('id'),
+    await tester.pumpWidget(const MaterialApp(
+      locale: Locale('id'),
       supportedLocales: AppLocalizations.supportedLocales,
       localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
       home: const Scaffold(body: LocalAiDiagnosticAction(status: ManagedProviderStatus.notReady)),
