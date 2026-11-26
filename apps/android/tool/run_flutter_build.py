@@ -78,21 +78,36 @@ def _audit_source_cmake_caches(android_root: Path, expected_commit: str) -> list
 def main() -> int:
     app_root = Path(__file__).resolve().parents[1]
     native_enabled = os.environ.get("LOCAL_AI_NATIVE_BUILD", "").strip() == "1"
+    setup_stage = "runtime dependency preflight"
     try:
         if native_enabled:
             from configure_android import configure_project
             from prepare_llama_cpp_source import SOURCE_COMMIT, prepare_source
 
             source_commit = SOURCE_COMMIT
+            setup_stage = "fetch and verify pinned llama.cpp source"
             prepare_source(app_root)
+            setup_stage = "configure Android/JNI native target"
             configure_project(app_root / "android", local_ai_native=True)
+        setup_stage = "runtime dependency preflight"
         runtime_included = preflight_runtime_build(app_root / "pubspec.yaml")
-    except (GateError, RuntimeError, OSError) as error:
+    except GateError as error:
         message = f"Local AI runtime build gate blocked: {error}"
         print(message, file=sys.stderr)
         if os.environ.get("GITHUB_ACTIONS"):
             escaped = _escape_command_value(message)
             print(f"::error title=Local AI artifact gate::{escaped}")
+        return 2
+    except Exception as error:
+        message = f"Android build setup failed during {setup_stage}: {type(error).__name__}: {error}"
+        print(message, file=sys.stderr)
+        if os.environ.get("GITHUB_ACTIONS"):
+            escaped = _escape_command_value(message)
+            print(f"::error title=Android build setup::{escaped}")
+            summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary_path:
+                with open(summary_path, "a", encoding="utf-8") as summary:
+                    summary.write(f"### Android build setup failed during {setup_stage}\n\n```text\n{type(error).__name__}: {error}\n```\n")
         return 2
 
     build_command = flutter_build_command(native_enabled=native_enabled)

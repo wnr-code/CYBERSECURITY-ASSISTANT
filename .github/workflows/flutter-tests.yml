@@ -173,6 +173,7 @@ jobs:
           retention-days: 14
 
       - name: Build and audit source-native CPU-only ARM64 APK
+        id: source_native_build
         if: always() && github.event_name == 'workflow_dispatch' && steps.flutter_analyze.outcome == 'success'
         working-directory: apps/android
         env:
@@ -180,7 +181,7 @@ jobs:
         run: python3 tool/run_flutter_build.py
 
       - name: Summarize source-native audit result
-        if: always() && github.event_name == 'workflow_dispatch' && hashFiles('apps/android/build/local-ai-audit-report.json') != ''
+        if: always() && github.event_name == 'workflow_dispatch' && steps.source_native_build.outcome == 'success' && hashFiles('apps/android/build/local-ai-audit-report.json') != ''
         working-directory: apps/android
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -195,7 +196,7 @@ jobs:
           cat build/local-ai-audit-report.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload source-native APK and audit evidence
-        if: always() && github.event_name == 'workflow_dispatch' && hashFiles('apps/android/build/local-ai-audit-report.json') != ''
+        if: always() && github.event_name == 'workflow_dispatch' && steps.source_native_build.outcome == 'success' && hashFiles('apps/android/build/local-ai-audit-report.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: local-ai-arm64-native-apk-${{ github.run_id }}-${{ github.run_attempt }}
