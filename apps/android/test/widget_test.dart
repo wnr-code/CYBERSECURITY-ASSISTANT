@@ -346,10 +346,6 @@ Future<void> _pumpUntilFound(WidgetTester tester, Finder finder, {int attempts =
   }
 }
 
-Finder _findTextInEither(String first, String second) => find.byWidgetPredicate(
-      (widget) => widget is Text && (widget.data == first || widget.data == second),
-    );
-
 Finder _findCatalogUnavailableMessage() => find.byWidgetPredicate(
       (widget) => widget is Text && const {
         'Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.',
