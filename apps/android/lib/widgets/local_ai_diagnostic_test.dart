@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/local_ai_model_installer.dart';
 import '../core/market_provider_manager.dart';
 import '../l10n/app_localizations.dart';
 
@@ -69,16 +70,22 @@ class _LocalAiDiagnosticDialogState extends State<_LocalAiDiagnosticDialog> {
     } catch (error) {
       results.add('Native/JNI load: BLOCKED — ${_safeError(error)}; install the source-native ARM64 APK after its CI audit passes.');
     }
+    if (runtime?['pinnedModelRevision'] is String) {
+      results.add('Pinned model metadata: ${runtime?['pinnedModelRepository']} @ ${runtime?['pinnedModelRevision']} · ${runtime?['pinnedModelLicense']}');
+    }
     final name = runtime?['modelName'];
     final digest = runtime?['modelSha256'];
-    final modelLoaded = runtime?['modelLoaded'] == true && name is String && digest is String && RegExp(r'^[0-9a-f]{64}$').hasMatch(digest);
+    const modelPin = LocalAiModelManifest.qwenQ4Km;
+    final modelLoaded = runtime?['modelLoaded'] == true && name == modelPin.fileName && digest == modelPin.sha256Hex;
     final installedCount = capabilities?['installedModelCount'];
     final inventory = runtime?['installedModels'];
-    final inventoryLines = inventory is List
-        ? inventory.whereType<Map>().map((item) => '${item['fileName']}: ${item['sizeBytes']} bytes, SHA-256 ${item['sha256']} (${item['trusted'] == true ? 'trusted' : 'UNTRUSTED'})').join('; ')
-        : '';
-    results.add('Installed GGUF integrity: ${modelLoaded ? 'PASS' : 'BLOCKED'} — ${inventoryLines.isNotEmpty ? inventoryLines : '${installedCount is int ? installedCount : 'unknown'} installed model(s); no readable GGUF inventory'}; loaded model: ${modelLoaded ? '$name SHA-256 $digest' : 'none'}${modelLoaded ? '' : '; no publisher-approved digest is configured, so model loading is fail-closed. Do not use an unverified model.'}');
-    results.add('Model load: ${modelLoaded ? 'PASS' : 'BLOCKED'} — ${modelLoaded ? 'verified model is loaded in the runtime.' : 'a compatible model with an app-approved publisher digest is not loaded; model loading correctly fails closed.'}');
+    final modelInventory = inventory is List ? inventory.whereType<Map>().toList() : <Map>[];
+    final inventoryLines = modelInventory.map((item) => '${item['fileName']}: ${item['sizeBytes']} bytes, SHA-256 ${item['sha256']} (${item['trusted'] == true ? 'trusted' : 'UNTRUSTED'})').join('; ');
+    final trustedFileInstalled = modelInventory.any((item) =>
+        item['fileName'] == modelPin.fileName && item['sizeBytes'] == modelPin.fileSizeBytes &&
+        item['sha256'] == modelPin.sha256Hex && item['trusted'] == true);
+    results.add('Installed GGUF integrity: ${trustedFileInstalled ? 'PASS' : 'BLOCKED'} — ${inventoryLines.isNotEmpty ? inventoryLines : '${installedCount is int ? installedCount : 'unknown'} installed model(s); no readable GGUF inventory'}${trustedFileInstalled ? '' : '; required pinned filename, exact size, and SHA-256 were not verified. Import the exact publisher file; mismatches are rejected.'}');
+    results.add('Model load: ${modelLoaded ? 'PASS' : 'BLOCKED'} — ${modelLoaded ? 'verified model is loaded in the runtime.' : trustedFileInstalled ? 'the verified file is installed but native model load has not completed; use Choose GGUF, verify, and load.' : 'a compatible model with an app-approved publisher digest is not loaded; model loading correctly fails closed.'}');
     if (modelLoaded) {
       try {
         final reply = await _runtimeChannel.invokeMethod<Object?>('complete', {

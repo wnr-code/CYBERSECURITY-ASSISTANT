@@ -280,7 +280,7 @@ class _MarketScreenState extends State<MarketScreen> {
     final subtitle = switch (providerId) {
       'cloudflare' => context.tr('Cloudflare token verification is separate from per-permission account/zone reads; no write actions.'),
       'gemini' => context.tr('Cloud AI · provider-scoped conversation consent is saved locally; tool proposals still require review.'),
-      _ => context.tr('On-device AI · candidate runtime pinned for prototype; model verification and inference are not available yet.'),
+      _ => context.tr('On-device AI · device resources are probed; a pinned model import and native inference path are available for physical testing, but readiness remains gated.'),
     };
     final status = _providerCapabilityStatus(providerId, manager);
     return Card(

@@ -5,6 +5,7 @@ import '../core/ai_provider_manager.dart';
 import '../core/market_provider_manager.dart';
 import '../l10n/app_localizations.dart';
 import 'local_ai_diagnostic_test.dart';
+import 'local_ai_model_install_action.dart';
 
 class MarketProviderDialog extends StatefulWidget {
   const MarketProviderDialog({super.key, required this.providerId, required this.manager});
@@ -165,7 +166,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(context.tr('On-device AI Provider · Local only'), style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
-      Text(context.tr('Not Ready — the official llama.cpp source/JNI build path is implemented as an opt-in, but has not been built or device-tested. No verified model is enabled; inference and cloud fallback are unavailable.')),
+      Text(context.tr('Not Ready — this phone reported native/JNI load success, but model load, real Chat inference, and offline inference have not passed. Choose the pinned GGUF below to verify and load it; no cloud fallback is used.')),
       const SizedBox(height: 12),
       Text(context.tr('Device capability (reported by Android)'), style: const TextStyle(fontWeight: FontWeight.w700)),
       const SizedBox(height: 5),
@@ -182,12 +183,14 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
       _officialLink(context, MarketProviderManager.localAiBuildDocs),
       _officialLink(context, MarketProviderManager.localAiLicenseDocs),
       const SizedBox(height: 8),
-      Text(context.tr('Qwen2.5 1.5B Q4 remains unverified. Model license, immutable source revision, exact size, and SHA-256 must be established before any install option is enabled.'),
+      Text(context.tr('The pinned Qwen2.5 1.5B Instruct Q4_K_M model is Apache-2.0. The app verifies the chosen file against its pinned size and SHA-256 before native load; matching bytes do not guarantee freedom from all model risks.'),
           style: const TextStyle(fontSize: 12, height: 1.4)),
       _officialLink(context, MarketProviderManager.localAiModelsDocs),
       const SizedBox(height: 10),
+      const LocalAiModelInstallAction(),
+      const SizedBox(height: 10),
       LocalAiDiagnosticAction(status: widget.manager.statusFor('local_ai')),
-      Text(context.tr('Unknown or insufficient ABI, RAM, or storage must fail closed. Runtime/model checksums and licenses are still pending; no Local AI package is marked Ready.'),
+      Text(context.tr('Unknown or insufficient ABI, RAM, storage, or model-integrity results remain blocked. Loading a verified model enables the requested Chat test but does not change the Local AI Not Ready status; offline inference still requires a physical airplane-mode check.'),
           style: const TextStyle(fontSize: 11, height: 1.4)),
     ]);
   }

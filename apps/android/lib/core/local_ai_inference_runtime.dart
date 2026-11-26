@@ -38,6 +38,25 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
     }
   }
 
+  Future<void> loadVerifiedModel(String fileName, String sha256Hex) async {
+    if (fileName != 'qwen2.5-1.5b-instruct-q4_k_m.gguf' ||
+        sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e') {
+      throw const AiProviderException('Model is not present in the app-pinned trust manifest.');
+    }
+    try {
+      await channel.invokeMethod<Object?>('loadVerifiedModel', {
+        'fileName': fileName,
+        'sha256': sha256Hex,
+      }).timeout(const Duration(minutes: 5));
+    } on PlatformException catch (error) {
+      throw AiProviderException(error.message ?? 'Verified local model could not be loaded.');
+    } on MissingPluginException {
+      throw const AiProviderException('Native Local AI model loader is unavailable.');
+    } on TimeoutException {
+      throw const AiProviderException('Native Local AI model loading timed out.');
+    }
+  }
+
   @override
   Future<AiProviderReply> complete(List<AiChatMessage> messages) async {
     if (!await isReady()) {

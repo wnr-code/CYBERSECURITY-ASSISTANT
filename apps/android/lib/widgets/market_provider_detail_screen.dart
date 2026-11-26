@@ -7,6 +7,7 @@ import '../l10n/app_localizations.dart';
 import 'market_brand_mark.dart';
 import 'market_provider_dialog.dart';
 import 'local_ai_diagnostic_test.dart';
+import 'local_ai_model_install_action.dart';
 
 class MarketProviderDetailScreen extends StatelessWidget {
   const MarketProviderDetailScreen({
@@ -155,7 +156,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Runtime Information', [
-        Text(context.tr('The app uses official llama.cpp source pinned to a commit and builds a single CPU-only JNI library from source. The opt-in NDK build and bridge are implemented but have not been compiled or validated on an Android device.'),
+        Text(context.tr('The source-built CPU-only ARM64 APK passed CI static audit. This physical phone has reported a successful native/JNI load; GGUF loading and real inference still need testing.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
         _detailLine(context, 'Pinned llama.cpp source commit', MarketProviderManager.localAiRuntimeCommit),
         _detailLine(context, 'Official source archive SHA-256', MarketProviderManager.localAiSourceArchiveSha256),
@@ -163,23 +164,25 @@ class MarketProviderDetailScreen extends StatelessWidget {
         _referenceLink(context, 'Pinned llama.cpp source', MarketProviderManager.localAiRuntimeSource),
         _referenceLink(context, 'Upstream Android build guide', MarketProviderManager.localAiBuildDocs),
         _referenceLink(context, 'Upstream license', MarketProviderManager.localAiLicenseDocs),
-        Text(context.tr('The source archive hash is verified locally, but the Android native build has not run here. This does not establish that an APK contains the library or that inference works.'),
+        Text(context.tr('The pinned archive and APK static audit establish build inputs and packaged JNI structure, not model compatibility or successful inference. The actual GGUF bytes must still pass the phone-side size/SHA-256 check.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Model Catalog', [
-        Text(context.tr('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'),
+        Text(context.tr('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision and Apache-2.0 license shown below. The selected file is not trusted or loaded until its exact size and SHA-256 pass verification.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
-        _referenceLink(context, 'Qwen2.5 model source (reference only)', MarketProviderManager.localAiModelsDocs),
+        _referenceLink(context, 'Official pinned Qwen model repository', MarketProviderManager.localAiModelsDocs),
       ]),
       const SizedBox(height: 10),
+      const LocalAiModelInstallAction(),
+      const SizedBox(height: 10),
       _sectionCard(context, 'Storage Management', [
-        Text(context.tr('No model is installed and no download action is enabled. Before install is implemented, unknown RAM/storage or any missing or mismatched checksum/license must fail closed.'),
+        Text(context.tr('The app imports only the pinned Qwen GGUF through the file picker. Missing, inaccessible, wrong-size, or wrong-hash files stop before native load. Keep the downloaded file until the private copy is verified.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Offline Inference Test', [
-        Text(context.tr('Unavailable until the runtime and a compatible, verified model are installed. No cloud fallback is used.'),
+        Text(context.tr('After the pinned model is verified and loaded, test offline by sending a real Chat prompt with airplane mode enabled and Wi-Fi/mobile data off. This is a manual physical-device check; failure never falls back to cloud.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
         const SizedBox(height: 8),
         LocalAiDiagnosticAction(status: manager.statusFor('local_ai')),

@@ -182,7 +182,8 @@ void main() {
     expect(find.text('Not Ready: the runtime, compatible model, and successful local inference are not all available.'), findsOneWidget);
     expect(find.textContaining('The app uses official llama.cpp source pinned to a commit'), findsOneWidget);
     expect(find.textContaining('Pinned llama.cpp source commit:'), findsOneWidget);
-    expect(find.text('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'), findsOneWidget);
+    expect(find.textContaining('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision'), findsOneWidget);
+    expect(find.byKey(const ValueKey('local-ai-install-model')), findsOneWidget);
     expect(find.text('Offline Inference Test'), findsOneWidget);
     final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     expect(diagnostic.onPressed, isNotNull);
@@ -580,7 +581,7 @@ void main() {
     expect(MarketProviderManager.localAiBuildDocs.toString(), contains('/docs/android.md'));
     expect(MarketProviderManager.localAiLicenseDocs.toString(), endsWith('/LICENSE'));
     expect(MarketProviderManager.localAiSourceArchiveSha256, '05b362e97564f2e449440f13878c43991a13b6029214dbcb0d1b116b20365ec2');
-    expect(MarketProviderManager.localAiModelsDocs.toString(), 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF');
+    expect(MarketProviderManager.localAiModelsDocs.toString(), 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf');
   });
 
   test('Local AI remains Not Ready and never invokes cloud or a fake inference', () async {

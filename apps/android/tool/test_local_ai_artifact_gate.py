@@ -219,6 +219,21 @@ hooks:
             with self.assertRaisesRegex(GateError, "CPU-only/no-CLI"):
                 audit_source_build_config(cache, "a" * 40)
 
+    def test_qwen_model_pin_matches_flutter_importer_and_native_bridge(self):
+        tool_dir = Path(__file__).resolve().parent
+        flutter_pin = (tool_dir.parent / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
+        native_bridge = (tool_dir / "native/LocalAiInferenceBridge.kt").read_text(encoding="utf-8")
+        for token in (
+            "dd26da440ef0330c47919d1ecae0966d24022222",
+            "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+            "1_117_320_736",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, flutter_pin)
+                self.assertIn(token, native_bridge)
+        self.assertIn("Apache-2.0", flutter_pin)
+
     def test_source_apk_audit_accepts_only_static_arm64_jni_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             apk_path = Path(directory) / "source.apk"

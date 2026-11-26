@@ -20,9 +20,19 @@ internal object LocalAiInferenceBridge {
     @Volatile private var loadedModelName: String? = null
     @Volatile private var loadedModelSha256: String? = null
 
-    // Fail closed until an immutable publisher revision, exact filename, license,
-    // byte length, and digest have been reviewed and pinned in app-owned source.
-    private val trustedModelDigests = emptyMap<String, String>()
+    // Qwen's user-supplied immutable upstream pin. Runtime installation still
+    // verifies the complete file byte count and SHA-256 before JNI sees it.
+    // This digest is an identity check, not a guarantee that model content is risk-free.
+    private data class ModelPin(val repository: String, val revision: String, val license: String, val size: Long, val sha256: String)
+    private val trustedModels = mapOf(
+        "qwen2.5-1.5b-instruct-q4_k_m.gguf" to ModelPin(
+            repository = "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+            revision = "dd26da440ef0330c47919d1ecae0966d24022222",
+            license = "Apache-2.0",
+            size = 1_117_320_736L,
+            sha256 = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+        ),
+    )
 
     init {
         System.loadLibrary("csa_localai")
@@ -56,6 +66,9 @@ internal object LocalAiInferenceBridge {
         "modelLoaded" to (loadedModelName != null),
         "modelName" to loadedModelName,
         "modelSha256" to loadedModelSha256,
+        "pinnedModelRepository" to trustedModels.values.firstOrNull()?.repository,
+        "pinnedModelRevision" to trustedModels.values.firstOrNull()?.revision,
+        "pinnedModelLicense" to trustedModels.values.firstOrNull()?.license,
         "installedModels" to if (includeInventory) installedModelInventory(activity) else emptyList<Map<String, Any?>>(),
         "abi" to "arm64-v8a",
         "backend" to "cpu",
@@ -72,7 +85,7 @@ internal object LocalAiInferenceBridge {
                     "fileName" to file.name,
                     "sizeBytes" to file.length(),
                     "sha256" to actual,
-                    "trusted" to (trustedModelDigests[file.name] == actual),
+                    "trusted" to (trustedModels[file.name]?.let { it.sha256 == actual && it.size == file.length() } == true),
                 )
             }?.toList() ?: emptyList()
     }
@@ -83,21 +96,23 @@ internal object LocalAiInferenceBridge {
         if (!name.matches(Regex("[A-Za-z0-9._-]{1,180}\\.gguf")) || !expected.matches(Regex("[0-9a-f]{64}"))) {
             throw IllegalArgumentException("Model filename or trusted digest is malformed.")
         }
-        val pinnedDigest = trustedModelDigests[name]
-            ?: throw IllegalStateException("No publisher-verified Local AI model is enabled in this build.")
-        if (expected != pinnedDigest) throw SecurityException("Requested model digest is not in the app-owned trust manifest.")
+        val pin = trustedModels[name]
+            ?: throw IllegalStateException("No publisher-pinned Local AI model is enabled in this build.")
+        if (expected != pin.sha256) throw SecurityException("Requested model digest is not in the app-owned trust manifest.")
         val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
         if (!modelRoot.exists() || !modelRoot.isDirectory) throw IllegalStateException("No verified Local AI model is installed.")
         val modelFile = File(modelRoot, name).canonicalFile
-        if (modelFile.parentFile != modelRoot || !modelFile.isFile || modelFile.length() <= 0L || modelFile.length() > MAX_MODEL_BYTES) {
-            throw IllegalStateException("Model file is missing or outside the private model store.")
+        if (modelFile.parentFile != modelRoot || !modelFile.isFile || modelFile.length() != pin.size || modelFile.length() > MAX_MODEL_BYTES) {
+            throw IllegalStateException("Model file is missing, outside the private model store, or its size differs from the pinned manifest.")
         }
         val actual = sha256(modelFile)
-        if (!MessageDigest.isEqual(actual.toByteArray(), expected.toByteArray())) {
+        if (!MessageDigest.isEqual(actual.toByteArray(), pin.sha256.toByteArray())) {
             modelFile.delete()
             throw SecurityException("Installed model digest does not match the trusted manifest; the file was removed.")
         }
         nativeUnloadModel()
+        loadedModelName = null
+        loadedModelSha256 = null
         if (!nativeLoadModel(modelFile.absolutePath)) throw IllegalStateException("llama.cpp could not load the verified GGUF model.")
         loadedModelName = name
         loadedModelSha256 = actual

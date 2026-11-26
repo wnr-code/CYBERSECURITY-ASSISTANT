@@ -339,7 +339,7 @@ class MarketProviderManager extends ChangeNotifier {
   static final localAiRuntimeSource = Uri.parse('https://github.com/ggml-org/llama.cpp/tree/ea722948146befb23c9529c1ec7f59fb2f34911f');
   static final localAiBuildDocs = Uri.parse('https://github.com/ggml-org/llama.cpp/blob/ea722948146befb23c9529c1ec7f59fb2f34911f/docs/android.md');
   static final localAiLicenseDocs = Uri.parse('https://github.com/ggml-org/llama.cpp/blob/ea722948146befb23c9529c1ec7f59fb2f34911f/LICENSE');
-  static final localAiModelsDocs = Uri.parse('https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF');
+  static final localAiModelsDocs = Uri.parse('https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf');
 
   bool get isBusy => _busy;
   bool get isInitialized => _initialized;
@@ -374,8 +374,8 @@ class MarketProviderManager extends ChangeNotifier {
     _statuses['cloudflare'] = !_cloudflareConfigured ? ManagedProviderStatus.installed : ManagedProviderStatus.disconnected;
     _statuses['gemini'] = !_geminiConfigured ? ManagedProviderStatus.installed : ManagedProviderStatus.disconnected;
     _localCapabilities = await _localAiProbe.inspect();
-    // No native inference runtime is integrated in this build. A model file or
-    // device capability alone must never imply Ready/Connected.
+    // Diagnostic/model-import results never promote Market readiness. The
+    // physical Chat and airplane-mode checks are not persisted as passed here.
     _statuses['local_ai'] = ManagedProviderStatus.notReady;
     _initialized = true;
     _notifyIfActive();
