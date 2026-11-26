@@ -14,15 +14,55 @@ class LocalAiModelInstallAction extends StatefulWidget {
 class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
   final _installer = LocalAiModelInstaller();
   bool _busy = false;
+  bool _checkingInstalled = true;
+  bool _installed = false;
+  bool _partialDownload = false;
+  bool _modelLoaded = false;
   String? _message;
   bool? _verified;
   LocalAiInstallProgress? _progress;
   DateTime _lastPaint = DateTime.fromMillisecondsSinceEpoch(0);
 
+  @override
+  void initState() {
+    super.initState();
+    _refreshInstallState();
+  }
+
+  Future<void> _refreshInstallState({bool preserveMessage = false}) async {
+    try {
+      final restored = await _installer.restoreVerifiedInstalledModel();
+      final installed = await _installer.hasInstalledModelFile();
+      final partial = await _installer.hasPartialDownload();
+      if (!mounted) return;
+      setState(() {
+        _checkingInstalled = false;
+        _installed = installed;
+        _partialDownload = partial;
+        _modelLoaded = restored != null;
+        if (!preserveMessage) {
+          if (restored != null) {
+            _verified = true;
+            _message = context.tr('A previously verified model was rechecked and restored from this phone.');
+          } else if (installed) {
+            _verified = null;
+            _message = context.tr('An installed model file was found. Re-verify its official metadata and bytes to load it; the file will not be downloaded again if it matches.');
+          } else if (partial) {
+            _verified = null;
+            _message = context.tr('An interrupted download checkpoint is saved. Retry will resume from the last received byte.');
+          }
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() { _checkingInstalled = false; });
+    }
+  }
+
   Future<void> _downloadVerifyAndLoad() async {
     setState(() { _busy = true; _message = null; _verified = null; _progress = null; });
     try {
-      final model = await _installer.downloadVerifyAndLoad(onProgress: (progress) {
+      final restored = await _installer.restoreVerifiedInstalledModel();
+      final model = restored ?? await _installer.downloadVerifyAndLoad(onProgress: (progress) {
         if (!mounted) return;
         final now = DateTime.now();
         if (progress.phase != LocalAiInstallPhase.downloading || now.difference(_lastPaint) >= const Duration(milliseconds: 250) || progress.fraction == 1) {
@@ -35,7 +75,10 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
         _busy = false;
         _verified = true;
         _progress = const LocalAiInstallProgress(phase: LocalAiInstallPhase.complete);
-        _message = '${context.tr('Publisher metadata and downloaded GGUF verified and model loaded')}: ${model.fileName} · ${model.sizeBytes} ${context.tr('bytes')} · SHA-256 ${model.sha256Hex}. ${context.tr('You can now test a real prompt in Chat; no cloud fallback is used.')}';
+        _installed = true;
+        _partialDownload = false;
+        _modelLoaded = true;
+        _message = '${context.tr(restored != null ? 'Previously verified model restored from this phone' : 'Publisher metadata and downloaded GGUF verified and model loaded')}: ${model.fileName} · ${model.sizeBytes} ${context.tr('bytes')} · SHA-256 ${model.sha256Hex}. ${context.tr('You can now test a real prompt in Chat; no cloud fallback is used.')}';
       });
     } on LocalAiModelInstallException catch (error) {
       if (mounted) {
@@ -55,6 +98,42 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           _message = context.tr('Download or installation failed safely. Check connection and storage, then retry. No unverified model was loaded.');
         });
       }
+    }
+    if (mounted) {
+      final installed = await _installer.hasInstalledModelFile();
+      final partial = await _installer.hasPartialDownload();
+      if (mounted) setState(() { _installed = installed; _partialDownload = partial; });
+    }
+  }
+
+  Future<void> _deleteModel() async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.tr('Delete Local AI model?')),
+        content: Text(dialogContext.tr('Remove the pinned model and any resumable partial download from this app on this phone?')),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(dialogContext.tr('Cancel'))),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(dialogContext.tr('Delete model'))),
+        ],
+      ),
+    );
+    if (remove != true || !mounted) return;
+    setState(() { _busy = true; _message = null; });
+    try {
+      final removed = await _installer.deleteInstalledModel();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _installed = false;
+        _partialDownload = false;
+        _modelLoaded = false;
+        _verified = null;
+        _progress = null;
+        _message = context.tr(removed ? 'Pinned model and partial download removed from this phone.' : 'No pinned model files were found on this phone.');
+      });
+    } catch (_) {
+      if (mounted) setState(() { _busy = false; _verified = false; _message = context.tr('Could not remove the pinned model from this phone.'); });
     }
   }
 
@@ -83,7 +162,13 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           const SizedBox(height: 8),
           SelectableText('${manifest.repository}\n${manifest.fileName}\n${manifest.license} · ${manifest.fileSizeBytes} ${context.tr('bytes')}\n${context.tr('Revision')} ${manifest.revision}\nSHA-256 ${manifest.sha256Hex}', style: const TextStyle(fontSize: 11, height: 1.45)),
           const SizedBox(height: 8),
-          Text(_phaseLabel(context, progress?.phase), style: const TextStyle(fontSize: 12, height: 1.4)),
+          Text(_checkingInstalled ? context.tr('Checking for an installed verified model…') : _phaseLabel(context, progress?.phase), style: const TextStyle(fontSize: 12, height: 1.4)),
+          if (_installed && _modelLoaded)
+            Text(context.tr('This model is already verified, installed, and loaded. It stays available after reopening the app; no download is needed.'), style: const TextStyle(fontSize: 12, height: 1.4)),
+          if (_installed && !_modelLoaded)
+            Text(context.tr('An installed model file is present. Verify its pinned metadata and bytes before it can be loaded.'), style: const TextStyle(fontSize: 12, height: 1.4)),
+          if (_partialDownload && !_installed)
+            Text(context.tr('The partial download is kept privately. Resume continues from the last saved byte.'), style: const TextStyle(fontSize: 12, height: 1.4)),
           if (_busy) ...[
             const SizedBox(height: 8),
             LinearProgressIndicator(value: fraction),
@@ -95,12 +180,26 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
           const SizedBox(height: 10),
           OutlinedButton.icon(
             key: const ValueKey('local-ai-install-model'),
-            onPressed: _busy ? null : _downloadVerifyAndLoad,
-            icon: _busy
+            onPressed: _busy || _checkingInstalled || (_installed && _modelLoaded && _verified == true) ? null : _downloadVerifyAndLoad,
+            icon: _busy || _checkingInstalled
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.download_for_offline_outlined),
-            label: Text(context.tr(_busy ? 'Working…' : 'Download, verify, and load on this phone')),
+                : Icon(_installed && _modelLoaded ? Icons.verified_outlined : _partialDownload ? Icons.restart_alt_rounded : Icons.download_for_offline_outlined),
+            label: Text(context.tr(
+              _busy ? 'Working…' : _checkingInstalled ? 'Checking installed model…' :
+              _installed && _modelLoaded ? 'Model already installed and loaded' :
+              _installed ? 'Re-verify and load installed model' :
+              _partialDownload ? 'Resume interrupted download' : 'Download, verify, and load on this phone',
+            )),
           ),
+          if (_installed || _partialDownload) ...[
+            const SizedBox(height: 4),
+            TextButton.icon(
+              key: const ValueKey('local-ai-delete-model'),
+              onPressed: _busy ? null : _deleteModel,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: Text(context.tr('Delete installed model and partial download')),
+            ),
+          ],
           if (_message != null) ...[
             const SizedBox(height: 8),
             SelectableText(_message!, style: TextStyle(fontSize: 12, height: 1.45, color: _verified == false ? Theme.of(context).colorScheme.error : null)),

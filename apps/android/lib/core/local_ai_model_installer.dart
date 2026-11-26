@@ -77,13 +77,47 @@ class LocalAiModelInstaller {
         acceptedTypeGroups: const [XTypeGroup(label: 'GGUF model', extensions: ['gguf'])],
       );
 
+  /// Restores a previously verified app-private model from its native receipt.
+  /// The native bridge rechecks the receipt against this APK's static pin and
+  /// hashes the entire file before loading, so restoring works offline.
+  Future<VerifiedLocalAiModel?> restoreVerifiedInstalledModel() async {
+    try {
+      final status = await const MethodChannel('org.cybersecurityassistant/local_ai_runtime')
+          .invokeMapMethod<Object?, Object?>('getRuntimeStatus')
+          .timeout(const Duration(seconds: 90));
+      if (status?['modelLoaded'] == true && status?['publisherMetadataVerified'] == true &&
+          status?['modelName'] == manifest.fileName && status?['modelSha256'] == manifest.sha256Hex) {
+        return VerifiedLocalAiModel(fileName: manifest.fileName, sizeBytes: manifest.fileSizeBytes, sha256Hex: manifest.sha256Hex);
+      }
+    } catch (_) {
+      // Missing/old native runtime is handled by the regular pinned download path.
+    }
+    return null;
+  }
+
+  Future<bool> hasInstalledModelFile() async {
+    final support = await _supportDirectory();
+    return File(paths.join(support.path, 'local_ai', 'models', manifest.fileName)).exists();
+  }
+
+  Future<bool> hasPartialDownload() async {
+    final support = await _supportDirectory();
+    return File(paths.join(support.path, 'local_ai', 'models', '${manifest.fileName}.part')).exists();
+  }
+
+  Future<bool> hasLocalModelData() async => await hasInstalledModelFile() || await hasPartialDownload();
+
+  Future<bool> deleteInstalledModel() async =>
+      await const MethodChannel('org.cybersecurityassistant/local_ai_runtime').invokeMethod<bool>('deleteInstalledModel') ?? false;
+
   /// Downloads from Hugging Face after checking the immutable model record,
   /// then hashes the complete private file before native loading.
   Future<VerifiedLocalAiModel> downloadVerifyAndLoad({LocalAiProgressCallback? onProgress}) async {
     _emit(onProgress, const LocalAiInstallProgress(phase: LocalAiInstallPhase.checkingPublisher));
     LocalAiDownloadResponse? response;
     File? temporaryFile;
-    IOSink? sink;
+    RandomAccessFile? sink;
+    var discardPartial = false;
     var phase = LocalAiInstallPhase.checkingPublisher;
     try {
       final isPinnedQwen = manifest.repository == LocalAiModelManifest.qwenQ4Km.repository &&
@@ -129,52 +163,110 @@ class LocalAiModelInstaller {
         // replaces it atomically below; failed retries preserve prior data.
       }
 
-      final available = await _availableStorageBytes();
-      const storageSafetyMargin = 64 * 1024 * 1024;
-      if (available == null || available < manifest.fileSizeBytes + storageSafetyMargin) {
-        throw const LocalAiModelInstallException('Free storage is unknown or insufficient for the pinned model and a safety margin. Nothing was downloaded.');
+      temporaryFile = File('${finalFile.path}.part');
+      if (await temporaryFile.exists() && await temporaryFile.length() > manifest.fileSizeBytes) {
+        await temporaryFile.delete();
       }
-
-      phase = LocalAiInstallPhase.downloading;
-      _emit(onProgress, LocalAiInstallProgress(phase: phase, totalBytes: manifest.fileSizeBytes));
-      response = await _artifactSource.openPinnedDownload(manifest);
-      if (response.statusCode != HttpStatus.ok) {
-        await response.body.drain<void>();
-        throw LocalAiModelInstallException('Official model download failed with HTTP ${response.statusCode}. Check internet and retry.');
-      }
-      if (response.contentLength != null && response.contentLength != manifest.fileSizeBytes) {
-        await response.body.drain<void>();
-        throw const LocalAiModelInstallException('Publisher download response size does not match the verified file metadata. Installation was blocked.');
-      }
-
-      temporaryFile = File('${finalFile.path}.${DateTime.now().microsecondsSinceEpoch}.part');
-      sink = temporaryFile.openWrite(mode: FileMode.writeOnly);
-      var byteCount = 0;
-      await for (final chunk in response.body.timeout(const Duration(seconds: 90))) {
-        byteCount += chunk.length;
-        if (byteCount > manifest.fileSizeBytes) {
-          throw const LocalAiModelInstallException('Downloaded model exceeded the verified exact size. Partial data will be removed.');
+      var byteCount = await temporaryFile.exists() ? await temporaryFile.length() : 0;
+      if (byteCount == manifest.fileSizeBytes) {
+        final partialSha = (await sha256.bind(temporaryFile.openRead()).first).toString();
+        if (partialSha == publisherFile.sha256Hex && partialSha == manifest.sha256Hex) {
+          phase = LocalAiInstallPhase.verifying;
+        } else {
+          await temporaryFile.delete();
+          byteCount = 0;
         }
-        sink.add(chunk);
-        _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: byteCount, totalBytes: manifest.fileSizeBytes));
       }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      await response.dispose();
-      response = null;
+
+      if (byteCount < manifest.fileSizeBytes) {
+        final available = await _availableStorageBytes();
+        const storageSafetyMargin = 64 * 1024 * 1024;
+        final remainingBytes = manifest.fileSizeBytes - byteCount;
+        if (available == null || available < remainingBytes + storageSafetyMargin) {
+          throw const LocalAiModelInstallException('Free storage is unknown or insufficient for the remaining model bytes and a safety margin. The verified download checkpoint was kept.');
+        }
+
+        phase = LocalAiInstallPhase.downloading;
+        const rangeChunkBytes = 64 * 1024 * 1024;
+        const maxRangeAttempts = 5;
+        _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: byteCount, totalBytes: manifest.fileSizeBytes));
+        while (byteCount < manifest.fileSizeBytes) {
+          var rangeComplete = false;
+          Object? lastRangeError;
+
+          for (var attempt = 0; attempt < maxRangeAttempts && !rangeComplete; attempt++) {
+            byteCount = await temporaryFile.length();
+            if (byteCount >= manifest.fileSizeBytes) {
+              rangeComplete = byteCount == manifest.fileSizeBytes;
+              break;
+            }
+            final rangeStart = byteCount;
+            final rangeEnd = (rangeStart + rangeChunkBytes - 1).clamp(0, manifest.fileSizeBytes - 1).toInt();
+            final expectedRangeLength = rangeEnd - rangeStart + 1;
+            try {
+              final chunkResponse = await _artifactSource.openPinnedDownload(
+                manifest,
+                rangeStart: rangeStart,
+                rangeEnd: rangeEnd,
+              );
+              response = chunkResponse;
+              final expectedContentRange = 'bytes $rangeStart-$rangeEnd/${manifest.fileSizeBytes}';
+              if (chunkResponse.statusCode != HttpStatus.partialContent || chunkResponse.contentRange != expectedContentRange ||
+                  (chunkResponse.contentLength != null && chunkResponse.contentLength != expectedRangeLength)) {
+                throw const LocalAiModelInstallException('Official source returned an invalid partial-download range. The saved checkpoint remains untrusted.');
+              }
+
+              final fileSink = await temporaryFile.open(mode: FileMode.append);
+              sink = fileSink;
+              var receivedInRange = 0;
+              await for (final chunk in chunkResponse.body.timeout(const Duration(seconds: 90))) {
+                if (receivedInRange + chunk.length > expectedRangeLength || byteCount + chunk.length > manifest.fileSizeBytes) {
+                  discardPartial = true;
+                  throw const LocalAiModelInstallException('Official source exceeded the requested model byte range. Partial data will be removed.');
+                }
+                await fileSink.writeFrom(chunk);
+                receivedInRange += chunk.length;
+                byteCount += chunk.length;
+                _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: byteCount, totalBytes: manifest.fileSizeBytes));
+              }
+              await fileSink.flush();
+              if (receivedInRange != expectedRangeLength) {
+                throw LocalAiModelInstallException('The model connection ended during byte range $rangeStart-$rangeEnd; $receivedInRange of $expectedRangeLength bytes arrived. The partial file was kept for resume.');
+              }
+              rangeComplete = true;
+            } catch (error) {
+              lastRangeError = error;
+            } finally {
+              try { await sink?.close(); } catch (_) {}
+              sink = null;
+              if (await temporaryFile.exists()) byteCount = await temporaryFile.length();
+              try { await response?.dispose(); } catch (_) {}
+              response = null;
+            }
+            if (!rangeComplete && attempt + 1 < maxRangeAttempts) {
+              await Future<void>.delayed(Duration(milliseconds: 500 * (1 << attempt)));
+            }
+          }
+          if (!rangeComplete) {
+            if (lastRangeError is LocalAiModelInstallException) throw lastRangeError;
+            throw const LocalAiModelInstallException('The model download was interrupted repeatedly. Its verified-size checkpoint was kept; retry to resume from the last byte.');
+          }
+        }
+      }
 
       phase = LocalAiInstallPhase.verifying;
       final actualSize = await temporaryFile.length();
-      if (byteCount != manifest.fileSizeBytes || actualSize != manifest.fileSizeBytes) {
-        throw LocalAiModelInstallException('Downloaded file size verification failed: expected ${manifest.fileSizeBytes} bytes, received $actualSize bytes.');
+      if (actualSize != manifest.fileSizeBytes) {
+        throw LocalAiModelInstallException('Downloaded file size verification failed: expected ${manifest.fileSizeBytes} bytes, received $actualSize bytes. The partial file was kept for resume.');
       }
       _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: actualSize, totalBytes: manifest.fileSizeBytes));
       final actualSha256 = (await sha256.bind(temporaryFile.openRead()).first).toString();
       if (actualSha256 != publisherFile.sha256Hex || actualSha256 != manifest.sha256Hex) {
-        throw const LocalAiModelInstallException('SHA-256 of the complete downloaded GGUF does not match both the official publisher metadata and app pin. Installation was blocked.');
+        discardPartial = true;
+        throw const LocalAiModelInstallException('SHA-256 of the complete downloaded GGUF does not match both the official publisher metadata and app pin. Partial data will be removed.');
       }
 
+      if (await finalFile.exists()) await finalFile.delete();
       await temporaryFile.rename(finalFile.path);
       temporaryFile = null;
       phase = LocalAiInstallPhase.loading;
@@ -185,7 +277,12 @@ class LocalAiModelInstaller {
     } catch (error) {
       try { await sink?.close(); } catch (_) {}
       if (temporaryFile != null) {
-        try { if (await temporaryFile.exists()) await temporaryFile.delete(); } catch (_) {}
+        try {
+          if (await temporaryFile.exists() &&
+              (discardPartial || await temporaryFile.length() > manifest.fileSizeBytes)) {
+            await temporaryFile.delete();
+          }
+        } catch (_) {}
       }
       try { await response?.dispose(); } catch (_) {}
       _emit(onProgress, const LocalAiInstallProgress(phase: LocalAiInstallPhase.failed));

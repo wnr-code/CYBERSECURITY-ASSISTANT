@@ -523,7 +523,7 @@ def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[
         if "MIT License" not in license_text or "The ggml authors" not in license_text:
             raise GateError("The bundled llama.cpp license notice does not match the pinned upstream MIT notice.")
         dex_payloads = [apk.read(name) for name in names if name.startswith("classes") and name.endswith(".dex")]
-        required_jni_strings = (b"LocalAiInferenceBridge", b"nativeLoadModel", b"nativeUnloadModel", b"nativeComplete")
+        required_jni_strings = (b"LocalAiInferenceBridge", b"nativeLoadModel", b"nativeUnloadModel", b"nativeComplete", b"nativeCancelInference", b"nativeResetInferenceCancellation")
         if not dex_payloads or any(not any(token in payload for payload in dex_payloads) for token in required_jni_strings):
             raise GateError("APK DEX does not contain the expected LocalAiInferenceBridge class and native methods.")
         runtime_related = [name for name in native_files if PurePosixPath(name).name.startswith(("libcsa_localai", "libllama", "libggml"))]

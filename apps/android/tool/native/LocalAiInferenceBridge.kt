@@ -14,6 +14,8 @@ import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /** Flutter/JNI bridge for the pinned llama.cpp CPU runtime. */
 internal object LocalAiInferenceBridge {
@@ -21,11 +23,14 @@ internal object LocalAiInferenceBridge {
     private const val MAX_MODEL_BYTES = 8L * 1024 * 1024 * 1024
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val inferenceRunning = AtomicBoolean(false)
+    private val inferenceRequestId = AtomicLong(0)
     @Volatile private var loadedModelName: String? = null
     @Volatile private var loadedModelSha256: String? = null
     @Volatile private var loadedPublisherMetadataVerified: Boolean = false
     @Volatile private var loadedInferenceSucceeded: Boolean = false
     @Volatile private var loadedOfflineInferenceSucceeded: Boolean = false
+    private const val MODEL_RECEIPT_PREFERENCES = "local_ai_verified_model_receipt"
 
     // App-pinned immutable upstream revision. Runtime installation still
     // verifies publisher metadata and complete file bytes before JNI sees it.
@@ -48,13 +53,21 @@ internal object LocalAiInferenceBridge {
     private external fun nativeLoadModel(path: String): Boolean
     private external fun nativeUnloadModel()
     private external fun nativeComplete(roles: Array<ByteArray>, contents: Array<ByteArray>, maxTokens: Int): ByteArray?
+    private external fun nativeCancelInference()
+    private external fun nativeResetInferenceCancellation()
 
     fun attachChannel(activity: Activity, engine: FlutterEngine) {
         MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "getRuntimeStatus" -> runOnWorker(result) { statusMap(activity) }
-                "getDiagnosticStatus" -> runOnWorker(result) { statusMap(activity, includeInventory = true) }
+                "getRuntimeStatus" -> runOnWorker(result) { restorePersistedModel(activity); statusMap(activity) }
+                "getDiagnosticStatus" -> runOnWorker(result) { restorePersistedModel(activity); statusMap(activity, includeInventory = true) }
                 "loadVerifiedModel" -> runOnWorker(result) { loadVerifiedModel(activity, call) }
+                "deleteInstalledModel" -> runOnWorker(result) { deleteInstalledModel(activity) }
+                "cancelInference" -> {
+                    inferenceRequestId.incrementAndGet()
+                    nativeCancelInference()
+                    result.success(true)
+                }
                 "unloadModel" -> runOnWorker(result) {
                     nativeUnloadModel()
                     loadedModelName = null
@@ -64,7 +77,17 @@ internal object LocalAiInferenceBridge {
                     loadedOfflineInferenceSucceeded = false
                     true
                 }
-                "complete" -> runOnWorker(result) { complete(activity, call) }
+                "complete" -> {
+                    if (!inferenceRunning.compareAndSet(false, true)) {
+                        result.error("local_ai_unavailable", "A local inference request is already running.", null)
+                    } else {
+                        val requestId = inferenceRequestId.incrementAndGet()
+                        nativeResetInferenceCancellation()
+                        runOnWorker(result) {
+                            try { complete(activity, call, requestId) } finally { inferenceRunning.set(false) }
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -103,6 +126,81 @@ internal object LocalAiInferenceBridge {
             }?.toList() ?: emptyList()
     }
 
+    /** Restore only a receipt that exactly matches this build's static pin, and rehash the private file before JNI load. */
+    private fun restorePersistedModel(activity: Activity): Boolean {
+        if (loadedModelName != null && loadedPublisherMetadataVerified) return true
+        val pin = trustedModels.values.firstOrNull() ?: return false
+        val receipt = activity.getSharedPreferences(MODEL_RECEIPT_PREFERENCES, Context.MODE_PRIVATE)
+        val receiptMatches = receipt.getString("fileName", null) == trustedModels.entries.firstOrNull { it.value == pin }?.key &&
+            receipt.getString("repository", null) == pin.repository &&
+            receipt.getString("author", null) == pin.repository.substringBefore('/') &&
+            receipt.getString("revision", null) == pin.revision &&
+            receipt.getString("license", null)?.equals(pin.license, ignoreCase = true) == true &&
+            receipt.getLong("sizeBytes", -1L) == pin.size &&
+            receipt.getString("sha256", null)?.equals(pin.sha256, ignoreCase = true) == true
+        if (!receiptMatches) return false
+        val name = trustedModels.entries.firstOrNull { it.value == pin }?.key ?: return false
+        val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
+        val modelFile = File(modelRoot, name).canonicalFile
+        if (modelFile.parentFile != modelRoot || !modelFile.isFile || modelFile.length() != pin.size || modelFile.length() > MAX_MODEL_BYTES) {
+            loadedPublisherMetadataVerified = false
+            return false
+        }
+        val actual = sha256(modelFile)
+        if (!MessageDigest.isEqual(actual.toByteArray(), pin.sha256.toByteArray())) {
+            loadedPublisherMetadataVerified = false
+            return false
+        }
+        loadedPublisherMetadataVerified = true
+        if (loadedModelName == name && loadedModelSha256 == actual) return true
+        nativeUnloadModel()
+        loadedModelName = null
+        loadedModelSha256 = null
+        loadedInferenceSucceeded = false
+        loadedOfflineInferenceSucceeded = false
+        if (!nativeLoadModel(modelFile.absolutePath)) return false
+        loadedModelName = name
+        loadedModelSha256 = actual
+        return true
+    }
+
+    private fun deleteInstalledModel(activity: Activity): Boolean {
+        val name = trustedModels.keys.singleOrNull() ?: throw IllegalStateException("No single pinned Local AI model is configured.")
+        val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
+        if (!modelRoot.exists() && !modelRoot.mkdirs()) throw IllegalStateException("Could not access the private Local AI model directory.")
+        val targets = listOf(File(modelRoot, name), File(modelRoot, "$name.part"))
+        targets.forEach { file ->
+            val canonical = file.canonicalFile
+            if (canonical.parentFile != modelRoot) throw SecurityException("Model removal path escaped private storage.")
+        }
+        nativeUnloadModel()
+        loadedModelName = null
+        loadedModelSha256 = null
+        loadedPublisherMetadataVerified = false
+        loadedInferenceSucceeded = false
+        loadedOfflineInferenceSucceeded = false
+        var removed = false
+        for (file in targets) {
+            if (file.exists()) {
+                if (!file.delete()) throw IllegalStateException("Could not remove the pinned model file from private storage.")
+                removed = true
+            }
+        }
+        activity.getSharedPreferences(MODEL_RECEIPT_PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
+        return removed
+    }
+
+    private fun persistVerifiedReceipt(activity: Activity, name: String, pin: ModelPin): Boolean =
+        activity.getSharedPreferences(MODEL_RECEIPT_PREFERENCES, Context.MODE_PRIVATE).edit()
+            .putString("fileName", name)
+            .putString("repository", pin.repository)
+            .putString("author", pin.repository.substringBefore('/'))
+            .putString("revision", pin.revision)
+            .putString("license", pin.license)
+            .putLong("sizeBytes", pin.size)
+            .putString("sha256", pin.sha256)
+            .commit()
+
     private fun loadVerifiedModel(activity: Activity, call: MethodCall): Map<String, Any?> {
         val name = call.argument<String>("fileName") ?: throw IllegalArgumentException("Model filename is required.")
         val expected = call.argument<String>("sha256")?.lowercase() ?: throw IllegalArgumentException("Trusted model digest is required.")
@@ -137,17 +235,20 @@ internal object LocalAiInferenceBridge {
         nativeUnloadModel()
         loadedModelName = null
         loadedModelSha256 = null
-        loadedPublisherMetadataVerified = false
+        loadedPublisherMetadataVerified = true
         loadedInferenceSucceeded = false
         loadedOfflineInferenceSucceeded = false
+        if (!persistVerifiedReceipt(activity, name, pin)) {
+            loadedPublisherMetadataVerified = false
+            throw IllegalStateException("Could not persist the verified model receipt in app-private storage.")
+        }
         if (!nativeLoadModel(modelFile.absolutePath)) throw IllegalStateException("llama.cpp could not load the verified GGUF model.")
         loadedModelName = name
         loadedModelSha256 = actual
-        loadedPublisherMetadataVerified = true
         return statusMap(activity)
     }
 
-    private fun complete(activity: Activity, call: MethodCall): String {
+    private fun complete(activity: Activity, call: MethodCall, requestId: Long): String {
         if (loadedModelName == null) throw IllegalStateException("Local AI is Not Ready: no verified model is loaded.")
         val input = call.argument<List<Map<String, String>>>("messages") ?: throw IllegalArgumentException("Chat messages are required.")
         if (input.isEmpty() || input.size > 32) throw IllegalArgumentException("Conversation exceeds the safe turn limit.")
@@ -167,10 +268,13 @@ internal object LocalAiInferenceBridge {
             roles.add(roleBytes)
             contents.add(contentBytes)
         }
-        val maxTokens = (call.argument<Int>("maxTokens") ?: 256).coerceIn(1, 512)
+        val maxTokens = (call.argument<Int>("maxTokens") ?: 96).coerceIn(1, 96)
         val offlineBefore = isNetworkIsolated(activity)
         val output = nativeComplete(roles.toTypedArray(), contents.toTypedArray(), maxTokens)
-            ?: throw IllegalStateException("Local inference failed; no cloud fallback was attempted.")
+            ?: throw IllegalStateException("Local inference failed or was stopped; no cloud fallback was attempted.")
+        if (requestId != inferenceRequestId.get()) {
+            throw IllegalStateException("Local inference was cancelled; no cloud fallback was attempted.")
+        }
         val response = output.toString(Charsets.UTF_8).take(12_000)
         if (response.isNotBlank()) {
             loadedInferenceSucceeded = true

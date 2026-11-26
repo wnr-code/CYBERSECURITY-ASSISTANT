@@ -2,6 +2,8 @@
 #include <llama.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -12,6 +14,15 @@ namespace {
 std::mutex runtime_mutex;
 llama_model * model = nullptr;
 llama_context * context = nullptr;
+std::atomic<bool> inference_cancelled{false};
+
+void native_reset_inference_cancellation(JNIEnv *, jobject) {
+    inference_cancelled.store(false, std::memory_order_release);
+}
+
+void native_cancel_inference(JNIEnv *, jobject) {
+    inference_cancelled.store(true, std::memory_order_release);
+}
 
 std::string from_utf8_bytes(JNIEnv * env, jbyteArray value) {
     if (value == nullptr) return {};
@@ -90,11 +101,15 @@ void native_unload_model(JNIEnv *, jobject) {
 jbyteArray native_complete(JNIEnv * env, jobject, jobjectArray role_values, jobjectArray content_values, jint max_tokens) {
     const auto roles = read_string_array(env, role_values);
     const auto contents = read_string_array(env, content_values);
-    if (env->ExceptionCheck() || roles.empty() || roles.size() != contents.size() || roles.size() > 32 || max_tokens < 1 || max_tokens > 512) {
+    if (env->ExceptionCheck() || roles.empty() || roles.size() != contents.size() || roles.size() > 32 || max_tokens < 1 || max_tokens > 96) {
         return nullptr;
     }
     std::lock_guard<std::mutex> lock(runtime_mutex);
-    if (model == nullptr || context == nullptr) return nullptr;
+    if (model == nullptr || context == nullptr || inference_cancelled.load(std::memory_order_acquire)) return nullptr;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    const auto should_stop = [&]() {
+        return inference_cancelled.load(std::memory_order_acquire) || std::chrono::steady_clock::now() >= deadline;
+    };
     const char * chat_template = llama_model_chat_template(model, nullptr);
     if (chat_template == nullptr) return nullptr;
 
@@ -145,6 +160,7 @@ jbyteArray native_complete(JNIEnv * env, jobject, jobjectArray role_values, jobj
     // Prefill in bounded batches; the prompt may be longer than llama.cpp's
     // physical batch size while still fitting the configured context.
     while (cursor < tokens.size()) {
+        if (should_stop()) { failed = true; break; }
         llama_batch_ext_clear(batch);
         const size_t count = std::min(batch_capacity, tokens.size() - cursor);
         int32_t final_index = -1;
@@ -165,6 +181,7 @@ jbyteArray native_complete(JNIEnv * env, jobject, jobjectArray role_values, jobj
     }
 
     for (int32_t generated = 0; !failed && generated < max_tokens; ++generated) {
+        if (should_stop()) { failed = true; break; }
         llama_token next_token = llama_sampler_sample(sampler, context, -1);
         if (llama_vocab_is_eog(vocab, next_token)) break;
         char piece[512];
@@ -193,6 +210,8 @@ JNINativeMethod methods[] = {
     {const_cast<char *>("nativeLoadModel"), const_cast<char *>("(Ljava/lang/String;)Z"), reinterpret_cast<void *>(native_load_model)},
     {const_cast<char *>("nativeUnloadModel"), const_cast<char *>("()V"), reinterpret_cast<void *>(native_unload_model)},
     {const_cast<char *>("nativeComplete"), const_cast<char *>("([[B[[BI)[B"), reinterpret_cast<void *>(native_complete)},
+    {const_cast<char *>("nativeCancelInference"), const_cast<char *>("()V"), reinterpret_cast<void *>(native_cancel_inference)},
+    {const_cast<char *>("nativeResetInferenceCancellation"), const_cast<char *>("()V"), reinterpret_cast<void *>(native_reset_inference_cancellation)},
 };
 } // namespace
 

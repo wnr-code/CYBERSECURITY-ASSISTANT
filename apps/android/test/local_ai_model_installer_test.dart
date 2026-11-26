@@ -7,12 +7,15 @@ import 'package:cybersecurity_assistant/core/local_ai_model_source.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _FakeArtifactSource implements LocalAiArtifactSource {
-  _FakeArtifactSource(this.manifest, this.bytes, {this.publisherOverride});
+  _FakeArtifactSource(this.manifest, this.bytes, {this.publisherOverride, this.interruptFirstRangeOnce = false});
 
   final LocalAiModelManifest manifest;
   final List<int> bytes;
   final LocalAiPublisherFile? publisherOverride;
+  final bool interruptFirstRangeOnce;
+  bool _didInterruptFirstRange = false;
   int downloadCalls = 0;
+  final requestedRanges = <String>[];
 
   @override
   Future<LocalAiPublisherFile> fetchPublisherMetadata(LocalAiModelManifest requested) async => publisherOverride ?? LocalAiPublisherFile(
@@ -26,12 +29,24 @@ class _FakeArtifactSource implements LocalAiArtifactSource {
       );
 
   @override
-  Future<LocalAiDownloadResponse> openPinnedDownload(LocalAiModelManifest requested) async {
+  Future<LocalAiDownloadResponse> openPinnedDownload(
+    LocalAiModelManifest requested, {
+    required int rangeStart,
+    required int rangeEnd,
+  }) async {
     downloadCalls++;
+    requestedRanges.add('$rangeStart-$rangeEnd');
+    var rangeBytes = bytes.sublist(rangeStart, rangeEnd + 1);
+    if (interruptFirstRangeOnce && !_didInterruptFirstRange && rangeStart == 0) {
+      _didInterruptFirstRange = true;
+      rangeBytes = rangeBytes.sublist(0, rangeBytes.length ~/ 2);
+    }
+    final split = rangeBytes.length ~/ 2;
     return LocalAiDownloadResponse(
-      statusCode: 200,
-      contentLength: bytes.length,
-      body: Stream<List<int>>.fromIterable([bytes.sublist(0, bytes.length ~/ 2), bytes.sublist(bytes.length ~/ 2)]),
+      statusCode: 206,
+      contentLength: rangeEnd - rangeStart + 1,
+      contentRange: 'bytes $rangeStart-$rangeEnd/${requested.fileSizeBytes}',
+      body: Stream<List<int>>.fromIterable([rangeBytes.sublist(0, split), rangeBytes.sublist(split)]),
       dispose: () async {},
     );
   }
@@ -172,6 +187,48 @@ void main() {
       LocalAiInstallPhase.loading,
       LocalAiInstallPhase.complete,
     ]));
+  });
+
+  test('resumes a partial model download from its exact saved byte offset', () async {
+    final bytes = utf8.encode(modelBytes);
+    final modelDirectory = Directory('${supportDirectory.path}/local_ai/models')..createSync(recursive: true);
+    final partial = File('${modelDirectory.path}/${manifest.fileName}.part');
+    final checkpoint = bytes.length ~/ 2;
+    await partial.writeAsBytes(bytes.sublist(0, checkpoint), flush: true);
+    final source = _FakeArtifactSource(manifest, bytes);
+    final installer = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: source,
+      availableStorageBytes: () async => manifest.fileSizeBytes + 128 * 1024 * 1024,
+      loadModel: (_, __, ___) async {},
+    );
+
+    final result = await installer.downloadVerifyAndLoad();
+    expect(source.requestedRanges, ['${checkpoint}-${bytes.length - 1}']);
+    expect(await File('${modelDirectory.path}/${manifest.fileName}').readAsBytes(), bytes);
+    expect(result.sha256Hex, modelDigest);
+    expect(await partial.exists(), isFalse);
+  });
+
+  test('retries a dropped range from the last byte received instead of restarting', () async {
+    final bytes = utf8.encode(modelBytes);
+    final source = _FakeArtifactSource(manifest, bytes, interruptFirstRangeOnce: true);
+    final installer = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: source,
+      availableStorageBytes: () async => manifest.fileSizeBytes + 128 * 1024 * 1024,
+      loadModel: (_, __, ___) async {},
+    );
+
+    final result = await installer.downloadVerifyAndLoad();
+    final checkpoint = bytes.length ~/ 2;
+    expect(source.requestedRanges, ['0-${bytes.length - 1}', '$checkpoint-${bytes.length - 1}']);
+    expect(result.sha256Hex, modelDigest);
+    expect(await File('${supportDirectory.path}/local_ai/models/${manifest.fileName}').readAsBytes(), bytes);
   });
 
   test('storage failure preserves an existing file until a replacement passes verification', () async {

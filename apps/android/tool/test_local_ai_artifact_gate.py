@@ -35,7 +35,7 @@ def _source_apk(apk_path: Path, native: bytes | None = None) -> None:
     with zipfile.ZipFile(apk_path, "w") as apk:
         apk.writestr("lib/arm64-v8a/libcsa_localai.so", native or _elf64_aarch64())
         apk.writestr("assets/local_ai/llama.cpp-LICENSE.txt", "MIT License\nCopyright The ggml authors\n")
-        apk.writestr("classes.dex", b"LocalAiInferenceBridge nativeLoadModel nativeUnloadModel nativeComplete")
+        apk.writestr("classes.dex", b"LocalAiInferenceBridge nativeLoadModel nativeUnloadModel nativeComplete nativeCancelInference nativeResetInferenceCancellation")
 
 
 def _manifest_with_runtime(libraries: dict[str, bytes]) -> dict:
@@ -278,7 +278,7 @@ hooks:
             self.assertEqual(report["bundled_gguf_models"], 0)
             self.assertIn("not_ready", report["readiness"])
             self.assertEqual(report["native_library"]["jni_methods_registered_in_dex"], [
-                "nativeLoadModel", "nativeUnloadModel", "nativeComplete",
+                "nativeLoadModel", "nativeUnloadModel", "nativeComplete", "nativeCancelInference", "nativeResetInferenceCancellation",
             ])
             json.dumps(report)
 

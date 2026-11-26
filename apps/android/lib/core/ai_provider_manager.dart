@@ -123,7 +123,7 @@ class AiProviderManager {
     final adapter = _adapters[providerId];
     if (adapter is! LocalAiProviderAdapter || adapter.runtime is! LocalAiChatAvailability) return false;
     try {
-      return await (adapter.runtime as LocalAiChatAvailability).canAttemptInference().timeout(const Duration(seconds: 3));
+      return await (adapter.runtime as LocalAiChatAvailability).canAttemptInference().timeout(const Duration(seconds: 90));
     } catch (_) {
       return false;
     }
@@ -137,7 +137,7 @@ class AiProviderManager {
       if (runtime is! LocalAiInferenceReadiness) return false;
       try {
         final readiness = runtime as LocalAiInferenceReadiness;
-        return await readiness.isReady().timeout(const Duration(seconds: 3));
+        return await readiness.isReady().timeout(const Duration(seconds: 90));
       } catch (_) {
         return false;
       }

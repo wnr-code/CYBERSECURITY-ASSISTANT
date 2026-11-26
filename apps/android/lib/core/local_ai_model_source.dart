@@ -31,16 +31,22 @@ class LocalAiDownloadResponse {
     required this.contentLength,
     required this.body,
     required this.dispose,
+    this.contentRange,
   });
   final int statusCode;
   final int? contentLength;
+  final String? contentRange;
   final Stream<List<int>> body;
   final Future<void> Function() dispose;
 }
 
 abstract interface class LocalAiArtifactSource {
   Future<LocalAiPublisherFile> fetchPublisherMetadata(LocalAiModelManifest manifest);
-  Future<LocalAiDownloadResponse> openPinnedDownload(LocalAiModelManifest manifest);
+  Future<LocalAiDownloadResponse> openPinnedDownload(
+    LocalAiModelManifest manifest, {
+    required int rangeStart,
+    required int rangeEnd,
+  });
 }
 
 /// Talks only to the official Hugging Face Hub API and the immutable resolve
@@ -142,22 +148,33 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
   }
 
   @override
-  Future<LocalAiDownloadResponse> openPinnedDownload(LocalAiModelManifest manifest) async {
+  Future<LocalAiDownloadResponse> openPinnedDownload(
+    LocalAiModelManifest manifest, {
+    required int rangeStart,
+    required int rangeEnd,
+  }) async {
     final uri = Uri.parse(manifest.downloadUrl);
     if (uri.scheme != 'https' || uri.host != 'huggingface.co' ||
-        uri.path != '/${manifest.repository}/resolve/${manifest.revision}/${manifest.fileName}') {
-      throw const LocalAiModelInstallException('Pinned download URL is not the exact official HTTPS resolve URL.');
+        uri.path != '/${manifest.repository}/resolve/${manifest.revision}/${manifest.fileName}' ||
+        rangeStart < 0 || rangeEnd < rangeStart || rangeEnd >= manifest.fileSizeBytes) {
+      throw const LocalAiModelInstallException('Pinned download URL or requested byte range is invalid.');
     }
-    final response = await _request(uri, allowCdnRedirects: true);
+    final response = await _request(uri, allowCdnRedirects: true, rangeStart: rangeStart, rangeEnd: rangeEnd);
     return LocalAiDownloadResponse(
       statusCode: response.statusCode,
       contentLength: response.contentLength >= 0 ? response.contentLength : null,
+      contentRange: response.contentRange,
       body: response.body,
       dispose: response.dispose,
     );
   }
 
-  Future<_SourceResponse> _request(Uri initial, {required bool allowCdnRedirects}) async {
+  Future<_SourceResponse> _request(
+    Uri initial, {
+    required bool allowCdnRedirects,
+    int? rangeStart,
+    int? rangeEnd,
+  }) async {
     final client = _clientFactory()
       ..autoUncompress = false
       ..connectionTimeout = const Duration(seconds: 20)
@@ -173,6 +190,12 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
         final request = await client.getUrl(uri).timeout(const Duration(seconds: 20));
         request.followRedirects = false;
         request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+        if ((rangeStart == null) != (rangeEnd == null)) {
+          throw const LocalAiModelInstallException('Incomplete byte range requested from the official model source.');
+        }
+        if (rangeStart != null && rangeEnd != null) {
+          request.headers.set('range', 'bytes=$rangeStart-$rangeEnd');
+        }
         request.headers.set(HttpHeaders.userAgentHeader, 'CybersecurityAssistant-LocalAI/1.0');
         request.headers.set(HttpHeaders.acceptHeader, uri.path.startsWith('/api/') ? 'application/json' : 'application/octet-stream');
         final response = await request.close().timeout(const Duration(seconds: 30));
@@ -189,7 +212,13 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
           continue;
         }
         transferred = true;
-        return _SourceResponse(response.statusCode, response.contentLength, response, () async => client.close(force: true));
+        return _SourceResponse(
+          response.statusCode,
+          response.contentLength,
+          response.headers.value('content-range'),
+          response,
+          () async => client.close(force: true),
+        );
       }
       throw const LocalAiModelInstallException('Publisher download exceeded the redirect limit.');
     } on LocalAiModelInstallException {
@@ -210,9 +239,10 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
 }
 
 class _SourceResponse {
-  const _SourceResponse(this.statusCode, this.contentLength, this.body, this.dispose);
+  const _SourceResponse(this.statusCode, this.contentLength, this.contentRange, this.body, this.dispose);
   final int statusCode;
   final int contentLength;
+  final String? contentRange;
   final HttpClientResponse body;
   final Future<void> Function() dispose;
 }

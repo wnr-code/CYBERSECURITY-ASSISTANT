@@ -26,7 +26,7 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
   Future<bool> _hasVerifiedLoadedModel({required bool requireSuccessfulInference}) async {
     try {
       final status = await channel.invokeMapMethod<Object?, Object?>('getRuntimeStatus')
-          .timeout(const Duration(seconds: 3));
+          .timeout(const Duration(seconds: 90));
       return status != null &&
           status['sourceCommit'] == sourceCommit &&
           status['runtimeLoaded'] == true &&
@@ -101,8 +101,15 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
     try {
       final response = await channel.invokeMethod<Object?>('complete', {
         'messages': nativeMessages,
-        'maxTokens': 256,
-      }).timeout(const Duration(minutes: 2));
+        'maxTokens': 96,
+      }).timeout(const Duration(seconds: 75), onTimeout: () async {
+        try {
+          await channel.invokeMethod<Object?>('cancelInference').timeout(const Duration(seconds: 2));
+        } catch (_) {
+          // Native generation also has a hard deadline and checks cancellation between decode steps.
+        }
+        throw const AiProviderException('Local inference exceeded 75 seconds and was stopped. No cloud fallback was attempted.');
+      });
       if (response is! String || response.trim().isEmpty || response.length > 12000) {
         throw const AiProviderException('Local inference returned an empty or oversized response. No cloud fallback was attempted.');
       }
