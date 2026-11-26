@@ -219,7 +219,8 @@ void main() {
       localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
       home: MarketProviderDetailScreen(providerId: 'local_ai', manager: manager),
     ));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
     for (final section in ['Device Compatibility', 'Runtime Information', 'Model Catalog', 'Storage Management']) {
       expect(find.text(section), findsOneWidget);
     }
