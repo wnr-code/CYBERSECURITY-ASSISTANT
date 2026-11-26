@@ -1,0 +1,414 @@
+name: Flutter quality checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.0'
+  ANDROID_NDK_VERSION: '27.0.12077973'
+  ANDROID_CMAKE_VERSION: '3.22.1'
+
+jobs:
+  flutter-analyze:
+    name: Flutter analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        timeout-minutes: 5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+        timeout-minutes: 5
+
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+        timeout-minutes: 10
+
+      - name: Generate Android scaffold and apply hardening
+        working-directory: apps/android
+        run: |
+          flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+          python3 tool/configure_android.py
+        timeout-minutes: 10
+
+      - name: Resolve Flutter dependencies
+        working-directory: apps/android
+        run: timeout --signal=TERM --kill-after=20s 12m flutter pub get
+        timeout-minutes: 13
+
+      - name: Analyze Flutter source
+        working-directory: apps/android
+        env:
+          FLUTTER_ANALYZE_TIMEOUT_SECONDS: '300'
+        run: python3 tool/run_flutter_analyze.py
+        timeout-minutes: 7
+
+  flutter-unit-widget-tests:
+    name: Flutter unit and widget tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        timeout-minutes: 5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+        timeout-minutes: 5
+
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+        timeout-minutes: 10
+
+      - name: Generate Android scaffold and apply hardening
+        working-directory: apps/android
+        run: |
+          flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+          python3 -m unittest discover -s tool -p 'test_*.py' -v
+          python3 tool/configure_android.py
+        timeout-minutes: 12
+
+      - name: Resolve Flutter dependencies
+        working-directory: apps/android
+        run: timeout --signal=TERM --kill-after=20s 12m flutter pub get
+        timeout-minutes: 13
+
+      - name: Run unit and widget tests
+        id: flutter_tests
+        working-directory: apps/android
+        env:
+          FLUTTER_TEST_EVIDENCE_DIR: ${{ runner.temp }}/flutter-test-evidence
+          FLUTTER_TEST_PROCESS_TIMEOUT_SECONDS: '180'
+          FLUTTER_TEST_TIMEOUT: '60s'
+        run: python3 tool/run_flutter_test.py
+        timeout-minutes: 6
+
+      - name: Upload Flutter test evidence
+        if: always() && steps.flutter_tests.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flutter-test-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/flutter-test-evidence/
+          if-no-files-found: error
+          retention-days: 3
+        timeout-minutes: 5
+
+  android-debug-apk:
+    name: Build Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        timeout-minutes: 5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+        timeout-minutes: 5
+
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+        timeout-minutes: 10
+
+      - name: Install pinned Android SDK, NDK, and CMake
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.0.12077973 cmake;3.22.1'
+          accept-android-sdk-licenses: true
+        timeout-minutes: 15
+
+      - name: Generate Android scaffold and apply hardening
+        working-directory: apps/android
+        run: |
+          flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+          python3 -m unittest discover -s tool -p 'test_*.py' -v
+          python3 tool/configure_android.py
+        timeout-minutes: 12
+
+      - name: Record pinned toolchain versions
+        working-directory: apps/android
+        run: |
+          mkdir -p build
+          {
+            echo 'Flutter:'; timeout 30s flutter --version
+            echo 'Dart:'; timeout 30s dart --version 2>&1
+            echo 'Java:'; timeout 30s java -version 2>&1
+            echo 'NDK:'; cat "$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION/source.properties"
+            echo 'CMake:'; timeout 30s "$ANDROID_SDK_ROOT/cmake/$ANDROID_CMAKE_VERSION/bin/cmake" --version
+            echo 'Gradle wrapper:'; timeout --signal=TERM --kill-after=10s 2m ./android/gradlew --version
+          } | tee build/local-ai-toolchain.txt
+        timeout-minutes: 5
+
+      - name: Resolve Flutter dependencies
+        working-directory: apps/android
+        run: timeout --signal=TERM --kill-after=20s 12m flutter pub get
+        timeout-minutes: 13
+
+      - name: Build debug APK
+        working-directory: apps/android
+        env:
+          FLUTTER_BUILD_PROCESS_TIMEOUT_SECONDS: '1500'
+        run: python3 tool/run_flutter_build.py --phase build
+        timeout-minutes: 28
+
+      - name: Report and hash debug APK
+        working-directory: apps/android
+        run: |
+          apk=build/app/outputs/flutter-apk/app-debug.apk
+          test -s "$apk"
+          bytes=$(stat -c '%s' "$apk")
+          mib=$(awk -v bytes="$bytes" 'BEGIN { printf "%.2f", bytes / 1048576 }')
+          sha=$(sha256sum "$apk" | cut -d ' ' -f 1)
+          echo "Debug APK: ${bytes} bytes (${mib} MiB), SHA-256 ${sha}"
+          echo "::notice title=Debug APK size::${bytes} bytes (${mib} MiB); SHA-256 ${sha}"
+          echo "### Android debug APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Size: ${bytes} bytes (${mib} MiB)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA-256: ${sha}" >> "$GITHUB_STEP_SUMMARY"
+        timeout-minutes: 3
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cybersecurity-assistant-debug-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/android/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+        timeout-minutes: 10
+
+  apk-artifact-verification:
+    name: Verify debug APK artifact
+    runs-on: ubuntu-latest
+    needs: android-debug-apk
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        timeout-minutes: 5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+        timeout-minutes: 5
+
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+        timeout-minutes: 10
+
+      - name: Install pinned Android build tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+          accept-android-sdk-licenses: true
+        timeout-minutes: 12
+
+      - name: Download debug APK artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cybersecurity-assistant-debug-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/android/build/debug-apk
+        timeout-minutes: 5
+
+      - name: Generate verification scaffold
+        working-directory: apps/android
+        run: |
+          flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+          python3 tool/configure_android.py
+        timeout-minutes: 10
+
+      - name: Verify APK manifest, resources, signer, and digest
+        working-directory: apps/android
+        run: python3 tool/verify_android_splash.py --apk build/debug-apk/app-debug.apk
+        timeout-minutes: 5
+
+  # Device-specific startup validation is intentionally performed by the user on a physical phone.
+  # GitHub-hosted workflows must not boot Android emulators; static APK/ABI/ELF/DEX/JNI audits remain below.
+  physical-device-validation:
+    name: Physical-device validation instructions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Publish manual phone-test boundary
+        run: |
+          {
+            echo '### Physical-device validation (manual; no emulator used)'
+            echo '- Download only the source-native ARM64 APK artifact after the native audit passes.'
+            echo '- On an ARM64 Android phone, install it, launch it, and open Market → Providers → Local AI → Diagnostic Test.'
+            echo '- Save or copy the report; verify ABI, native/JNI loading, available RAM/storage, installed model SHA-256, model load, and inference outcomes.'
+            echo '- For the offline check, enable airplane mode and confirm Wi-Fi/mobile data are off before repeating a local inference.'
+            echo '- Report each blocked stage and remediation. Local AI remains NOT READY until every required physical-device/model/offline check passes.'
+            echo '- No physical phone is attached to this workflow; no phone test is claimed as passed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  local-ai-native-arm64:
+    name: Source-native llama.cpp ARM64 build and audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        timeout-minutes: 5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+        timeout-minutes: 5
+
+      - name: Install pinned Flutter and Dart toolchain
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+        timeout-minutes: 10
+
+      - name: Install pinned Android SDK, NDK, and CMake
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.0.12077973 cmake;3.22.1'
+          accept-android-sdk-licenses: true
+        timeout-minutes: 15
+
+      - name: Generate Android scaffold and apply hardening
+        working-directory: apps/android
+        run: |
+          flutter create --no-pub --platforms=android --project-name cybersecurity_assistant --org org.cybersecurityassistant .
+          python3 -m unittest discover -s tool -p 'test_*.py' -v
+          python3 tool/configure_android.py
+        timeout-minutes: 12
+
+      - name: Record native build toolchain versions
+        working-directory: apps/android
+        run: |
+          mkdir -p build
+          {
+            echo 'Flutter:'; timeout 30s flutter --version
+            echo 'Java:'; timeout 30s java -version 2>&1
+            echo 'NDK:'; cat "$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION/source.properties"
+            echo 'CMake:'; timeout 30s "$ANDROID_SDK_ROOT/cmake/$ANDROID_CMAKE_VERSION/bin/cmake" --version
+            echo 'Gradle wrapper:'; timeout --signal=TERM --kill-after=10s 2m ./android/gradlew --version
+          } | tee build/local-ai-toolchain.txt
+        timeout-minutes: 5
+
+      - name: Resolve Flutter dependencies
+        working-directory: apps/android
+        run: timeout --signal=TERM --kill-after=20s 12m flutter pub get
+        timeout-minutes: 13
+
+      - name: Build source-native CPU-only ARM64 JNI APK
+        id: native_build
+        working-directory: apps/android
+        env:
+          LOCAL_AI_NATIVE_BUILD: '1'
+          FLUTTER_BUILD_PROCESS_TIMEOUT_SECONDS: '2100'
+        run: python3 tool/run_flutter_build.py --phase build
+        timeout-minutes: 38
+
+      - name: Audit source-native ARM64 APK, ELF dependencies, DEX, and JNI registration
+        id: native_audit
+        if: always() && steps.native_build.outcome == 'success'
+        working-directory: apps/android
+        env:
+          LOCAL_AI_NATIVE_BUILD: '1'
+        run: python3 tool/run_flutter_build.py --phase audit
+        timeout-minutes: 10
+
+      - name: Publish bounded native build and audit diagnostics
+        if: always() && (steps.native_build.outcome == 'failure' || steps.native_audit.outcome == 'failure')
+        working-directory: apps/android
+        env:
+          BUILD_OUTCOME: ${{ steps.native_build.outcome }}
+          AUDIT_OUTCOME: ${{ steps.native_audit.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('build/local-ai-native-diagnostics.txt')
+          if path.is_file():
+              text = path.read_text(encoding='utf-8', errors='replace')[-6000:]
+          else:
+              text = f'No diagnostic file was produced. Native build outcome={__import__("os").environ["BUILD_OUTCOME"]}; APK audit outcome={__import__("os").environ["AUDIT_OUTCOME"]}. See preceding failed step output.'
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(text + '\n', encoding='utf-8')
+          for index, start in enumerate(range(0, len(text), 1500), 1):
+              chunk = text[start:start + 1500]
+              escaped = chunk.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f'::error title=Native build diagnostics {index}::{escaped}')
+          PY
+        timeout-minutes: 2
+
+      - name: Report physical-device runtime validation status
+        if: always()
+        working-directory: apps/android
+        run: |
+          echo '### Native runtime/JNI validation boundary' >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.native_audit.outcome }}" = success ]; then
+            echo '- Static ARM64 ELF, APK DEX bridge markers, and JNI_OnLoad export audit: passed.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '- Static native APK/JNI audit: not passed; see build/audit diagnostics.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '- JNI library load on a physical ARM64 device: NOT RUN (no compatible device attached to GitHub-hosted runner).' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Verified model load, Chat inference, and airplane-mode inference on a physical phone: NOT RUN; the pinned GGUF is intentionally not bundled in the APK.' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Local AI readiness remains NOT READY.' >> "$GITHUB_STEP_SUMMARY"
+        timeout-minutes: 2
+
+      - name: Upload source-native failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: local-ai-native-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/android/build/local-ai-native-diagnostics.txt
+            apps/android/build/local-ai-toolchain.txt
+          if-no-files-found: warn
+          retention-days: 14
+        timeout-minutes: 5
+
+      - name: Upload audited source-native APK and report
+        if: always() && steps.native_audit.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: local-ai-arm64-native-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            apps/android/build/app/outputs/flutter-apk/app-debug.apk
+            apps/android/build/local-ai-audit-report.json
+            apps/android/build/local-ai-toolchain.txt
+            apps/android/pubspec.lock
+          if-no-files-found: error
+          retention-days: 14
+        timeout-minutes: 10

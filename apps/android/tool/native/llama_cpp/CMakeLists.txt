@@ -1,0 +1,53 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(csa_localai LANGUAGES C CXX)
+
+if(NOT ANDROID OR NOT ANDROID_ABI STREQUAL "arm64-v8a")
+    message(FATAL_ERROR "Local AI native build supports Android arm64-v8a only.")
+endif()
+if(NOT DEFINED LLAMA_CPP_SOURCE_DIR OR NOT EXISTS "${LLAMA_CPP_SOURCE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "Pinned llama.cpp source missing. Run tool/prepare_llama_cpp_source.py first.")
+endif()
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Explicitly portable CPU-only policy. Never rely on upstream defaults for the
+# accelerated backends; the APK packages only this JNI shared library.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Use static upstream libraries" FORCE)
+set(LLAMA_BUILD_IS_DEV OFF CACHE BOOL "Disable upstream development version" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "No CLI/common utilities" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "No upstream tests in APK" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "No upstream CLI tools in APK" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "No upstream examples in APK" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "No server in APK" FORCE)
+set(LLAMA_BUILD_APP OFF CACHE BOOL "No upstream app/CLI in APK" FORCE)
+set(LLAMA_BUILD_MTMD OFF CACHE BOOL "No multimodal helper in APK" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "No network/TLS in native runtime" FORCE)
+set(LLAMA_SUBPROCESS OFF CACHE BOOL "No subprocess APIs" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "Portable NDK target, not host CPU" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "CPU-only build without OpenMP runtime" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "No llamafile backend" FORCE)
+set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "No optional accelerator in CPU-only profile" FORCE)
+set(GGML_CPU_ALL_VARIANTS OFF CACHE BOOL "No runtime-dispatched variant bundles" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "No dynamic backend plugins" FORCE)
+set(GGML_CUDA OFF CACHE BOOL "No CUDA backend" FORCE)
+set(GGML_VULKAN OFF CACHE BOOL "No Vulkan backend" FORCE)
+set(GGML_OPENCL OFF CACHE BOOL "No OpenCL backend" FORCE)
+set(GGML_METAL OFF CACHE BOOL "No Metal backend" FORCE)
+set(GGML_RPC OFF CACHE BOOL "No RPC backend" FORCE)
+set(GGML_SYCL OFF CACHE BOOL "No SYCL backend" FORCE)
+set(GGML_CANN OFF CACHE BOOL "No CANN backend" FORCE)
+set(GGML_MUSA OFF CACHE BOOL "No MUSA backend" FORCE)
+set(GGML_CUDA_GRAPHS OFF CACHE BOOL "No CUDA graphs" FORCE)
+
+add_subdirectory("${LLAMA_CPP_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/llama.cpp")
+
+add_library(csa_localai SHARED llama_jni.cpp)
+target_include_directories(csa_localai PRIVATE
+    "${LLAMA_CPP_SOURCE_DIR}/include"
+    "${LLAMA_CPP_SOURCE_DIR}/ggml/include")
+target_compile_definitions(csa_localai PRIVATE CSA_LLAMA_COMMIT="ea722948146befb23c9529c1ec7f59fb2f34911f")
+target_compile_options(csa_localai PRIVATE -Wall -Wextra -Werror=return-type)
+target_link_libraries(csa_localai PRIVATE llama android log)
