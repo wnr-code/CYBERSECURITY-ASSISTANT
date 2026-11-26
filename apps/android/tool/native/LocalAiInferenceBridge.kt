@@ -35,7 +35,8 @@ internal object LocalAiInferenceBridge {
     fun attachChannel(activity: Activity, engine: FlutterEngine) {
         MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
-                "getRuntimeStatus" -> result.success(statusMap())
+                "getRuntimeStatus" -> runOnWorker(result) { statusMap(activity) }
+                "getDiagnosticStatus" -> runOnWorker(result) { statusMap(activity, includeInventory = true) }
                 "loadVerifiedModel" -> runOnWorker(result) { loadVerifiedModel(activity, call) }
                 "unloadModel" -> runOnWorker(result) {
                     nativeUnloadModel()
@@ -49,15 +50,32 @@ internal object LocalAiInferenceBridge {
         }
     }
 
-    private fun statusMap(): Map<String, Any?> = mapOf(
+    private fun statusMap(activity: Activity, includeInventory: Boolean = false): Map<String, Any?> = mapOf(
         "sourceCommit" to "ea722948146befb23c9529c1ec7f59fb2f34911f",
         "runtimeLoaded" to true,
         "modelLoaded" to (loadedModelName != null),
         "modelName" to loadedModelName,
         "modelSha256" to loadedModelSha256,
+        "installedModels" to if (includeInventory) installedModelInventory(activity) else emptyList<Map<String, Any?>>(),
         "abi" to "arm64-v8a",
         "backend" to "cpu",
     )
+
+    private fun installedModelInventory(activity: Activity): List<Map<String, Any?>> {
+        val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
+        if (!modelRoot.exists() || !modelRoot.isDirectory) return emptyList()
+        return modelRoot.listFiles()?.asSequence()
+            ?.filter { it.isFile && it.name.matches(Regex("[A-Za-z0-9._-]{1,180}\\.gguf")) && it.length() in 1..MAX_MODEL_BYTES }
+            ?.map { file ->
+                val actual = sha256(file)
+                mapOf(
+                    "fileName" to file.name,
+                    "sizeBytes" to file.length(),
+                    "sha256" to actual,
+                    "trusted" to (trustedModelDigests[file.name] == actual),
+                )
+            }?.toList() ?: emptyList()
+    }
 
     private fun loadVerifiedModel(activity: Activity, call: MethodCall): Map<String, Any?> {
         val name = call.argument<String>("fileName") ?: throw IllegalArgumentException("Model filename is required.")
@@ -83,7 +101,7 @@ internal object LocalAiInferenceBridge {
         if (!nativeLoadModel(modelFile.absolutePath)) throw IllegalStateException("llama.cpp could not load the verified GGUF model.")
         loadedModelName = name
         loadedModelSha256 = actual
-        return statusMap()
+        return statusMap(activity)
     }
 
     private fun complete(call: MethodCall): String {

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/ai_provider_manager.dart';
 import '../core/market_provider_manager.dart';
 import '../l10n/app_localizations.dart';
+import 'local_ai_diagnostic_test.dart';
 
 class MarketProviderDialog extends StatefulWidget {
   const MarketProviderDialog({super.key, required this.providerId, required this.manager});
@@ -185,11 +186,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
           style: const TextStyle(fontSize: 12, height: 1.4)),
       _officialLink(context, MarketProviderManager.localAiModelsDocs),
       const SizedBox(height: 10),
-      OutlinedButton.icon(
-        onPressed: null,
-        icon: const Icon(Icons.play_arrow_rounded),
-        label: Text(context.tr('Offline Inference Test')),
-      ),
+      LocalAiDiagnosticAction(status: widget.manager.statusFor('local_ai')),
       Text(context.tr('Unknown or insufficient ABI, RAM, or storage must fail closed. Runtime/model checksums and licenses are still pending; no Local AI package is marked Ready.'),
           style: const TextStyle(fontSize: 11, height: 1.4)),
     ]);

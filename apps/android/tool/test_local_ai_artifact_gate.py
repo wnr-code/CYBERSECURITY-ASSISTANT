@@ -231,6 +231,10 @@ hooks:
             self.assertEqual(report["native_library"]["elf"]["machine"], "AArch64")
             self.assertEqual(report["bundled_gguf_models"], 0)
             self.assertIn("not_ready", report["readiness"])
+            self.assertEqual(report["native_library"]["jni_methods_registered_in_dex"], [
+                "nativeLoadModel", "nativeUnloadModel", "nativeComplete",
+            ])
+            json.dumps(report)
 
     def test_source_apk_audit_rejects_model_payload_and_dynamic_gpu_library(self):
         with tempfile.TemporaryDirectory() as directory:

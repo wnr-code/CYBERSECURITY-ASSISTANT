@@ -8,6 +8,7 @@ import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/widgets/cloudflare_dashboard_screen.dart';
 import 'package:cybersecurity_assistant/widgets/market_provider_detail_screen.dart';
 import 'package:cybersecurity_assistant/widgets/market_provider_dialog.dart';
+import 'package:cybersecurity_assistant/widgets/local_ai_diagnostic_test.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -182,10 +183,34 @@ void main() {
     expect(find.textContaining('The app uses official llama.cpp source pinned to a commit'), findsOneWidget);
     expect(find.textContaining('Pinned llama.cpp source commit:'), findsOneWidget);
     expect(find.text('Qwen2.5 1.5B Instruct Q4 remains a target candidate only. Its immutable publisher revision, model license, exact file size, and SHA-256 are not verified. Market does not offer a download until those checks pass.'), findsOneWidget);
-    expect(find.text('Offline Inference Test'), findsWidgets);
-    final inferenceButton = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Offline Inference Test'));
-    expect(inferenceButton.onPressed, isNull);
+    expect(find.text('Offline Inference Test'), findsOneWidget);
+    final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+    expect(diagnostic.onPressed, isNotNull);
+    await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+    await tester.pumpAndSettle();
+    expect(find.text('Local AI Diagnostic Test'), findsOneWidget);
+    expect(manager.statusFor('local_ai'), ManagedProviderStatus.notReady);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Local AI Diagnostic Test stays available for NOT READY and READY provider statuses', (tester) async {
+    for (final status in [ManagedProviderStatus.notReady, ManagedProviderStatus.connected]) {
+      await tester.pumpWidget(MaterialApp(
+        locale: const Locale('en'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [AppLocalizationsDelegate(), ...GlobalMaterialLocalizations.delegates],
+        home: Scaffold(body: LocalAiDiagnosticAction(status: status)),
+      ));
+      final action = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+      expect(action.onPressed, isNotNull, reason: 'Diagnostic action must remain enabled when status is $status');
+      await tester.tap(find.byKey(const ValueKey('local-ai-diagnostic-test')));
+      await tester.pumpAndSettle();
+      expect(find.text('Local AI Diagnostic Test'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('Market configuration dialogs persist Cloudflare token and Gemini key before testing connections', (tester) async {

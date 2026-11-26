@@ -254,95 +254,24 @@ jobs:
         run: python3 tool/verify_android_splash.py --apk build/debug-apk/app-debug.apk
         timeout-minutes: 5
 
-  emulator-cold-start:
-    name: Cold start API ${{ matrix.api_level }}
+  # Device-specific startup validation is intentionally performed by the user on a physical phone.
+  # GitHub-hosted workflows must not boot Android emulators; static APK/ABI/ELF/DEX/JNI audits remain below.
+  physical-device-validation:
+    name: Physical-device validation instructions
     runs-on: ubuntu-latest
-    needs: android-debug-apk
-    if: github.event_name == 'workflow_dispatch' && needs.android-debug-apk.result == 'success'
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        api_level: [30, 35]
+    if: github.event_name == 'workflow_dispatch'
     steps:
-      - name: Check out repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        timeout-minutes: 5
-
-      - name: Download debug APK artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: cybersecurity-assistant-debug-apk-${{ github.run_id }}-${{ github.run_attempt }}
-          path: apps/android/build/debug-apk
-        timeout-minutes: 5
-
-      - name: Emulator boot, APK install, cold start, and screenshots
-        id: cold_start
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
-        with:
-          api-level: ${{ matrix.api_level }}
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          emulator-boot-timeout: 600
-          emulator-options: -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
-          disable-animations: false
-          working-directory: apps/android
-          script: python3 tool/capture_android_cold_start.py --apk build/debug-apk/app-debug.apk --output-dir build/cold-start/api-${{ matrix.api_level }} --api-level ${{ matrix.api_level }} --overall-timeout-seconds 720
-        timeout-minutes: 20
-
-      - name: Collect emulator and ADB failure diagnostics
-        if: always()
-        working-directory: apps/android
-        env:
-          API_LEVEL: ${{ matrix.api_level }}
-          COLD_START_OUTCOME: ${{ steps.cold_start.outcome }}
+      - name: Publish manual phone-test boundary
         run: |
-          out="build/cold-start/api-${API_LEVEL}"
-          mkdir -p "$out"
           {
-            echo "API level: ${API_LEVEL}"
-            echo 'UTC time:'; date -u +%FT%TZ
-            echo 'ADB devices:'; timeout 20s adb devices -l 2>&1 || true
-            echo 'Process state:'; ps -eo pid,ppid,stat,etime,cmd | grep -E '[e]mulator|[a]db' || true
-            echo 'AVD inventory:'; find "$HOME/.android/avd" -maxdepth 2 -type f -printf '%p %s bytes\n' 2>/dev/null | head -40 || true
-            if timeout 15s adb get-state >/dev/null 2>&1; then
-              echo 'Device properties:'
-              timeout 15s adb shell getprop ro.build.version.sdk 2>&1 || true
-              echo 'Emulator logcat tail:'
-              timeout 20s adb logcat -d -t 300 2>&1 || true
-            fi
-          } > "$out/emulator-diagnostics.txt"
-          cat "$out/emulator-diagnostics.txt"
-          if [ "$COLD_START_OUTCOME" != success ]; then
-            python3 - "$out/emulator-diagnostics.txt" "$API_LEVEL" <<'PY'
-          import pathlib, re, sys
-          text = pathlib.Path(sys.argv[1]).read_text(errors="replace")
-          text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+", r"\1[redacted]", text)
-          text = re.sub(r"https?://\S+", "[url]", text)
-          for index, start in enumerate(range(0, min(len(text), 6000), 1500), 1):
-              chunk = text[start:start + 1500]
-              escaped = chunk.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              print(f"::error title=Emulator API {sys.argv[2]} diagnostics {index}::{escaped}")
-          PY
-          fi
-        timeout-minutes: 2
-
-      - name: Upload API ${{ matrix.api_level }} cold-start evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: android-cold-start-api-${{ matrix.api_level }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: apps/android/build/cold-start/api-${{ matrix.api_level }}/
-          if-no-files-found: error
-          retention-days: 14
-        timeout-minutes: 5
-
-      - name: Stop the emulator cleanly
-        if: always()
-        run: timeout --signal=TERM --kill-after=5s 15s adb emu kill || true
-        timeout-minutes: 1
+            echo '### Physical-device validation (manual; no emulator used)'
+            echo '- Download only the source-native ARM64 APK artifact after the native audit passes.'
+            echo '- On an ARM64 Android phone, install it, launch it, and open Market → Providers → Local AI → Diagnostic Test.'
+            echo '- Save or copy the report; verify ABI, native/JNI loading, available RAM/storage, installed model SHA-256, model load, and inference outcomes.'
+            echo '- For the offline check, enable airplane mode and confirm Wi-Fi/mobile data are off before repeating a local inference.'
+            echo '- Report each blocked stage and remediation. Local AI remains NOT READY until every required physical-device/model/offline check passes.'
+            echo '- No physical phone is attached to this workflow; no phone test is claimed as passed.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   local-ai-native-arm64:
     name: Source-native llama.cpp ARM64 build and audit

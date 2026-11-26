@@ -563,7 +563,7 @@ def audit_source_native_apk(apk_path: Path, readelf: str | None = None) -> dict[
                 "elf": elf,
                 "needed_libraries": needed,
                 "jni_onload_exported": True,
-                "jni_methods_registered_in_dex": list(required_jni_strings[1:]),
+                "jni_methods_registered_in_dex": [method.decode("ascii") for method in required_jni_strings[1:]],
             },
             "bundled_gguf_models": 0,
             "apk_native_libraries": apk_native_inventory,

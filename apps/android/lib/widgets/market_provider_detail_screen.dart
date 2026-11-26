@@ -6,6 +6,7 @@ import '../core/market_provider_manager.dart';
 import '../l10n/app_localizations.dart';
 import 'market_brand_mark.dart';
 import 'market_provider_dialog.dart';
+import 'local_ai_diagnostic_test.dart';
 
 class MarketProviderDetailScreen extends StatelessWidget {
   const MarketProviderDetailScreen({
@@ -180,6 +181,8 @@ class MarketProviderDetailScreen extends StatelessWidget {
       _sectionCard(context, 'Offline Inference Test', [
         Text(context.tr('Unavailable until the runtime and a compatible, verified model are installed. No cloud fallback is used.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
+        const SizedBox(height: 8),
+        LocalAiDiagnosticAction(status: manager.statusFor('local_ai')),
       ]),
     ]);
   }
@@ -213,12 +216,6 @@ class MarketProviderDetailScreen extends StatelessWidget {
                   : const Icon(Icons.wifi_tethering_rounded),
               label: Text(context.tr(connectLabel)),
             )
-          else
-            OutlinedButton.icon(
-              onPressed: null,
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: Text(context.tr('Offline Inference Test')),
-            ),
           if (providerId == 'cloudflare' && status == ManagedProviderStatus.connected && onOpenCloudflareDashboard != null)
             OutlinedButton.icon(
               onPressed: onOpenCloudflareDashboard,
