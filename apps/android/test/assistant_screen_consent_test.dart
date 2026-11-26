@@ -67,6 +67,11 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    final capabilityChannel = const MethodChannel('org.cybersecurityassistant/local_ai_capabilities');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(capabilityChannel, (call) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(capabilityChannel, null));
+
     final backend = _MemorySecureBackend();
     final credentials = SecureCredentialStore(backend: backend);
     await credentials.save(providerId: 'gemini', kind: SecureCredentialKind.apiKey, secret: 'AIzaSyExample_Key-0123456789');

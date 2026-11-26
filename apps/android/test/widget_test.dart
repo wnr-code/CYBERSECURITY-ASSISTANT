@@ -358,10 +358,14 @@ String _renderedText(WidgetTester tester) => tester
 
 Future<void> _pumpUntilCatalogReady(WidgetTester tester) async {
   final busy = find.descendant(of: find.byType(CatalogScreen), matching: find.byType(LinearProgressIndicator));
-  for (var attempt = 0; attempt < 40 && busy.evaluate().isNotEmpty; attempt++) {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 25)));
-    await tester.pump(const Duration(milliseconds: 225));
+  for (var attempt = 0; attempt < 100 && busy.evaluate().isNotEmpty; attempt++) {
+    // The readiness chain includes real async filesystem work (Market state).
+    // Give it bounded wall-clock time as well as advancing the test clock.
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+    await tester.pump(const Duration(milliseconds: 100));
   }
+  expect(busy, findsNothing,
+      reason: 'Catalog readiness must finish within five seconds; otherwise expose the pending operation in test output.');
 }
 
 Future<void> _pumpApp(WidgetTester tester) async {
