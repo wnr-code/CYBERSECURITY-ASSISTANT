@@ -12,6 +12,7 @@ import 'package:cybersecurity_assistant/core/terminal_runtime_adapter.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
 import 'package:cybersecurity_assistant/l10n/app_localizations.dart';
 import 'package:cybersecurity_assistant/widgets/assistant_screen.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart' hide GlobalMaterialLocalizations;
