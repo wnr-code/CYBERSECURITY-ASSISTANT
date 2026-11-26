@@ -34,18 +34,20 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
     } on LocalAiModelInstallException catch (error) {
       if (mounted) setState(() { _busy = false; _verified = false; _message = error.message; });
     } catch (error) {
-      if (mounted) setState(() {
-        _busy = false;
-        _verified = false;
-        final safe = error.toString().replaceAll(RegExp(r'\s+'), ' ');
-        _message = 'Model was not installed or loaded: ${safe.substring(0, safe.length.clamp(0, 240).toInt())}';
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _verified = false;
+          final safe = error.toString().replaceAll(RegExp(r'\s+'), ' ');
+          _message = 'Model was not installed or loaded: ${safe.substring(0, safe.length.clamp(0, 240).toInt())}';
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final manifest = LocalAiModelManifest.qwenQ4Km;
+    const manifest = LocalAiModelManifest.qwenQ4Km;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(14),

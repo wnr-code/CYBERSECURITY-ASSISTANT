@@ -80,7 +80,7 @@ class AppLocalizations {
     'Manage available providers and the Local AI integration candidate here. Capabilities and status reflect what this build actually implements. Provider adapters are bundled with the app, so they cannot be uninstalled separately; use Disconnect only to remove that provider credential.': 'Kelola provider yang tersedia dan kandidat integrasi AI Lokal di sini. Kapabilitas dan status mencerminkan implementasi nyata pada build ini. Adapter provider sudah menyatu dengan aplikasi sehingga tidak dapat dihapus secara terpisah; gunakan Putuskan hanya untuk menghapus kredensial provider tersebut.',
     'Cloud infrastructure · token status check only; no Workers/DNS integration.': 'Infrastruktur cloud · hanya pemeriksaan status token; belum ada integrasi Workers/DNS.',
     'Cloud AI · existing Gemini adapter; user key and locally saved provider-specific consent.': 'AI cloud · menggunakan adapter Gemini yang ada; memerlukan key pengguna dan persetujuan khusus provider yang disimpan lokal.',
-    'On-device AI · device resources are probed; a pinned model import and native inference path are available for physical testing, but readiness remains gated.': 'AI di perangkat · sumber daya perangkat diperiksa; impor model terpancang dan jalur inferensi native tersedia untuk tes fisik, tetapi kesiapan tetap dibatasi.'
+    'On-device AI · device resources are probed; a pinned model import and native inference path are available for physical testing, but readiness remains gated.': 'AI di perangkat · sumber daya perangkat diperiksa; impor model terpancang dan jalur inferensi native tersedia untuk tes fisik, tetapi kesiapan tetap dibatasi.',
     'Connected': 'Terhubung',
     'Disconnected': 'Terputus',
     'Not Ready': 'Belum Siap',

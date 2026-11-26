@@ -30,7 +30,7 @@ void main() {
   });
 
   test('Qwen production manifest pins the requested immutable model metadata', () {
-    final qwen = LocalAiModelManifest.qwenQ4Km;
+    const qwen = LocalAiModelManifest.qwenQ4Km;
     expect(qwen.repository, 'Qwen/Qwen2.5-1.5B-Instruct-GGUF');
     expect(qwen.revision, 'dd26da440ef0330c47919d1ecae0966d24022222');
     expect(qwen.fileName, 'qwen2.5-1.5b-instruct-q4_k_m.gguf');
@@ -85,7 +85,9 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
-      loadModel: (_, __) async fail('Loader must not run for a filename mismatch.'),
+      loadModel: (_, __) async {
+        fail('Loader must not run for a filename mismatch.');
+      },
     );
 
     await expectLater(

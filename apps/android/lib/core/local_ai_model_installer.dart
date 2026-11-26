@@ -98,8 +98,6 @@ class LocalAiModelInstaller {
     final finalFile = File(paths.join(modelDirectory.path, manifest.fileName));
     final temporaryFile = File('${finalFile.path}.${DateTime.now().microsecondsSinceEpoch}.part');
     var byteCount = 0;
-    final hashResult = AccumulatorSink<Digest>();
-    final hashInput = sha256.startChunkedConversion(hashResult);
     final sink = temporaryFile.openWrite(mode: FileMode.writeOnly);
 
     try {
@@ -109,19 +107,22 @@ class LocalAiModelInstaller {
           throw LocalAiModelInstallException('Selected model exceeds the pinned size of ${manifest.fileSizeBytes} bytes; temporary data will be removed.');
         }
         sink.add(chunk);
-        hashInput.add(chunk);
       }
       await sink.flush();
-      hashInput.close();
       await sink.close();
     } catch (_) {
-      try { hashInput.close(); } catch (_) {}
       try { await sink.close(); } catch (_) {}
       try { if (await temporaryFile.exists()) await temporaryFile.delete(); } catch (_) {}
       rethrow;
     }
 
-    final actualSha256 = hashResult.events.single.toString();
+    late final String actualSha256;
+    try {
+      actualSha256 = (await sha256.bind(temporaryFile.openRead()).first).toString();
+    } catch (error) {
+      try { await temporaryFile.delete(); } catch (_) {}
+      throw LocalAiModelInstallException('Could not read the copied model to verify its SHA-256; temporary file removed. ${error.toString().replaceAll(RegExp(r'\\s+'), ' ')}');
+    }
     if (byteCount != manifest.fileSizeBytes || actualSha256 != manifest.sha256Hex) {
       try { await temporaryFile.delete(); } catch (_) {}
       throw LocalAiModelInstallException(
