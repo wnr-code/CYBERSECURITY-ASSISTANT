@@ -36,6 +36,19 @@ class FlutterBuildOutputTests(unittest.TestCase):
         preflight.assert_called_once()
         flutter_run.assert_not_called()
 
+    @patch("run_flutter_build.time.sleep")
+    @patch("run_flutter_build.subprocess.run")
+    @patch("run_flutter_build.preflight_runtime_build", return_value=False)
+    def test_transient_maven_rate_limit_is_retried_with_backoff(self, preflight, flutter_run, sleep):
+        flutter_run.side_effect = [
+            type("Result", (), {"returncode": 1, "stdout": "", "stderr": "Received status code 429: Too Many Requests"})(),
+            type("Result", (), {"returncode": 0, "stdout": "built", "stderr": ""})(),
+        ]
+
+        self.assertEqual(main(), 0)
+        self.assertEqual(flutter_run.call_count, 2)
+        sleep.assert_called_once_with(30)
+
     @patch("run_flutter_build.audit_apk_cpu_only", side_effect=GateError("Vulkan backend found"))
     @patch("run_flutter_build.subprocess.run", return_value=type("Result", (), {"returncode": 0, "stdout": "built", "stderr": ""})())
     @patch("run_flutter_build.preflight_runtime_build", return_value=True)

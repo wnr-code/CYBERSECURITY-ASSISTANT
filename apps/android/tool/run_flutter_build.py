@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from local_ai_artifact_gate import (
@@ -21,6 +22,8 @@ from local_ai_artifact_gate import (
 
 MAX_ANNOTATION_CHARS = 1800
 MAX_FAILURE_CHARS = 7200
+MAX_TRANSIENT_BUILD_RETRIES = 2
+TRANSIENT_HTTP_FAILURE = re.compile(r"(?i)(?:status code 429|too many requests|status code 5[0-9]{2})")
 
 
 def _escape_command_value(value: str) -> str:
@@ -94,14 +97,20 @@ def main() -> int:
 
     build_command = flutter_build_command(native_enabled=native_enabled)
     print(f"Running Flutter build command: {' '.join(build_command)}")
-    result = subprocess.run(
-        build_command,
-        cwd=app_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    output = result.stdout + result.stderr
+    for retry in range(MAX_TRANSIENT_BUILD_RETRIES + 1):
+        result = subprocess.run(
+            build_command,
+            cwd=app_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout + result.stderr
+        if result.returncode == 0 or retry == MAX_TRANSIENT_BUILD_RETRIES or not TRANSIENT_HTTP_FAILURE.search(output):
+            break
+        delay = 30 * (retry + 1)
+        print(f"Transient dependency repository HTTP error; retrying Flutter build in {delay} seconds.")
+        time.sleep(delay)
     print(output, end="" if output.endswith("\n") else "\n")
     if result.returncode and os.environ.get("GITHUB_ACTIONS"):
         for index, message in enumerate(failure_annotations(result.returncode, output), start=1):
