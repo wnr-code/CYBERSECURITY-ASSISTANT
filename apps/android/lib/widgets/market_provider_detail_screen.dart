@@ -156,7 +156,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Runtime Information', [
-        Text(context.tr('The source-built CPU-only ARM64 APK passed CI static audit. This physical phone has reported a successful native/JNI load; GGUF loading and real inference still need testing.'),
+        Text(context.tr('The source-built CPU-only ARM64 APK passed static audit, which does not prove this phone can load the model or infer. Local AI stays Not Ready until a verified model returns a real Chat response while airplane mode is on and Android reports no internet network.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
         _detailLine(context, 'Pinned llama.cpp source commit', MarketProviderManager.localAiRuntimeCommit),
         _detailLine(context, 'Official source archive SHA-256', MarketProviderManager.localAiSourceArchiveSha256),
@@ -169,7 +169,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
       ]),
       const SizedBox(height: 10),
       _sectionCard(context, 'Model Catalog', [
-        Text(context.tr('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision and Apache-2.0 license shown below. The selected file is not trusted or loaded until its exact size and SHA-256 pass verification.'),
+        Text(context.tr('The Qwen2.5 1.5B Instruct Q4_K_M candidate is pinned to an immutable Qwen repository revision. The APK checks current official publisher metadata and the full downloaded GGUF against the app pin before native load; the candidate is not considered ready until physical Chat and offline tests pass.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
         _referenceLink(context, 'Official pinned Qwen model repository', MarketProviderManager.localAiModelsDocs),
       ]),
@@ -177,7 +177,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
       const LocalAiModelInstallAction(),
       const SizedBox(height: 10),
       _sectionCard(context, 'Storage Management', [
-        Text(context.tr('The app imports only the pinned Qwen GGUF through the file picker. Missing, inaccessible, wrong-size, or wrong-hash files stop before native load. Keep the downloaded file until the private copy is verified.'),
+        Text(context.tr('The APK downloads only from the pinned official Hugging Face revision. It independently checks publisher metadata and hashes the complete GGUF saved on this phone; any network, size, or digest mismatch blocks native loading. Failed downloads can be retried without losing existing verified data.'),
             style: const TextStyle(fontSize: 12, height: 1.4)),
       ]),
       const SizedBox(height: 10),

@@ -38,7 +38,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
   final _inputFocusNode = FocusNode();
   final _scrollController = ScrollController();
   final List<_AssistantBubble> _messages = [];
-  List<String> _readyProviders = const [];
+  List<String> _availableProviders = const [];
+  final Set<String> _providersNeedingInference = {};
   final Set<String> _consentedProviders = {};
   String? _providerId;
   bool _loadingProviders = true;
@@ -75,15 +76,26 @@ class _AssistantScreenState extends State<AssistantScreen> {
     } catch (_) {
       initializationFailed = true;
     }
-    final ready = <String>[];
+    final available = <String>[];
+    final needsInference = <String>{};
     for (final id in widget.providers.registeredProviderIds) {
-      if (await widget.providers.isReady(id)) ready.add(id);
+      if (await widget.providers.isReady(id)) {
+        available.add(id);
+      } else if (id == 'local_ai' && await widget.providers.canAttemptInference(id)) {
+        // A verified model is available for the first real Chat attempt, but
+        // its provider remains Not Ready until offline inference is evidenced.
+        available.add(id);
+        needsInference.add(id);
+      }
     }
     if (!mounted) return;
     setState(() {
       _providerInitializationFailed = initializationFailed;
-      _readyProviders = List.unmodifiable(ready);
-      _providerId = ready.contains(_providerId) ? _providerId : ready.isEmpty ? null : ready.first;
+      _availableProviders = List.unmodifiable(available);
+      _providersNeedingInference
+        ..clear()
+        ..addAll(needsInference);
+      _providerId = available.contains(_providerId) ? _providerId : available.isEmpty ? null : available.first;
       _loadingProviders = false;
     });
   }
@@ -141,10 +153,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
             constraints: const BoxConstraints(maxWidth: 820),
             child: Column(children: [
               if (_loadingProviders) const LinearProgressIndicator(),
-              if (!_loadingProviders && _readyProviders.isEmpty)
+              if (!_loadingProviders && _availableProviders.isEmpty)
                 Expanded(child: _notConfigured(context))
               else ...[
-                if (_readyProviders.isNotEmpty)
+                if (_availableProviders.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -152,7 +164,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         Expanded(child: DropdownButtonFormField<String>(
                           initialValue: _providerId,
                           decoration: InputDecoration(labelText: context.tr('AI provider')),
-                          items: [for (final id in _readyProviders) DropdownMenuItem(value: id, child: Text(_providerName(id, context)))],
+                          items: [for (final id in _availableProviders) DropdownMenuItem(value: id, child: Text(_providerDisplayName(id, context)))],
                           onChanged: _sending
                               ? null
                               : (value) {
@@ -183,6 +195,15 @@ class _AssistantScreenState extends State<AssistantScreen> {
                             context.tr(_consentedProviders.contains(_providerId) ? 'Data-sharing consent saved for this provider' : 'Consent required before first message to this provider'),
                             key: const ValueKey('assistant-consent-status'),
                             style: TextStyle(color: _consentedProviders.contains(_providerId) ? const Color(0xFF73F0C2) : Colors.white60, fontSize: 10),
+                          ),
+                        ),
+                      if (_providerId == 'local_ai' && _providersNeedingInference.contains('local_ai'))
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            context.tr('Local Chat is available, but readiness stays Not Ready until a real response succeeds with airplane mode on and no internet network.'),
+                            key: const ValueKey('local-ai-first-inference-status'),
+                            style: const TextStyle(color: Colors.amberAccent, fontSize: 11),
                           ),
                         ),
                     ]),
@@ -370,7 +391,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   CapabilityStatus _geminiCapabilityStatus() {
     if (_providerInitializationFailed) return CapabilityStatus.error;
-    if (!_loadingProviders && !_readyProviders.contains('gemini') && widget.marketProviders.geminiConfigured) {
+    if (!_loadingProviders && !_availableProviders.contains('gemini') && widget.marketProviders.geminiConfigured) {
       return CapabilityStatus.error;
     }
     return switch (widget.marketProviders.statusFor('gemini')) {
@@ -568,6 +589,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       if (mounted) {
         setState(() => _sending = false);
         _scrollToEnd();
+        if (provider == 'local_ai') await _loadProviders();
       }
     }
   }
@@ -592,6 +614,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
   void _navigateToTools() {
     Navigator.of(context).pop();
     widget.onOpenTools();
+  }
+
+  String _providerDisplayName(String id, BuildContext context) {
+    final name = _providerName(id, context);
+    return id == 'local_ai' && _providersNeedingInference.contains(id)
+        ? '$name · ${context.tr('Offline inference test required')}'
+        : name;
   }
 
   String _providerName(String id, BuildContext context) => switch (id) {

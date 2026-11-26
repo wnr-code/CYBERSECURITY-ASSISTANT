@@ -3,7 +3,39 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:cybersecurity_assistant/core/local_ai_model_installer.dart';
+import 'package:cybersecurity_assistant/core/local_ai_model_source.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+class _FakeArtifactSource implements LocalAiArtifactSource {
+  _FakeArtifactSource(this.manifest, this.bytes, {this.publisherOverride});
+
+  final LocalAiModelManifest manifest;
+  final List<int> bytes;
+  final LocalAiPublisherFile? publisherOverride;
+  int downloadCalls = 0;
+
+  @override
+  Future<LocalAiPublisherFile> fetchPublisherMetadata(LocalAiModelManifest requested) async => publisherOverride ?? LocalAiPublisherFile(
+        repository: manifest.repository,
+        author: manifest.repository.split('/').first,
+        revision: manifest.revision,
+        license: manifest.license,
+        fileName: manifest.fileName,
+        sizeBytes: manifest.fileSizeBytes,
+        sha256Hex: manifest.sha256Hex,
+      );
+
+  @override
+  Future<LocalAiDownloadResponse> openPinnedDownload(LocalAiModelManifest requested) async {
+    downloadCalls++;
+    return LocalAiDownloadResponse(
+      statusCode: 200,
+      contentLength: bytes.length,
+      body: Stream<List<int>>.fromIterable([bytes.sublist(0, bytes.length ~/ 2), bytes.sublist(bytes.length ~/ 2)]),
+      dispose: () async {},
+    );
+  }
+}
 
 void main() {
   late Directory supportDirectory;
@@ -16,7 +48,7 @@ void main() {
     modelDigest = sha256.convert(utf8.encode(modelBytes)).toString();
     manifest = LocalAiModelManifest(
       repository: 'test/pinned-model',
-      revision: 'test-revision',
+      revision: List.filled(40, 'a').join(),
       fileName: 'test.gguf',
       license: 'test-only',
       fileSizeBytes: utf8.encode(modelBytes).length,
@@ -31,6 +63,7 @@ void main() {
 
   test('Qwen production manifest pins the requested immutable model metadata', () {
     const qwen = LocalAiModelManifest.qwenQ4Km;
+    expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
     expect(qwen.repository, 'Qwen/Qwen2.5-1.5B-Instruct-GGUF');
     expect(qwen.revision, 'dd26da440ef0330c47919d1ecae0966d24022222');
     expect(qwen.fileName, 'qwen2.5-1.5b-instruct-q4_k_m.gguf');
@@ -40,7 +73,7 @@ void main() {
     expect(qwen.downloadUrl, contains('/resolve/${qwen.revision}/'));
   });
 
-  test('unverified production Qwen pin blocks selection, storage, and native loading', () async {
+  test('production file-picker import stays disabled; verified on-device download is the only production path', () async {
     var pickerCalled = false;
     final installer = LocalAiModelInstaller(
       pickFile: () async { pickerCalled = true; return null; },
@@ -48,11 +81,128 @@ void main() {
     );
     await expectLater(
       installer.chooseVerifyAndLoad(),
-      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('not been independently verified'))),
+      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('file-picker model import is disabled'))),
     );
     expect(pickerCalled, isFalse);
     expect(await supportDirectory.list().toList(), isEmpty);
-    expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
+  });
+
+  test('official Hugging Face metadata parser checks publisher, revision, license, file size, and LFS SHA', () {
+    final valid = <String, Object?>{
+      'id': manifest.repository,
+      'author': 'test',
+      'sha': manifest.revision,
+      'cardData': {'license': 'test-only'},
+      'siblings': [
+        {
+          'rfilename': manifest.fileName,
+          'size': manifest.fileSizeBytes,
+          'lfs': {'size': manifest.fileSizeBytes, 'oid': 'sha256:$modelDigest'},
+        },
+      ],
+    };
+    final parsed = HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(valid), manifest);
+    expect(parsed.repository, manifest.repository);
+    expect(parsed.author, 'test');
+    expect(parsed.revision, manifest.revision);
+    expect(parsed.license, manifest.license);
+    expect(parsed.sizeBytes, manifest.fileSizeBytes);
+    expect(parsed.sha256Hex, modelDigest);
+
+    final wrongRevision = Map<String, Object?>.from(valid)..['sha'] = List.filled(40, 'b').join();
+    expect(
+      () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(wrongRevision), manifest),
+      throwsA(isA<LocalAiModelInstallException>()),
+    );
+  });
+
+  test('on-device download verifies publisher pin and complete file before native loading with progress', () async {
+    final bytes = utf8.encode(modelBytes);
+    final source = _FakeArtifactSource(manifest, bytes);
+    final stages = <LocalAiInstallPhase>[];
+    var loaded = false;
+    final installer = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: source,
+      availableStorageBytes: () async => manifest.fileSizeBytes + 128 * 1024 * 1024,
+      loadModel: (name, digest, publisher) async {
+        expect(name, manifest.fileName);
+        expect(digest, modelDigest);
+        expect(publisher.sha256Hex, modelDigest);
+        loaded = true;
+      },
+    );
+
+    final result = await installer.downloadVerifyAndLoad(onProgress: (progress) => stages.add(progress.phase));
+    final installed = File('${supportDirectory.path}/local_ai/models/test.gguf');
+    expect(await installed.readAsBytes(), bytes);
+    expect(result.sha256Hex, modelDigest);
+    expect(loaded, isTrue);
+    expect(source.downloadCalls, 1);
+    expect(stages, containsAll([
+      LocalAiInstallPhase.checkingPublisher,
+      LocalAiInstallPhase.downloading,
+      LocalAiInstallPhase.verifying,
+      LocalAiInstallPhase.loading,
+      LocalAiInstallPhase.complete,
+    ]));
+  });
+
+  test('storage failure preserves an existing file until a replacement passes verification', () async {
+    final directory = Directory('${supportDirectory.path}/local_ai/models')..createSync(recursive: true);
+    final existing = File('${directory.path}/${manifest.fileName}')..writeAsStringSync('previous bytes');
+    final source = _FakeArtifactSource(manifest, utf8.encode(modelBytes));
+    final installer = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: source,
+      availableStorageBytes: () async => null,
+      loadModel: (_, __, ___) async => fail('Native loader must not run when storage is unknown.'),
+    );
+    await expectLater(installer.downloadVerifyAndLoad(), throwsA(isA<LocalAiModelInstallException>()));
+    expect(await existing.readAsString(), 'previous bytes');
+    expect(source.downloadCalls, 0);
+  });
+
+  test('publisher mismatch and actual GGUF hash mismatch fail before native loading', () async {
+    final bytes = utf8.encode(modelBytes);
+    final wrongPublisher = _FakeArtifactSource(manifest, bytes, publisherOverride: LocalAiPublisherFile(
+      repository: manifest.repository,
+      author: 'attacker',
+      revision: manifest.revision,
+      license: manifest.license,
+      fileName: manifest.fileName,
+      sizeBytes: manifest.fileSizeBytes,
+      sha256Hex: modelDigest,
+    ));
+    final first = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: wrongPublisher,
+      availableStorageBytes: () async => manifest.fileSizeBytes + 128 * 1024 * 1024,
+      loadModel: (_, __, ___) async => fail('Native loader must not run.'),
+    );
+    await expectLater(first.downloadVerifyAndLoad(), throwsA(isA<LocalAiModelInstallException>()));
+    expect(wrongPublisher.downloadCalls, 0);
+    expect(await supportDirectory.list().toList(), isEmpty);
+
+    final tamperedBytes = List<int>.from(bytes);
+    tamperedBytes[0] ^= 1;
+    final tamperedSource = _FakeArtifactSource(manifest, tamperedBytes);
+    final second = LocalAiModelInstaller(
+      manifest: manifest,
+      testOnlyAllowUnverifiedManifest: true,
+      supportDirectory: () async => supportDirectory,
+      artifactSource: tamperedSource,
+      availableStorageBytes: () async => manifest.fileSizeBytes + 128 * 1024 * 1024,
+      loadModel: (_, __, ___) async => fail('Native loader must not run for a wrong file hash.'),
+    );
+    await expectLater(second.downloadVerifyAndLoad(), throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('SHA-256'))));
+    expect(await Directory('${supportDirectory.path}/local_ai/models').list().toList(), isEmpty);
   });
 
   test('copies only exact-size, exact-SHA bytes before invoking native loader', () async {
@@ -62,7 +212,7 @@ void main() {
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
       testOnlyAllowUnverifiedManifest: true,
-      loadModel: (name, digest) async { loadedName = name; loadedDigest = digest; },
+      loadModel: (name, digest, _) async { loadedName = name; loadedDigest = digest; },
     );
 
     final result = await installer.verifyAndLoadStream(
@@ -84,12 +234,12 @@ void main() {
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
       testOnlyAllowUnverifiedManifest: true,
-      loadModel: (_, __) async { loaderCalled = true; },
+      loadModel: (_, __, ___) async { loaderCalled = true; },
     );
 
     await expectLater(
       installer.verifyAndLoadStream(fileName: manifest.fileName, source: Stream<List<int>>.value(utf8.encode('tampered content'))),
-      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('Model verification failed'))),
+      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('Test-file verification failed'))),
     );
 
     final modelDirectory = Directory('${supportDirectory.path}/local_ai/models');
@@ -103,7 +253,7 @@ void main() {
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
       testOnlyAllowUnverifiedManifest: true,
-      loadModel: (_, __) async {
+      loadModel: (_, __, ___) async {
         fail('Loader must not run for a filename mismatch.');
       },
     );

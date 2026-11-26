@@ -119,6 +119,16 @@ class AiProviderManager {
 
   List<String> get registeredProviderIds => List.unmodifiable(_adapters.keys);
 
+  Future<bool> canAttemptInference(String providerId) async {
+    final adapter = _adapters[providerId];
+    if (adapter is! LocalAiProviderAdapter || adapter.runtime is! LocalAiChatAvailability) return false;
+    try {
+      return await (adapter.runtime as LocalAiChatAvailability).canAttemptInference().timeout(const Duration(seconds: 3));
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> isReady(String providerId) async {
     final adapter = _adapters[providerId];
     if (adapter == null) return false;
@@ -166,14 +176,24 @@ class AiProviderManager {
 
   Future<AiProviderReply> complete(String providerId, List<AiChatMessage> messages) async {
     final adapter = _adapters[providerId];
-    if (adapter == null || !await isReady(providerId)) {
-      throw const AiProviderException('The selected AI provider is not configured and ready.');
-    }
+    if (adapter == null) throw const AiProviderException('The selected AI provider is not configured and ready.');
+    var ready = await isReady(providerId);
+    if (!ready) ready = await canAttemptInference(providerId);
+    if (!ready) throw const AiProviderException('The selected AI provider is not configured and ready.');
     final AiProviderReply reply;
     try {
       reply = await adapter.complete(List.unmodifiable(messages));
     } catch (error, stack) {
-      DiagnosticReporter.recordGlobal(error, stackTrace: stack, category: DiagnosticCategory.aiProvider, reportType: DiagnosticReportType.aiProviderError, severity: DiagnosticSeverity.medium, component: 'ai_provider:$providerId', runtimeStatus: 'request_failed');
+      DiagnosticReporter.recordGlobal(
+        error,
+        stackTrace: stack,
+        category: DiagnosticCategory.aiProvider,
+        reportType: DiagnosticReportType.aiProviderError,
+        severity: DiagnosticSeverity.medium,
+        component: 'ai_provider:$providerId',
+        runtimeStatus: 'request_failed',
+        requireManualReview: providerId == 'local_ai',
+      );
       rethrow;
     }
     if (reply.text.length > 12000 || reply.toolCalls.length > 8) {
@@ -330,6 +350,12 @@ abstract interface class LocalAiInferenceRuntime {
 /// Local AI. A missing readiness probe fails closed.
 abstract interface class LocalAiInferenceReadiness {
   Future<bool> isReady();
+}
+
+/// Allows the first explicit local Chat attempt after a verified model is
+/// loaded. A successful response is required before provider readiness passes.
+abstract interface class LocalAiChatAvailability {
+  Future<bool> canAttemptInference();
 }
 
 class LocalAiProviderAdapter implements AiProviderAdapter {

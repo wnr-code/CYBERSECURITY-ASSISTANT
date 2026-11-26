@@ -1,7 +1,11 @@
 package __ANDROID_PACKAGE__
 
 import android.app.Activity
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Handler
+import android.provider.Settings
 import android.os.Looper
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -19,6 +23,9 @@ internal object LocalAiInferenceBridge {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var loadedModelName: String? = null
     @Volatile private var loadedModelSha256: String? = null
+    @Volatile private var loadedPublisherMetadataVerified: Boolean = false
+    @Volatile private var loadedInferenceSucceeded: Boolean = false
+    @Volatile private var loadedOfflineInferenceSucceeded: Boolean = false
 
     // Qwen's user-supplied immutable upstream pin. Runtime installation still
     // verifies the complete file byte count and SHA-256 before JNI sees it.
@@ -52,9 +59,12 @@ internal object LocalAiInferenceBridge {
                     nativeUnloadModel()
                     loadedModelName = null
                     loadedModelSha256 = null
+                    loadedPublisherMetadataVerified = false
+                    loadedInferenceSucceeded = false
+                    loadedOfflineInferenceSucceeded = false
                     true
                 }
-                "complete" -> runOnWorker(result) { complete(call) }
+                "complete" -> runOnWorker(result) { complete(activity, call) }
                 else -> result.notImplemented()
             }
         }
@@ -66,6 +76,9 @@ internal object LocalAiInferenceBridge {
         "modelLoaded" to (loadedModelName != null),
         "modelName" to loadedModelName,
         "modelSha256" to loadedModelSha256,
+        "publisherMetadataVerified" to loadedPublisherMetadataVerified,
+        "inferenceSucceeded" to loadedInferenceSucceeded,
+        "offlineInferenceSucceeded" to loadedOfflineInferenceSucceeded,
         "pinnedModelRepository" to trustedModels.values.firstOrNull()?.repository,
         "pinnedModelRevision" to trustedModels.values.firstOrNull()?.revision,
         "pinnedModelLicense" to trustedModels.values.firstOrNull()?.license,
@@ -85,7 +98,7 @@ internal object LocalAiInferenceBridge {
                     "fileName" to file.name,
                     "sizeBytes" to file.length(),
                     "sha256" to actual,
-                    "trusted" to (trustedModels[file.name]?.let { it.sha256 == actual && it.size == file.length() } == true),
+                    "trusted" to (loadedPublisherMetadataVerified && trustedModels[file.name]?.let { it.sha256 == actual && it.size == file.length() } == true),
                 )
             }?.toList() ?: emptyList()
     }
@@ -99,6 +112,17 @@ internal object LocalAiInferenceBridge {
         val pin = trustedModels[name]
             ?: throw IllegalStateException("No publisher-pinned Local AI model is enabled in this build.")
         if (expected != pin.sha256) throw SecurityException("Requested model digest is not in the app-owned trust manifest.")
+        val publisherRepository = call.argument<String>("publisherRepository")
+        val publisherAuthor = call.argument<String>("publisherAuthor")
+        val publisherRevision = call.argument<String>("publisherRevision")
+        val publisherLicense = call.argument<String>("publisherLicense")
+        val publisherSizeBytes = (call.argument<Number>("publisherSizeBytes"))?.toLong()
+        val publisherSha256 = call.argument<String>("publisherSha256")?.lowercase()
+        if (publisherRepository != pin.repository || publisherAuthor != pin.repository.substringBefore('/') ||
+            publisherRevision != pin.revision || publisherLicense?.lowercase() != pin.license.lowercase() ||
+            publisherSizeBytes != pin.size || publisherSha256 != pin.sha256) {
+            throw SecurityException("Official publisher metadata verification did not match the native model pin.")
+        }
         val modelRoot = File(activity.filesDir, "local_ai/models").canonicalFile
         if (!modelRoot.exists() || !modelRoot.isDirectory) throw IllegalStateException("No verified Local AI model is installed.")
         val modelFile = File(modelRoot, name).canonicalFile
@@ -113,13 +137,17 @@ internal object LocalAiInferenceBridge {
         nativeUnloadModel()
         loadedModelName = null
         loadedModelSha256 = null
+        loadedPublisherMetadataVerified = false
+        loadedInferenceSucceeded = false
+        loadedOfflineInferenceSucceeded = false
         if (!nativeLoadModel(modelFile.absolutePath)) throw IllegalStateException("llama.cpp could not load the verified GGUF model.")
         loadedModelName = name
         loadedModelSha256 = actual
+        loadedPublisherMetadataVerified = true
         return statusMap(activity)
     }
 
-    private fun complete(call: MethodCall): String {
+    private fun complete(activity: Activity, call: MethodCall): String {
         if (loadedModelName == null) throw IllegalStateException("Local AI is Not Ready: no verified model is loaded.")
         val input = call.argument<List<Map<String, String>>>("messages") ?: throw IllegalArgumentException("Chat messages are required.")
         if (input.isEmpty() || input.size > 32) throw IllegalArgumentException("Conversation exceeds the safe turn limit.")
@@ -140,10 +168,30 @@ internal object LocalAiInferenceBridge {
             contents.add(contentBytes)
         }
         val maxTokens = (call.argument<Int>("maxTokens") ?: 256).coerceIn(1, 512)
+        val offlineBefore = isNetworkIsolated(activity)
         val output = nativeComplete(roles.toTypedArray(), contents.toTypedArray(), maxTokens)
             ?: throw IllegalStateException("Local inference failed; no cloud fallback was attempted.")
-        return output.toString(Charsets.UTF_8).take(12_000)
+        val response = output.toString(Charsets.UTF_8).take(12_000)
+        if (response.isNotBlank()) {
+            loadedInferenceSucceeded = true
+            if (offlineBefore && isNetworkIsolated(activity)) loadedOfflineInferenceSucceeded = true
+        }
+        return response
     }
+
+    private fun isNetworkIsolated(context: Context): Boolean = runCatching {
+        val airplaneMode = Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = connectivity.activeNetwork
+        if (!airplaneMode) {
+            false
+        } else if (activeNetwork == null) {
+            true
+        } else {
+            val capabilities = connectivity.getNetworkCapabilities(activeNetwork)
+            capabilities != null && !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
+    }.getOrDefault(false)
 
     private fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

@@ -166,7 +166,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text(context.tr('On-device AI Provider · Local only'), style: Theme.of(context).textTheme.titleSmall),
       const SizedBox(height: 8),
-      Text(context.tr('Not Ready — this phone reported native/JNI load success, but model load, real Chat inference, and offline inference have not passed. Choose the pinned GGUF below to verify and load it; no cloud fallback is used.')),
+      Text(context.tr('Not Ready — the pinned model must first pass official Hugging Face metadata and complete on-device size/SHA-256 checks. Then test real local Chat and airplane-mode inference on this phone; no cloud fallback is used.')),
       const SizedBox(height: 12),
       Text(context.tr('Device capability (reported by Android)'), style: const TextStyle(fontWeight: FontWeight.w700)),
       const SizedBox(height: 5),
@@ -183,7 +183,7 @@ class _MarketProviderDialogState extends State<MarketProviderDialog> {
       _officialLink(context, MarketProviderManager.localAiBuildDocs),
       _officialLink(context, MarketProviderManager.localAiLicenseDocs),
       const SizedBox(height: 8),
-      Text(context.tr('The pinned Qwen2.5 1.5B Instruct Q4_K_M model is Apache-2.0. The app verifies the chosen file against its pinned size and SHA-256 before native load; matching bytes do not guarantee freedom from all model risks.'),
+      Text(context.tr('The pinned Qwen2.5 1.5B Instruct Q4_K_M candidate is expected to use Apache-2.0. Before native load, the app checks official repository metadata, revision, license, exact size, publisher SHA-256, and the complete downloaded file. Matching bytes do not guarantee freedom from all model risks.'),
           style: const TextStyle(fontSize: 12, height: 1.4)),
       _officialLink(context, MarketProviderManager.localAiModelsDocs),
       const SizedBox(height: 10),

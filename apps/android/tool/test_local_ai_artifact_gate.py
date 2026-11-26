@@ -164,20 +164,22 @@ hooks:
             with self.assertRaisesRegex(GateError, "outside arm64-v8a"):
                 audit_apk_cpu_only(apk_path, manifest_path)
 
-    def test_unverified_qwen_pin_blocks_import_native_load_and_chat(self) -> None:
+    def test_qwen_install_requires_official_metadata_and_actual_bytes_before_native_load(self) -> None:
         app = Path(__file__).resolve().parents[1]
-        status = (app / "lib/core/local_ai_artifact_status.dart").read_text(encoding="utf-8")
         installer = (app / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
+        source = (app / "lib/core/local_ai_model_source.dart").read_text(encoding="utf-8")
         runtime = (app / "lib/core/local_ai_inference_runtime.dart").read_text(encoding="utf-8")
         widget = (app / "lib/widgets/local_ai_model_install_action.dart").read_text(encoding="utf-8")
         diagnostic = (app / "lib/widgets/local_ai_diagnostic_test.dart").read_text(encoding="utf-8")
-        self.assertIn("const bool qwenArtifactIndependentlyVerified = false;", status)
-        self.assertIn("if (!_artifactPinApproved)", installer)
-        self.assertIn("if (!qwenArtifactIndependentlyVerified) return false;", runtime)
-        self.assertIn("if (!qwenArtifactIndependentlyVerified)", runtime)
-        self.assertIn("!LocalAiModelManifest.qwenArtifactIndependentlyVerified ? null", widget)
-        self.assertIn("LocalAiModelManifest.qwenArtifactIndependentlyVerified && modelInventory.any", diagnostic)
-        self.assertIn("publisher metadata and the actual GGUF bytes have not been independently verified", diagnostic)
+        self.assertIn("fetchPublisherMetadata(manifest)", installer)
+        self.assertIn("actualSha256 != publisherFile.sha256Hex", installer)
+        self.assertIn("await _loadPinnedModel(publisherFile)", installer)
+        self.assertIn("cardData['license']", source)
+        self.assertIn("metadataSha != manifest.sha256Hex", source)
+        self.assertIn("publisherMetadataVerified", runtime)
+        self.assertIn("downloadVerifyAndLoad", widget)
+        self.assertIn("runtime?['publisherMetadataVerified'] == true", diagnostic)
+        self.assertIn("official publisher metadata and actual GGUF bytes must pass the in-app download checks", diagnostic)
 
     def test_model_audit_reports_hash_but_never_enables_install(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -234,9 +236,23 @@ hooks:
             with self.assertRaisesRegex(GateError, "CPU-only/no-CLI"):
                 audit_source_build_config(cache, "a" * 40)
 
+    def test_local_ai_readiness_requires_real_offline_inference_and_manual_review_diagnostics(self):
+        app = Path(__file__).resolve().parents[1]
+        runtime = (app / "lib/core/local_ai_inference_runtime.dart").read_text(encoding="utf-8")
+        manager = (app / "lib/core/ai_provider_manager.dart").read_text(encoding="utf-8")
+        diagnostics = (app / "lib/core/diagnostics.dart").read_text(encoding="utf-8")
+        native = (Path(__file__).resolve().parent / "native/LocalAiInferenceBridge.kt").read_text(encoding="utf-8")
+        self.assertIn("status['offlineInferenceSucceeded'] == true", runtime)
+        self.assertIn("Future<bool> canAttemptInference()", runtime)
+        self.assertIn("isNetworkIsolated(activity)", native)
+        self.assertIn('"offlineInferenceSucceeded" to loadedOfflineInferenceSucceeded', native)
+        self.assertIn("requireManualReview: providerId == 'local_ai'", manager)
+        self.assertIn("report.component.startsWith('local_ai_')", diagnostics)
+
     def test_qwen_model_pin_matches_flutter_importer_and_native_bridge(self):
         tool_dir = Path(__file__).resolve().parent
-        flutter_pin = (tool_dir.parent / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
+        flutter_pin = (tool_dir.parent / "lib/core/local_ai_model_manifest.dart").read_text(encoding="utf-8")
+        flutter_pin += (tool_dir.parent / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
         native_bridge = (tool_dir / "native/LocalAiInferenceBridge.kt").read_text(encoding="utf-8")
         for token in (
             "dd26da440ef0330c47919d1ecae0966d24022222",

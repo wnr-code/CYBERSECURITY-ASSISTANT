@@ -1,5 +1,6 @@
 import 'package:cybersecurity_assistant/core/ai_provider_manager.dart';
 import 'package:cybersecurity_assistant/core/local_ai_inference_runtime.dart';
+import 'package:cybersecurity_assistant/core/local_ai_model_manifest.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -10,7 +11,7 @@ void main() {
 
   tearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
 
-  test('readiness requires pinned runtime, verified model, arm64 ABI, and CPU backend', () async {
+  test('readiness requires successful local inference, while verified load permits the first Chat attempt', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async => {
       'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
       'runtimeLoaded': true,
@@ -26,12 +27,44 @@ void main() {
       'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
       'runtimeLoaded': true,
       'modelLoaded': true,
-      'modelName': 'model.gguf',
-      'modelSha256': List.filled(64, 'a').join(),
+      'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+      'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+      'publisherMetadataVerified': true,
+      'inferenceSucceeded': false,
+      'offlineInferenceSucceeded': false,
       'abi': 'arm64-v8a',
       'backend': 'cpu',
     });
-    expect(await runtime.isReady(), isFalse, reason: 'An unverified Qwen artifact pin blocks readiness regardless of native-reported status.');
+    expect(await runtime.isReady(), isFalse, reason: 'Loading the model alone must not mark Local AI Ready.');
+    expect(await runtime.canAttemptInference(), isTrue, reason: 'The user must be able to make the first real local Chat attempt.');
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async => {
+      'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
+      'runtimeLoaded': true,
+      'modelLoaded': true,
+      'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+      'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+      'publisherMetadataVerified': true,
+      'inferenceSucceeded': true,
+      'offlineInferenceSucceeded': false,
+      'abi': 'arm64-v8a',
+      'backend': 'cpu',
+    });
+    expect(await runtime.isReady(), isFalse, reason: 'A successful online inference alone must not mark Local AI Ready.');
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async => {
+      'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
+      'runtimeLoaded': true,
+      'modelLoaded': true,
+      'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+      'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+      'publisherMetadataVerified': true,
+      'inferenceSucceeded': true,
+      'offlineInferenceSucceeded': true,
+      'abi': 'arm64-v8a',
+      'backend': 'cpu',
+    });
+    expect(await runtime.isReady(), isTrue);
   });
 
   test('runtime source or ABI mismatch fails closed', () async {
@@ -55,8 +88,11 @@ void main() {
           'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
           'runtimeLoaded': true,
           'modelLoaded': true,
-          'modelName': 'model.gguf',
-          'modelSha256': List.filled(64, 'c').join(),
+          'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+          'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+          'publisherMetadataVerified': true,
+          'inferenceSucceeded': true,
+          'offlineInferenceSucceeded': true,
           'abi': 'arm64-v8a',
           'backend': 'cpu',
         };
@@ -68,10 +104,10 @@ void main() {
       runtime.complete([AiChatMessage.user('local only')]),
       throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('No cloud fallback'))),
     );
-    expect(completeInvocations, 0, reason: 'Unverified artifact status must block the native Chat call.');
+    expect(completeInvocations, 1, reason: 'A ready local model should use native inference and never select cloud fallback.');
   });
 
-  test('unverified artifact pin blocks Chat before invoking the native channel', () async {
+  test('Chat is blocked without publisher metadata verification', () async {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'getRuntimeStatus') {
@@ -79,8 +115,9 @@ void main() {
           'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
           'runtimeLoaded': true,
           'modelLoaded': true,
-          'modelName': 'model.gguf',
-          'modelSha256': List.filled(64, 'd').join(),
+          'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+          'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+          'publisherMetadataVerified': false,
           'abi': 'arm64-v8a',
           'backend': 'cpu',
         };
@@ -90,7 +127,7 @@ void main() {
     });
     await expectLater(
       runtime.complete([AiChatMessage.user('offline?')]),
-      throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('Not Ready'))),
+      throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('Chat is blocked'))),
     );
     expect(received, isNull);
   });

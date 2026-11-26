@@ -65,6 +65,15 @@ class _FakeLocalInference implements LocalAiInferenceRuntime {
   Future<AiProviderReply> complete(List<AiChatMessage> messages) async => const AiProviderReply(text: 'local response');
 }
 
+class _FirstAttemptLocalInference implements LocalAiInferenceRuntime, LocalAiInferenceReadiness, LocalAiChatAvailability {
+  @override
+  Future<bool> isReady() async => false;
+  @override
+  Future<bool> canAttemptInference() async => true;
+  @override
+  Future<AiProviderReply> complete(List<AiChatMessage> messages) async => const AiProviderReply(text: 'first local response');
+}
+
 class _FakeToolRuntime implements TerminalToolRuntime {
   String? correlation;
   @override
@@ -180,6 +189,16 @@ void main() {
       adapters: [LocalAiProviderAdapter(_FakeLocalInference())],
     );
     expect(await manager.isReady('local_ai'), isFalse);
+  });
+
+  test('first verified local Chat inference can run before readiness is promoted', () async {
+    final credentials = SecureCredentialStore(backend: _MemorySecureStore());
+    final manager = AiProviderManager(
+      credentialStore: credentials,
+      adapters: [LocalAiProviderAdapter(_FirstAttemptLocalInference())],
+    );
+    expect(await manager.isReady('local_ai'), isFalse);
+    expect((await manager.complete('local_ai', [AiChatMessage.user('first local prompt')])).text, 'first local response');
   });
 
   test('Gemini readiness is false without a stored user key', () async {

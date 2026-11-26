@@ -1,112 +1,258 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as paths;
 import 'package:path_provider/path_provider.dart';
 
-import 'local_ai_artifact_status.dart' as artifact_status;
+import 'diagnostics.dart';
+import 'local_ai_model_manifest.dart';
+import 'local_ai_model_source.dart';
 import 'local_ai_inference_runtime.dart';
 
-/// Exact, immutable model metadata supplied for the Qwen official repository.
-/// The hash validates these bytes against this pin; it is not a guarantee that
-/// the model is free of all security or quality risks.
-class LocalAiModelManifest {
-  static const bool qwenArtifactIndependentlyVerified = artifact_status.qwenArtifactIndependentlyVerified;
+export 'local_ai_model_manifest.dart';
 
-  const LocalAiModelManifest({
-    required this.repository,
-    required this.revision,
-    required this.fileName,
-    required this.license,
-    required this.fileSizeBytes,
-    required this.sha256Hex,
-    required this.downloadUrl,
-  });
+enum LocalAiInstallPhase { checkingPublisher, downloading, verifying, loading, complete, failed }
 
-  static const qwenQ4Km = LocalAiModelManifest(
-    repository: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
-    revision: 'dd26da440ef0330c47919d1ecae0966d24022222',
-    fileName: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
-    license: 'Apache-2.0',
-    fileSizeBytes: 1_117_320_736,
-    sha256Hex: '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e',
-    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf',
-  );
+class LocalAiInstallProgress {
+  const LocalAiInstallProgress({required this.phase, this.bytesReceived = 0, this.totalBytes = 0});
+  final LocalAiInstallPhase phase;
+  final int bytesReceived;
+  final int totalBytes;
 
-  final String repository;
-  final String revision;
-  final String fileName;
-  final String license;
-  final int fileSizeBytes;
-  final String sha256Hex;
-  final String downloadUrl;
+  double? get fraction => phase == LocalAiInstallPhase.downloading && totalBytes > 0
+      ? (bytesReceived / totalBytes).clamp(0.0, 1.0)
+      : null;
 }
 
-class LocalAiModelInstallException implements Exception {
-  const LocalAiModelInstallException(this.message);
-  final String message;
-  @override
-  String toString() => message;
-}
+typedef LocalAiProgressCallback = void Function(LocalAiInstallProgress progress);
 
-class VerifiedLocalAiModel {
-  const VerifiedLocalAiModel({required this.fileName, required this.sizeBytes, required this.sha256Hex});
-  final String fileName;
-  final int sizeBytes;
-  final String sha256Hex;
-}
-
-/// Imports a user-downloaded GGUF into app-private storage. The selected file
-/// is streamed to a temporary file, with the byte count and SHA-256 checked
-/// before the final name is created or native inference is invoked.
+/// Imports an exact pinned model for tests, and downloads the production Qwen
+/// artifact only after live verification against the official Hub API.
 class LocalAiModelInstaller {
   LocalAiModelInstaller({
     this.manifest = LocalAiModelManifest.qwenQ4Km,
     bool testOnlyAllowUnverifiedManifest = false,
     Future<XFile?> Function()? pickFile,
     Future<Directory> Function()? supportDirectory,
-    Future<void> Function(String fileName, String sha256Hex)? loadModel,
+    Future<void> Function(String fileName, String sha256Hex, LocalAiPublisherFile publisherFile)? loadModel,
+    LocalAiArtifactSource? artifactSource,
+    Future<int?> Function()? availableStorageBytes,
   })  : _pickFile = pickFile ?? _pickGguf,
         _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
         _loadModel = loadModel ?? const AndroidLlamaCppInferenceRuntime().loadVerifiedModel,
+        _artifactSource = artifactSource ?? HuggingFaceLocalAiArtifactSource(),
+        _availableStorageBytes = availableStorageBytes ?? _readAvailableStorageBytes,
         _allowUnverifiedManifestForTests = testOnlyAllowUnverifiedManifest;
 
   final LocalAiModelManifest manifest;
   final Future<XFile?> Function() _pickFile;
   final Future<Directory> Function() _supportDirectory;
-  final Future<void> Function(String fileName, String sha256Hex) _loadModel;
+  final Future<void> Function(String fileName, String sha256Hex, LocalAiPublisherFile publisherFile) _loadModel;
+  final LocalAiArtifactSource _artifactSource;
+  final Future<int?> Function() _availableStorageBytes;
   final bool _allowUnverifiedManifestForTests;
 
-  bool get _artifactPinApproved =>
-      LocalAiModelManifest.qwenArtifactIndependentlyVerified || _allowUnverifiedManifestForTests;
+  bool get _legacyImportAllowed => _allowUnverifiedManifestForTests;
+
+  static Future<int?> _readAvailableStorageBytes() async {
+    try {
+      final result = await const MethodChannel('org.cybersecurityassistant/local_ai_capabilities')
+          .invokeMapMethod<Object?, Object?>('getDeviceCapabilities')
+          .timeout(const Duration(seconds: 3));
+      final available = result?['availableStorageBytes'];
+      return available is int && available > 0 ? available : null;
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    } on TimeoutException {
+      return null;
+    }
+  }
 
   static Future<XFile?> _pickGguf() => openFile(
         acceptedTypeGroups: const [XTypeGroup(label: 'GGUF model', extensions: ['gguf'])],
       );
 
+  /// Downloads from Hugging Face after checking the immutable model record,
+  /// then hashes the complete private file before native loading.
+  Future<VerifiedLocalAiModel> downloadVerifyAndLoad({LocalAiProgressCallback? onProgress}) async {
+    _emit(onProgress, const LocalAiInstallProgress(phase: LocalAiInstallPhase.checkingPublisher));
+    LocalAiDownloadResponse? response;
+    File? temporaryFile;
+    IOSink? sink;
+    var phase = LocalAiInstallPhase.checkingPublisher;
+    try {
+      final isPinnedQwen = manifest.repository == LocalAiModelManifest.qwenQ4Km.repository &&
+          manifest.revision == LocalAiModelManifest.qwenQ4Km.revision &&
+          manifest.fileName == LocalAiModelManifest.qwenQ4Km.fileName &&
+          manifest.license == LocalAiModelManifest.qwenQ4Km.license &&
+          manifest.fileSizeBytes == LocalAiModelManifest.qwenQ4Km.fileSizeBytes &&
+          manifest.sha256Hex == LocalAiModelManifest.qwenQ4Km.sha256Hex &&
+          manifest.downloadUrl == LocalAiModelManifest.qwenQ4Km.downloadUrl;
+      if (!isPinnedQwen && !_allowUnverifiedManifestForTests) {
+        throw const LocalAiModelInstallException('Only the app-pinned Qwen candidate is enabled for this on-device installation flow.');
+      }
+      _validateManifestPin();
+      final publisherFile = await _artifactSource.fetchPublisherMetadata(manifest);
+      if (publisherFile.repository != manifest.repository || publisherFile.author != manifest.repository.split('/').first ||
+          publisherFile.revision != manifest.revision || publisherFile.license.toLowerCase() != manifest.license.toLowerCase() ||
+          publisherFile.fileName != manifest.fileName || publisherFile.sizeBytes != manifest.fileSizeBytes ||
+          publisherFile.sha256Hex != manifest.sha256Hex) {
+        throw const LocalAiModelInstallException('Official publisher metadata did not match every app-pinned model field. Installation was blocked.');
+      }
+
+      final support = await _supportDirectory();
+      final modelDirectory = Directory(paths.join(support.path, 'local_ai', 'models'));
+      await modelDirectory.create(recursive: true);
+      final finalFile = File(paths.join(modelDirectory.path, manifest.fileName));
+
+      phase = LocalAiInstallPhase.verifying;
+      _emit(onProgress, LocalAiInstallProgress(phase: phase, totalBytes: manifest.fileSizeBytes));
+      if (await finalFile.exists()) {
+        final existingSize = await finalFile.length();
+        if (existingSize == manifest.fileSizeBytes) {
+          final existingSha = (await sha256.bind(finalFile.openRead()).first).toString();
+          if (existingSha == publisherFile.sha256Hex && existingSha == manifest.sha256Hex) {
+            phase = LocalAiInstallPhase.loading;
+            _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: existingSize, totalBytes: manifest.fileSizeBytes));
+            await _loadPinnedModel(publisherFile);
+            _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.complete, bytesReceived: existingSize, totalBytes: manifest.fileSizeBytes));
+            return VerifiedLocalAiModel(fileName: manifest.fileName, sizeBytes: existingSize, sha256Hex: existingSha);
+          }
+        }
+        // Keep any pre-existing file until a fresh download has passed both
+        // complete-size and complete-digest checks. The verified temp file
+        // replaces it atomically below; failed retries preserve prior data.
+      }
+
+      final available = await _availableStorageBytes();
+      const storageSafetyMargin = 64 * 1024 * 1024;
+      if (available == null || available < manifest.fileSizeBytes + storageSafetyMargin) {
+        throw const LocalAiModelInstallException('Free storage is unknown or insufficient for the pinned model and a safety margin. Nothing was downloaded.');
+      }
+
+      phase = LocalAiInstallPhase.downloading;
+      _emit(onProgress, LocalAiInstallProgress(phase: phase, totalBytes: manifest.fileSizeBytes));
+      response = await _artifactSource.openPinnedDownload(manifest);
+      if (response.statusCode != HttpStatus.ok) {
+        await response.body.drain<void>();
+        throw LocalAiModelInstallException('Official model download failed with HTTP ${response.statusCode}. Check internet and retry.');
+      }
+      if (response.contentLength != null && response.contentLength != manifest.fileSizeBytes) {
+        await response.body.drain<void>();
+        throw const LocalAiModelInstallException('Publisher download response size does not match the verified file metadata. Installation was blocked.');
+      }
+
+      temporaryFile = File('${finalFile.path}.${DateTime.now().microsecondsSinceEpoch}.part');
+      sink = temporaryFile.openWrite(mode: FileMode.writeOnly);
+      var byteCount = 0;
+      await for (final chunk in response.body.timeout(const Duration(seconds: 90))) {
+        byteCount += chunk.length;
+        if (byteCount > manifest.fileSizeBytes) {
+          throw const LocalAiModelInstallException('Downloaded model exceeded the verified exact size. Partial data will be removed.');
+        }
+        sink.add(chunk);
+        _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: byteCount, totalBytes: manifest.fileSizeBytes));
+      }
+      await sink.flush();
+      await sink.close();
+      sink = null;
+      await response.dispose();
+      response = null;
+
+      phase = LocalAiInstallPhase.verifying;
+      final actualSize = await temporaryFile.length();
+      if (byteCount != manifest.fileSizeBytes || actualSize != manifest.fileSizeBytes) {
+        throw LocalAiModelInstallException('Downloaded file size verification failed: expected ${manifest.fileSizeBytes} bytes, received $actualSize bytes.');
+      }
+      _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: actualSize, totalBytes: manifest.fileSizeBytes));
+      final actualSha256 = (await sha256.bind(temporaryFile.openRead()).first).toString();
+      if (actualSha256 != publisherFile.sha256Hex || actualSha256 != manifest.sha256Hex) {
+        throw const LocalAiModelInstallException('SHA-256 of the complete downloaded GGUF does not match both the official publisher metadata and app pin. Installation was blocked.');
+      }
+
+      await temporaryFile.rename(finalFile.path);
+      temporaryFile = null;
+      phase = LocalAiInstallPhase.loading;
+      _emit(onProgress, LocalAiInstallProgress(phase: phase, bytesReceived: actualSize, totalBytes: manifest.fileSizeBytes));
+      await _loadPinnedModel(publisherFile);
+      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.complete, bytesReceived: actualSize, totalBytes: manifest.fileSizeBytes));
+      return VerifiedLocalAiModel(fileName: manifest.fileName, sizeBytes: actualSize, sha256Hex: actualSha256);
+    } catch (error) {
+      try { await sink?.close(); } catch (_) {}
+      if (temporaryFile != null) {
+        try { if (await temporaryFile.exists()) await temporaryFile.delete(); } catch (_) {}
+      }
+      try { await response?.dispose(); } catch (_) {}
+      _emit(onProgress, LocalAiInstallProgress(phase: LocalAiInstallPhase.failed));
+      await _recordLocalFailure(error, phase);
+      if (error is LocalAiModelInstallException) rethrow;
+      throw const LocalAiModelInstallException('Local AI installation failed safely. Check network/storage and retry; no unverified model was loaded.');
+    }
+  }
+
+  Future<void> _loadPinnedModel(LocalAiPublisherFile publisherFile) async {
+    try {
+      await _loadModel(manifest.fileName, manifest.sha256Hex, publisherFile);
+    } catch (error) {
+      final safe = error.toString().replaceAll(RegExp(r'\s+'), ' ');
+      throw LocalAiModelInstallException('The verified GGUF could not be loaded by the native runtime: ${safe.substring(0, safe.length.clamp(0, 220).toInt())}');
+    }
+  }
+
+  Future<void> _recordLocalFailure(Object error, LocalAiInstallPhase phase) async {
+    final reporter = DiagnosticReporter.active;
+    if (reporter == null) return;
+    try {
+      await reporter.record(
+        error,
+        category: phase == LocalAiInstallPhase.checkingPublisher || phase == LocalAiInstallPhase.downloading
+            ? DiagnosticCategory.network
+            : phase == LocalAiInstallPhase.loading ? DiagnosticCategory.native : DiagnosticCategory.aiProvider,
+        reportType: phase == LocalAiInstallPhase.loading ? DiagnosticReportType.crashReport : DiagnosticReportType.aiProviderError,
+        component: 'local_ai_model_install',
+        runtimeStatus: phase.name,
+        reproductionSteps: 'Local AI download/verification/load failed. Model content and user prompts were not included.',
+        requireManualReview: true,
+      );
+    } catch (_) {
+      // The failure remains visible in the UI even if local diagnostic storage is unavailable.
+    }
+  }
+
+  void _validateManifestPin() {
+    if (manifest.fileSizeBytes <= 0 || !RegExp(r'^[0-9a-f]{64}$').hasMatch(manifest.sha256Hex) ||
+        !RegExp(r'^[0-9a-f]{40}$').hasMatch(manifest.revision)) {
+      throw const LocalAiModelInstallException('The app-owned model pin is malformed; installation was stopped.');
+    }
+  }
+
+  void _emit(LocalAiProgressCallback? callback, LocalAiInstallProgress progress) {
+    try { callback?.call(progress); } catch (_) {}
+  }
+
+  /// Legacy file-picker import is disabled in production. The supported
+  /// on-device path downloads from and validates the pinned publisher source.
   Future<VerifiedLocalAiModel?> chooseVerifyAndLoad() async {
-    if (!_artifactPinApproved) {
-      throw const LocalAiModelInstallException('The Qwen artifact pin has not been independently verified against publisher metadata and actual GGUF bytes. Import and native loading are disabled.');
+    if (!_legacyImportAllowed) {
+      throw const LocalAiModelInstallException('File-picker model import is disabled. Use the verified official on-device download flow.');
     }
     final selected = await _pickFile();
     if (selected == null) return null;
     return verifyAndLoadStream(fileName: selected.name, source: selected.openRead());
   }
 
-  /// Exposed for deterministic tests with small injected manifests; production
-  /// always uses [LocalAiModelManifest.qwenQ4Km].
+  /// Exposed for deterministic unit tests with injected small manifests only.
   Future<VerifiedLocalAiModel> verifyAndLoadStream({required String fileName, required Stream<List<int>> source}) async {
-    if (!_artifactPinApproved) {
-      throw const LocalAiModelInstallException('The Qwen artifact pin has not been independently verified against publisher metadata and actual GGUF bytes. Import and native loading are disabled.');
+    if (!_legacyImportAllowed) {
+      throw const LocalAiModelInstallException('Unverified file-picker import is disabled.');
     }
-    if (fileName != manifest.fileName) {
-      throw LocalAiModelInstallException('Wrong model filename. Select exactly ${manifest.fileName} from the pinned Qwen repository.');
-    }
-    if (manifest.fileSizeBytes <= 0 || !RegExp(r'^[0-9a-f]{64}$').hasMatch(manifest.sha256Hex)) {
-      throw const LocalAiModelInstallException('The app-owned model pin is invalid; installation was stopped.');
-    }
-
+    if (fileName != manifest.fileName) throw LocalAiModelInstallException('Wrong model filename. Select exactly ${manifest.fileName}.');
+    _validateManifestPin();
     final support = await _supportDirectory();
     final modelDirectory = Directory(paths.join(support.path, 'local_ai', 'models'));
     await modelDirectory.create(recursive: true);
@@ -114,13 +260,10 @@ class LocalAiModelInstaller {
     final temporaryFile = File('${finalFile.path}.${DateTime.now().microsecondsSinceEpoch}.part');
     var byteCount = 0;
     final sink = temporaryFile.openWrite(mode: FileMode.writeOnly);
-
     try {
       await for (final chunk in source) {
         byteCount += chunk.length;
-        if (byteCount > manifest.fileSizeBytes) {
-          throw LocalAiModelInstallException('Selected model exceeds the pinned size of ${manifest.fileSizeBytes} bytes; temporary data will be removed.');
-        }
+        if (byteCount > manifest.fileSizeBytes) throw const LocalAiModelInstallException('Selected model exceeds the pinned exact size.');
         sink.add(chunk);
       }
       await sink.flush();
@@ -130,29 +273,22 @@ class LocalAiModelInstaller {
       try { if (await temporaryFile.exists()) await temporaryFile.delete(); } catch (_) {}
       rethrow;
     }
-
-    late final String actualSha256;
-    try {
-      actualSha256 = (await sha256.bind(temporaryFile.openRead()).first).toString();
-    } catch (error) {
-      try { await temporaryFile.delete(); } catch (_) {}
-      throw LocalAiModelInstallException('Could not read the copied model to verify its SHA-256; temporary file removed. ${error.toString().replaceAll(RegExp(r'\\s+'), ' ')}');
-    }
+    final actualSha256 = (await sha256.bind(temporaryFile.openRead()).first).toString();
     if (byteCount != manifest.fileSizeBytes || actualSha256 != manifest.sha256Hex) {
       try { await temporaryFile.delete(); } catch (_) {}
-      throw LocalAiModelInstallException(
-        'Model verification failed; temporary file removed. Expected ${manifest.fileSizeBytes} bytes and SHA-256 ${manifest.sha256Hex}; received $byteCount bytes and SHA-256 $actualSha256. No model was loaded.',
-      );
+      throw const LocalAiModelInstallException('Test-file verification failed; exact size/SHA-256 mismatch.');
     }
-
     if (await finalFile.exists()) await finalFile.delete();
     await temporaryFile.rename(finalFile.path);
-    try {
-      await _loadModel(manifest.fileName, manifest.sha256Hex);
-    } catch (error) {
-      final normalizedError = error.toString().replaceAll(RegExp(r'\s+'), ' ');
-      throw LocalAiModelInstallException('The model file passed size and SHA-256 verification but native loading failed: ${normalizedError.substring(0, normalizedError.length.clamp(0, 240).toInt())}. The verified file remains in app-private storage for diagnosis.');
-    }
+    await _loadModel(manifest.fileName, manifest.sha256Hex, LocalAiPublisherFile(
+      repository: manifest.repository,
+      author: manifest.repository.split('/').first,
+      revision: manifest.revision,
+      license: manifest.license,
+      fileName: manifest.fileName,
+      sizeBytes: byteCount,
+      sha256Hex: actualSha256,
+    ));
     return VerifiedLocalAiModel(fileName: manifest.fileName, sizeBytes: byteCount, sha256Hex: actualSha256);
   }
 }

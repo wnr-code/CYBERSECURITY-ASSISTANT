@@ -290,13 +290,11 @@ def configure_manifest(manifest_file: Path) -> None:
         raise RuntimeError(f"Unexpected Android manifest root in {manifest_file}.")
 
     permission_name = _android_attribute("name")
-    internet_permission = "android.permission.INTERNET"
-    if not any(
-        node.get(permission_name) == internet_permission
-        for node in manifest.findall("uses-permission")
-    ):
-        permission = ET.Element("uses-permission", {permission_name: internet_permission})
-        manifest.insert(0, permission)
+    permissions = ("android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE")
+    for permission_name_value in permissions:
+        if not any(node.get(permission_name) == permission_name_value for node in manifest.findall("uses-permission")):
+            permission = ET.Element("uses-permission", {permission_name: permission_name_value})
+            manifest.insert(0, permission)
 
     application = manifest.find("application")
     if application is None:

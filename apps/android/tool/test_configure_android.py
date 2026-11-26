@@ -263,12 +263,8 @@ class ConfigureAndroidTests(unittest.TestCase):
             root = ET.parse(manifest).getroot()
             application = root.find("application")
             self.assertIsNotNone(application)
-            self.assertTrue(
-                any(
-                    node.get(f"{android_ns}name") == "android.permission.INTERNET"
-                    for node in root.findall("uses-permission")
-                )
-            )
+            permissions = {node.get(f"{android_ns}name") for node in root.findall("uses-permission")}
+            self.assertTrue({"android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"}.issubset(permissions))
             self.assertEqual(application.get(f"{android_ns}label"), "Cybersecurity Assistant")
             self.assertEqual(application.get(f"{android_ns}icon"), "@mipmap/ic_launcher")
             self.assertEqual(application.get(f"{android_ns}roundIcon"), "@mipmap/ic_launcher")

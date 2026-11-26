@@ -460,6 +460,7 @@ class DiagnosticReporter extends ChangeNotifier {
     String? runtimeStatus,
     String? moduleVersion,
     String reproductionSteps = '',
+    bool requireManualReview = false,
   }) {
     final current = active;
     if (current != null) {
@@ -475,6 +476,7 @@ class DiagnosticReporter extends ChangeNotifier {
         runtimeStatus: runtimeStatus,
         moduleVersion: moduleVersion,
         reproductionSteps: reproductionSteps,
+        requireManualReview: requireManualReview,
       ));
     }
   }
@@ -530,6 +532,8 @@ class DiagnosticReporter extends ChangeNotifier {
   bool get isBusy => _busy;
   int get pendingCount => pendingReports.length;
   bool get relayCredentialConfigured => _relayCredentialConfigured;
+  bool _requiresManualReview(DiagnosticReport report) =>
+      report.component.startsWith('local_ai_') || report.component == 'ai_provider:local_ai';
   bool get hasRelay => _relayCredentialConfigured && UserRelayDiagnosticUploader.validEndpoint(Uri.tryParse(_settings.backendEndpoint) ?? Uri());
 
   Future<void> initialize() async {
@@ -604,6 +608,10 @@ class DiagnosticReporter extends ChangeNotifier {
     for (var i = 0; i < _reports.length; i++) {
       final report = _reports[i];
       if (report.status == DiagnosticStatus.sent || report.isLocalTest) continue;
+      if (_requiresManualReview(report)) {
+        _reports[i] = report.copyWith(status: DiagnosticStatus.waitingForReview, uploadApproved: false, clearNextAttemptAt: true);
+        continue;
+      }
       if (endpointChanged || consentRevoked || reviewWasEnabled) {
         _reports[i] = report.copyWith(status: DiagnosticStatus.waitingForReview, uploadApproved: false, clearNextAttemptAt: true);
       } else if (settings.autoReportingEnabled && !settings.reviewBeforeUpload && settings.consentGranted) {
@@ -657,6 +665,7 @@ class DiagnosticReporter extends ChangeNotifier {
     String? executionId,
     String? runtimeStatus,
     String reproductionSteps = '',
+    bool requireManualReview = false,
   }) async {
     await initialize();
     final now = _clock().toUtc();
@@ -680,23 +689,25 @@ class DiagnosticReporter extends ChangeNotifier {
     final key = '${resolvedType.name}|${safeComponent.toLowerCase()}|$safeType|$fingerprintMessage|${safeStack.split('\n').take(4).join('|').replaceAll(RegExp(r':\d+'), ':#')}';
     final fingerprint = sha256.convert(utf8.encode(key)).toString();
     final duplicate = _reports.indexWhere((row) => row.fingerprint == fingerprint && now.difference(row.lastSeen) < const Duration(days: 1));
-    final automaticApproval = _settings.consentGranted && _settings.autoReportingEnabled && !_settings.reviewBeforeUpload;
+    final automaticApproval = !requireManualReview && _settings.consentGranted && _settings.autoReportingEnabled && !_settings.reviewBeforeUpload;
     if (duplicate >= 0) {
       final old = _reports[duplicate];
-      final status = old.status == DiagnosticStatus.sent
-          ? (automaticApproval ? DiagnosticStatus.queued : DiagnosticStatus.waitingForReview)
-          : old.status == DiagnosticStatus.uploading
-              ? DiagnosticStatus.uploading
-              : _settings.reviewBeforeUpload
-                  ? DiagnosticStatus.waitingForReview
-                  : automaticApproval
-                      ? DiagnosticStatus.queued
-                      : old.status;
+      final status = old.status == DiagnosticStatus.uploading
+          ? DiagnosticStatus.uploading
+          : requireManualReview
+              ? DiagnosticStatus.waitingForReview
+              : old.status == DiagnosticStatus.sent
+                  ? (automaticApproval ? DiagnosticStatus.queued : DiagnosticStatus.waitingForReview)
+                  : _settings.reviewBeforeUpload
+                      ? DiagnosticStatus.waitingForReview
+                      : automaticApproval
+                          ? DiagnosticStatus.queued
+                          : old.status;
       _reports[duplicate] = old.copyWith(
         lastSeen: now,
         occurrences: (old.occurrences + 1).clamp(1, 100000).toInt(),
         status: status,
-        uploadApproved: old.status == DiagnosticStatus.uploading ? automaticApproval : (old.status == DiagnosticStatus.sent ? automaticApproval : (automaticApproval || (!_settings.reviewBeforeUpload && old.uploadApproved))),
+        uploadApproved: old.status == DiagnosticStatus.uploading ? automaticApproval : (requireManualReview ? false : old.status == DiagnosticStatus.sent ? automaticApproval : (automaticApproval || (!_settings.reviewBeforeUpload && old.uploadApproved))),
       );
       final saved = await _persist();
       notifyListeners();
@@ -723,7 +734,7 @@ class DiagnosticReporter extends ChangeNotifier {
       assessmentId: safeAssessmentId,
       executionId: safeExecutionId,
       runtimeStatus: safeRuntimeStatus,
-      status: automaticApproval ? DiagnosticStatus.queued : (_settings.reviewBeforeUpload ? DiagnosticStatus.waitingForReview : DiagnosticStatus.queued),
+      status: requireManualReview ? DiagnosticStatus.waitingForReview : automaticApproval ? DiagnosticStatus.queued : (_settings.reviewBeforeUpload ? DiagnosticStatus.waitingForReview : DiagnosticStatus.queued),
       uploadApproved: automaticApproval,
     );
     _reports.insert(0, report);

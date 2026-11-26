@@ -7,6 +7,8 @@ import 'package:cybersecurity_assistant/core/ai_data_sharing_consent.dart';
 import 'package:cybersecurity_assistant/core/ai_provider_manager.dart';
 import 'package:cybersecurity_assistant/core/ai_terminal_execution_bridge.dart';
 import 'package:cybersecurity_assistant/core/market_provider_manager.dart';
+import 'package:cybersecurity_assistant/core/local_ai_inference_runtime.dart';
+import 'package:cybersecurity_assistant/core/local_ai_model_manifest.dart';
 import 'package:cybersecurity_assistant/core/secure_credential_store.dart';
 import 'package:cybersecurity_assistant/core/terminal_runtime_adapter.dart';
 import 'package:cybersecurity_assistant/core/tool_orchestrator.dart';
@@ -69,9 +71,25 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     const capabilityChannel = MethodChannel('org.cybersecurityassistant/local_ai_capabilities');
+    const localRuntimeChannel = MethodChannel('test/assistant_local_ai_runtime');
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(capabilityChannel, (call) async => null);
-    addTearDown(() => messenger.setMockMethodCallHandler(capabilityChannel, null));
+    messenger.setMockMethodCallHandler(localRuntimeChannel, (call) async => {
+      'sourceCommit': AndroidLlamaCppInferenceRuntime.sourceCommit,
+      'runtimeLoaded': true,
+      'modelLoaded': true,
+      'modelName': LocalAiModelManifest.qwenQ4Km.fileName,
+      'modelSha256': LocalAiModelManifest.qwenQ4Km.sha256Hex,
+      'publisherMetadataVerified': true,
+      'inferenceSucceeded': true,
+      'offlineInferenceSucceeded': false,
+      'abi': 'arm64-v8a',
+      'backend': 'cpu',
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(capabilityChannel, null);
+      messenger.setMockMethodCallHandler(localRuntimeChannel, null);
+    });
 
     final backend = _MemorySecureBackend();
     final credentials = SecureCredentialStore(backend: backend);
@@ -79,7 +97,10 @@ void main() {
     final transport = _FakeAiTransport();
     final providers = AiProviderManager(
       credentialStore: credentials,
-      adapters: [GeminiAiProviderAdapter(credentialStore: credentials, transport: transport)],
+      adapters: [
+        GeminiAiProviderAdapter(credentialStore: credentials, transport: transport),
+        LocalAiProviderAdapter(AndroidLlamaCppInferenceRuntime(channel: localRuntimeChannel)),
+      ],
     );
     final marketProviders = MarketProviderManager(
       credentials: credentials,
@@ -122,6 +143,18 @@ void main() {
     stderr.writeln('CONSENT_TEST_STAGE assistant-rendered');
 
     expect(find.byKey(const ValueKey('assistant-floating-composer')), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await _pumpAssistantFrame(tester);
+    const localProviderLabel = 'Local AI runtime · Offline inference test required';
+    expect(find.text(localProviderLabel), findsOneWidget,
+        reason: 'The verified model must be selectable for a first Chat attempt without being labelled Ready.');
+    await tester.tap(find.text(localProviderLabel));
+    await _pumpAssistantFrame(tester);
+    expect(find.text('Local Chat is available, but readiness stays Not Ready until a real response succeeds with airplane mode on and no internet network.'), findsOneWidget);
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await _pumpAssistantFrame(tester);
+    await tester.tap(find.text('Google Gemini'));
+    await _pumpAssistantFrame(tester);
     expect(find.byIcon(Icons.check_rounded), findsNothing,
         reason: 'A saved Gemini key alone must not show the green connection check.');
     expect(find.byKey(const ValueKey('assistant-info-button')), findsOneWidget);

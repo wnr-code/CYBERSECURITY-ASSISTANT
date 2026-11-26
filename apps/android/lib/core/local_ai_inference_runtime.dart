@@ -3,12 +3,13 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import 'ai_provider_manager.dart';
-import 'local_ai_artifact_status.dart';
+import 'local_ai_model_manifest.dart';
+import 'local_ai_model_source.dart';
 
 /// Flutter MethodChannel adapter for the Android arm64 llama.cpp JNI bridge.
 /// It performs no networking; absent native code or a verified loaded model is
 /// a hard Not Ready state, never a reason to select a cloud provider.
-class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalAiInferenceReadiness {
+class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalAiInferenceReadiness, LocalAiChatAvailability {
   const AndroidLlamaCppInferenceRuntime({
     this.channel = const MethodChannel('org.cybersecurityassistant/local_ai_runtime'),
   });
@@ -17,8 +18,12 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
   final MethodChannel channel;
 
   @override
-  Future<bool> isReady() async {
-    if (!qwenArtifactIndependentlyVerified) return false;
+  Future<bool> isReady() => _hasVerifiedLoadedModel(requireSuccessfulInference: true);
+
+  @override
+  Future<bool> canAttemptInference() => _hasVerifiedLoadedModel(requireSuccessfulInference: false);
+
+  Future<bool> _hasVerifiedLoadedModel({required bool requireSuccessfulInference}) async {
     try {
       final status = await channel.invokeMapMethod<Object?, Object?>('getRuntimeStatus')
           .timeout(const Duration(seconds: 3));
@@ -26,6 +31,10 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
           status['sourceCommit'] == sourceCommit &&
           status['runtimeLoaded'] == true &&
           status['modelLoaded'] == true &&
+          status['publisherMetadataVerified'] == true &&
+          (!requireSuccessfulInference || (status['inferenceSucceeded'] == true && status['offlineInferenceSucceeded'] == true)) &&
+          status['modelName'] == LocalAiModelManifest.qwenQ4Km.fileName &&
+          status['modelSha256'] == LocalAiModelManifest.qwenQ4Km.sha256Hex &&
           status['abi'] == 'arm64-v8a' &&
           status['backend'] == 'cpu' &&
           status['modelName'] is String &&
@@ -40,18 +49,28 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
     }
   }
 
-  Future<void> loadVerifiedModel(String fileName, String sha256Hex) async {
-    if (!qwenArtifactIndependentlyVerified) {
-      throw const AiProviderException('Local AI model loading is disabled until the pinned artifact is independently verified.');
-    }
+  Future<void> loadVerifiedModel(String fileName, String sha256Hex, LocalAiPublisherFile publisherFile) async {
     if (fileName != 'qwen2.5-1.5b-instruct-q4_k_m.gguf' ||
-        sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e') {
+        sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e' ||
+        publisherFile.repository != 'Qwen/Qwen2.5-1.5B-Instruct-GGUF' ||
+        publisherFile.author != 'Qwen' ||
+        publisherFile.revision != 'dd26da440ef0330c47919d1ecae0966d24022222' ||
+        publisherFile.license.toLowerCase() != 'apache-2.0' ||
+        publisherFile.fileName != fileName ||
+        publisherFile.sizeBytes != 1117320736 ||
+        publisherFile.sha256Hex != sha256Hex) {
       throw const AiProviderException('Model is not present in the app-pinned trust manifest.');
     }
     try {
       await channel.invokeMethod<Object?>('loadVerifiedModel', {
         'fileName': fileName,
         'sha256': sha256Hex,
+        'publisherRepository': publisherFile.repository,
+        'publisherAuthor': publisherFile.author,
+        'publisherRevision': publisherFile.revision,
+        'publisherLicense': publisherFile.license,
+        'publisherSizeBytes': publisherFile.sizeBytes,
+        'publisherSha256': publisherFile.sha256Hex,
       }).timeout(const Duration(minutes: 5));
     } on PlatformException catch (error) {
       throw AiProviderException(error.message ?? 'Verified local model could not be loaded.');
@@ -64,8 +83,8 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
 
   @override
   Future<AiProviderReply> complete(List<AiChatMessage> messages) async {
-    if (!await isReady()) {
-      throw const AiProviderException('Local AI is Not Ready: no verified on-device model is loaded. No cloud fallback was attempted.');
+    if (!await canAttemptInference()) {
+      throw const AiProviderException('Local AI Chat is blocked: no verified on-device model is loaded. No cloud fallback was attempted.');
     }
     if (messages.isEmpty || messages.length > 32) {
       throw const AiProviderException('Local AI conversation exceeds the safe turn limit.');

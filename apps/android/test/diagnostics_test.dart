@@ -231,6 +231,35 @@ void main() {
       restored.dispose();
     });
 
+    test('Local AI reports stay local for individual review even when automatic reporting is enabled', () async {
+      await reporter.configure(const DiagnosticSettings(
+        consentGranted: true,
+        autoReportingEnabled: true,
+        reviewBeforeUpload: false,
+        backendEndpoint: 'https://relay.example.test/diagnostics',
+      ));
+      final row = await reporter.record(
+        StateError('Local AI diagnostic'),
+        category: DiagnosticCategory.native,
+        message: 'Local AI status: BLOCKED; path=/data/user/0/private; token=secret123',
+        component: 'local_ai_device_diagnostic',
+        requireManualReview: true,
+      );
+      await reporter.configure(const DiagnosticSettings(
+        consentGranted: true,
+        autoReportingEnabled: true,
+        reviewBeforeUpload: false,
+        backendEndpoint: 'https://relay.example.test/diagnostics',
+      ));
+      await reporter.retryPending();
+      expect(row.status, DiagnosticStatus.waitingForReview);
+      expect(row.uploadApproved, isFalse);
+      expect(row.message, isNot(contains('/data/user')));
+      expect(row.message, isNot(contains('secret123')));
+      expect(uploader.uploads, 0);
+      expect(store.snapshot['reports'], isA<List>());
+    });
+
     test('automatic reporting OFF keeps consented reports local', () async {
       await reporter.configure(const DiagnosticSettings(consentGranted: true, autoReportingEnabled: false, reviewBeforeUpload: false, backendEndpoint: 'https://relay.example.test/diagnostics'));
       await reporter.record(Exception('local only'), category: DiagnosticCategory.network);

@@ -227,7 +227,7 @@ void main() {
     expect(find.textContaining('Pinned llama.cpp source commit:'), findsOneWidget);
     expect(find.textContaining('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision'), findsOneWidget);
     final installModel = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-install-model')));
-    expect(installModel.onPressed, isNull, reason: 'Model import stays blocked until its pin is independently verified.');
+    expect(installModel.onPressed, isNotNull, reason: 'The APK must fetch and check official metadata before enabling native load.');
     expect(find.text('Offline Inference Test'), findsOneWidget);
     final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     expect(diagnostic.onPressed, isNotNull);
