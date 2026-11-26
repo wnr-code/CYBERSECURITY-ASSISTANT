@@ -49,15 +49,21 @@ class _CatalogScreenState extends State<CatalogScreen> {
     final orchestrator = ToolOrchestrator(packageManager: widget.packageManager);
     final ready = <String>{};
     var hadReadinessError = false;
-    for (final tool in toolRegistry.where((item) => item.id != 'response_analyzer')) {
+    final tools = toolRegistry.where((item) => item.id != 'response_analyzer');
+    // Resolve readiness concurrently: every check shares the same runtime and
+    // package registries, while serial awaits made a stalled platform/storage
+    // probe keep the whole catalog in its loading state indefinitely.
+    await Future.wait<void>(tools.map((tool) async {
       try {
-        final capability = await orchestrator.availabilityForTool(tool.id);
+        final capability = await orchestrator
+            .availabilityForTool(tool.id)
+            .timeout(const Duration(seconds: 5));
         if (capability.ready) ready.add(tool.id);
         if (capability.status == ToolStatus.error) hadReadinessError = true;
       } catch (_) {
         hadReadinessError = true;
       }
-    }
+    }));
     if (!mounted || generation != _readinessGeneration) return;
     setState(() {
       _readyToolIds = Set.unmodifiable(ready);
