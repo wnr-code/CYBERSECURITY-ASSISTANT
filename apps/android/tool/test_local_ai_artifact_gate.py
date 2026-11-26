@@ -164,6 +164,18 @@ hooks:
             with self.assertRaisesRegex(GateError, "outside arm64-v8a"):
                 audit_apk_cpu_only(apk_path, manifest_path)
 
+    def test_unverified_qwen_pin_blocks_import_native_load_and_chat(self) -> None:
+        app = Path(__file__).resolve().parents[1]
+        status = (app / "lib/core/local_ai_artifact_status.dart").read_text(encoding="utf-8")
+        installer = (app / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
+        runtime = (app / "lib/core/local_ai_inference_runtime.dart").read_text(encoding="utf-8")
+        widget = (app / "lib/widgets/local_ai_model_install_action.dart").read_text(encoding="utf-8")
+        self.assertIn("const bool qwenArtifactIndependentlyVerified = false;", status)
+        self.assertIn("if (!_artifactPinApproved)", installer)
+        self.assertIn("if (!qwenArtifactIndependentlyVerified) return false;", runtime)
+        self.assertIn("if (!qwenArtifactIndependentlyVerified)", runtime)
+        self.assertIn("!LocalAiModelManifest.qwenArtifactIndependentlyVerified ? null", widget)
+
     def test_model_audit_reports_hash_but_never_enables_install(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

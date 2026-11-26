@@ -54,20 +54,22 @@ class _LocalAiModelInstallActionState extends State<LocalAiModelInstallAction> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(context.tr('Install pinned GGUF model'), style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),
-          Text(context.tr('Download this exact file in your phone browser, then select it below. The app streams it into private storage and checks its exact byte count and SHA-256 before attempting native load. A matching digest checks identity only; it does not guarantee the model is free of all security or quality risks.'), style: const TextStyle(fontSize: 12, height: 1.45)),
+          Text(context.tr('The candidate metadata has not been independently verified against the publisher and actual GGUF bytes. Import and native loading remain disabled; Local AI is Not Ready.'), style: const TextStyle(fontSize: 12, height: 1.45)),
           const SizedBox(height: 8),
           SelectableText('${manifest.repository}\n${manifest.fileName}\n${manifest.license} · ${manifest.fileSizeBytes} bytes\nRevision ${manifest.revision}\nSHA-256 ${manifest.sha256Hex}', style: const TextStyle(fontSize: 11, height: 1.45)),
           TextButton.icon(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: manifest.downloadUrl));
-              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Pinned official download URL copied. Open it in your browser.'))));
-            },
+            onPressed: LocalAiModelManifest.qwenArtifactIndependentlyVerified
+                ? () async {
+                    await Clipboard.setData(ClipboardData(text: manifest.downloadUrl));
+                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(context.tr('Pinned official download URL copied. Open it in your browser.'))));
+                  }
+                : null,
             icon: const Icon(Icons.content_copy, size: 16),
             label: Text(context.tr('Copy pinned download URL')),
           ),
           OutlinedButton.icon(
             key: const ValueKey('local-ai-install-model'),
-            onPressed: _busy ? null : _chooseAndInstall,
+            onPressed: _busy || !LocalAiModelManifest.qwenArtifactIndependentlyVerified ? null : _chooseAndInstall,
             icon: _busy
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.verified_outlined),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import 'ai_provider_manager.dart';
+import 'local_ai_artifact_status.dart';
 
 /// Flutter MethodChannel adapter for the Android arm64 llama.cpp JNI bridge.
 /// It performs no networking; absent native code or a verified loaded model is
@@ -17,6 +18,7 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
 
   @override
   Future<bool> isReady() async {
+    if (!qwenArtifactIndependentlyVerified) return false;
     try {
       final status = await channel.invokeMapMethod<Object?, Object?>('getRuntimeStatus')
           .timeout(const Duration(seconds: 3));
@@ -39,6 +41,9 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
   }
 
   Future<void> loadVerifiedModel(String fileName, String sha256Hex) async {
+    if (!qwenArtifactIndependentlyVerified) {
+      throw const AiProviderException('Local AI model loading is disabled until the pinned artifact is independently verified.');
+    }
     if (fileName != 'qwen2.5-1.5b-instruct-q4_k_m.gguf' ||
         sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e') {
       throw const AiProviderException('Model is not present in the app-pinned trust manifest.');

@@ -31,7 +31,7 @@ void main() {
       'abi': 'arm64-v8a',
       'backend': 'cpu',
     });
-    expect(await runtime.isReady(), isTrue);
+    expect(await runtime.isReady(), isFalse, reason: 'An unverified Qwen artifact pin blocks readiness regardless of native-reported status.');
   });
 
   test('runtime source or ABI mismatch fails closed', () async {
@@ -68,10 +68,10 @@ void main() {
       runtime.complete([AiChatMessage.user('local only')]),
       throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('No cloud fallback'))),
     );
-    expect(completeInvocations, 1);
+    expect(completeInvocations, 0, reason: 'Unverified artifact status must block the native Chat call.');
   });
 
-  test('text completion remains on the on-device method channel', () async {
+  test('unverified artifact pin blocks Chat before invoking the native channel', () async {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
       if (call.method == 'getRuntimeStatus') {
@@ -88,11 +88,10 @@ void main() {
       received = call;
       return 'local response';
     });
-    final reply = await runtime.complete([AiChatMessage.user('offline?')]);
-    expect(reply.text, 'local response');
-    expect(received?.method, 'complete');
-    expect(received?.arguments['messages'], [
-      {'role': 'user', 'content': 'offline?'},
-    ]);
+    await expectLater(
+      runtime.complete([AiChatMessage.user('offline?')]),
+      throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('Not Ready'))),
+    );
+    expect(received, isNull);
   });
 }

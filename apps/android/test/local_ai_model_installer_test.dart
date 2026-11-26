@@ -40,12 +40,28 @@ void main() {
     expect(qwen.downloadUrl, contains('/resolve/${qwen.revision}/'));
   });
 
+  test('unverified production Qwen pin blocks selection, storage, and native loading', () async {
+    var pickerCalled = false;
+    final installer = LocalAiModelInstaller(
+      pickFile: () async { pickerCalled = true; return null; },
+      supportDirectory: () async => supportDirectory,
+    );
+    await expectLater(
+      installer.chooseVerifyAndLoad(),
+      throwsA(isA<LocalAiModelInstallException>().having((error) => error.message, 'message', contains('not been independently verified'))),
+    );
+    expect(pickerCalled, isFalse);
+    expect(await supportDirectory.list().toList(), isEmpty);
+    expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
+  });
+
   test('copies only exact-size, exact-SHA bytes before invoking native loader', () async {
     var loadedName = '';
     var loadedDigest = '';
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
+      allowUnverifiedManifestForTests: true,
       loadModel: (name, digest) async { loadedName = name; loadedDigest = digest; },
     );
 
@@ -67,6 +83,7 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
+      allowUnverifiedManifestForTests: true,
       loadModel: (_, __) async { loaderCalled = true; },
     );
 
@@ -85,6 +102,7 @@ void main() {
     final installer = LocalAiModelInstaller(
       manifest: manifest,
       supportDirectory: () async => supportDirectory,
+      allowUnverifiedManifestForTests: true,
       loadModel: (_, __) async {
         fail('Loader must not run for a filename mismatch.');
       },

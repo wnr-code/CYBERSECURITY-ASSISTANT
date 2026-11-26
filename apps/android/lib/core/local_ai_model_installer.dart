@@ -5,12 +5,15 @@ import 'package:file_selector/file_selector.dart';
 import 'package:path/path.dart' as paths;
 import 'package:path_provider/path_provider.dart';
 
+import 'local_ai_artifact_status.dart' as artifact_status;
 import 'local_ai_inference_runtime.dart';
 
 /// Exact, immutable model metadata supplied for the Qwen official repository.
 /// The hash validates these bytes against this pin; it is not a guarantee that
 /// the model is free of all security or quality risks.
 class LocalAiModelManifest {
+  static const bool qwenArtifactIndependentlyVerified = artifact_status.qwenArtifactIndependentlyVerified;
+
   const LocalAiModelManifest({
     required this.repository,
     required this.revision,
@@ -63,20 +66,29 @@ class LocalAiModelInstaller {
     Future<XFile?> Function()? pickFile,
     Future<Directory> Function()? supportDirectory,
     Future<void> Function(String fileName, String sha256Hex)? loadModel,
+    bool allowUnverifiedManifestForTests = false,
   })  : _pickFile = pickFile ?? _pickGguf,
         _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
-        _loadModel = loadModel ?? const AndroidLlamaCppInferenceRuntime().loadVerifiedModel;
+        _loadModel = loadModel ?? const AndroidLlamaCppInferenceRuntime().loadVerifiedModel,
+        _allowUnverifiedManifestForTests = allowUnverifiedManifestForTests;
 
   final LocalAiModelManifest manifest;
   final Future<XFile?> Function() _pickFile;
   final Future<Directory> Function() _supportDirectory;
   final Future<void> Function(String fileName, String sha256Hex) _loadModel;
+  final bool _allowUnverifiedManifestForTests;
+
+  bool get _artifactPinApproved =>
+      LocalAiModelManifest.qwenArtifactIndependentlyVerified || _allowUnverifiedManifestForTests;
 
   static Future<XFile?> _pickGguf() => openFile(
         acceptedTypeGroups: const [XTypeGroup(label: 'GGUF model', extensions: ['gguf'])],
       );
 
   Future<VerifiedLocalAiModel?> chooseVerifyAndLoad() async {
+    if (!_artifactPinApproved) {
+      throw const LocalAiModelInstallException('The Qwen artifact pin has not been independently verified against publisher metadata and actual GGUF bytes. Import and native loading are disabled.');
+    }
     final selected = await _pickFile();
     if (selected == null) return null;
     return verifyAndLoadStream(fileName: selected.name, source: selected.openRead());
@@ -85,6 +97,9 @@ class LocalAiModelInstaller {
   /// Exposed for deterministic tests with small injected manifests; production
   /// always uses [LocalAiModelManifest.qwenQ4Km].
   Future<VerifiedLocalAiModel> verifyAndLoadStream({required String fileName, required Stream<List<int>> source}) async {
+    if (!_artifactPinApproved) {
+      throw const LocalAiModelInstallException('The Qwen artifact pin has not been independently verified against publisher metadata and actual GGUF bytes. Import and native loading are disabled.');
+    }
     if (fileName != manifest.fileName) {
       throw LocalAiModelInstallException('Wrong model filename. Select exactly ${manifest.fileName} from the pinned Qwen repository.');
     }

@@ -180,10 +180,11 @@ void main() {
       expect(find.text(section), findsOneWidget);
     }
     expect(find.text('Not Ready: the runtime, compatible model, and successful local inference are not all available.'), findsOneWidget);
-    expect(find.textContaining('The app uses official llama.cpp source pinned to a commit'), findsOneWidget);
+    expect(find.textContaining('The source-built CPU-only ARM64 APK passed CI static audit.'), findsOneWidget);
     expect(find.textContaining('Pinned llama.cpp source commit:'), findsOneWidget);
     expect(find.textContaining('The Qwen2.5 1.5B Instruct Q4_K_M model is pinned to the immutable Qwen repository revision'), findsOneWidget);
-    expect(find.byKey(const ValueKey('local-ai-install-model')), findsOneWidget);
+    final installModel = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-install-model')));
+    expect(installModel.onPressed, isNull, reason: 'Model import stays blocked until its pin is independently verified.');
     expect(find.text('Offline Inference Test'), findsOneWidget);
     final diagnostic = tester.widget<OutlinedButton>(find.byKey(const ValueKey('local-ai-diagnostic-test')));
     expect(diagnostic.onPressed, isNotNull);
