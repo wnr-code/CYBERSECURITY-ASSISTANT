@@ -206,7 +206,8 @@ void main() {
       final packageCard = find.byKey(const ValueKey('market-package-knowledge.fixture'));
       expect(packageCard, findsOneWidget,
           reason: 'Previously installed content remains visible when updated catalog metadata is incompatible.');
-      final packageScroll = find.byKey(const ValueKey('market-packages-list'));
+      final packageList = find.byKey(const ValueKey('market-packages-list'));
+      final packageScroll = find.descendant(of: packageList, matching: find.byType(Scrollable));
       await tester.scrollUntilVisible(find.text('Uninstall'), 180, scrollable: packageScroll);
 
       expect(manager.statusFor(incompatible), PackageStatus.incompatible);

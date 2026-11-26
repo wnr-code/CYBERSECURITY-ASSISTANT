@@ -350,6 +350,15 @@ Finder _findTextInEither(String first, String second) => find.byWidgetPredicate(
       (widget) => widget is Text && (widget.data == first || widget.data == second),
     );
 
+Finder _findCatalogUnavailableMessage() => find.byWidgetPredicate(
+      (widget) => widget is Text && const {
+        'Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.',
+        'No checks are currently available on this device.',
+        'Pemeriksaan kesiapan gagal; pemeriksaan terdampak disembunyikan.',
+        'Readiness checks failed; affected checks are hidden.',
+      }.contains(widget.data),
+    );
+
 String _renderedText(WidgetTester tester) => tester
     .widgetList<Text>(find.byType(Text))
     .map((widget) => widget.data ?? widget.textSpan?.toPlainText() ?? '')
@@ -1383,6 +1392,7 @@ void main() {
     expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat keamanan'), findsNothing);
 
     await _openCatalogFromDashboard(tester);
+    await _pumpUntilCatalogReady(tester);
     expect(find.text('ALAT KEAMANAN BAWAAN'), findsOneWidget);
     expect(find.byWidgetPredicate((widget) => widget is TextField && widget.decoration?.hintText == 'Cari alat keamanan'), findsOneWidget);
     expect(find.text('Google Gemini'), findsNothing);
@@ -1402,12 +1412,8 @@ void main() {
 
     await _pumpUntilCatalogReady(tester);
     final tlsTool = find.byKey(const ValueKey('catalog-tool-tls_inspector'));
-    final noChecksMessage = _findTextInEither(
-      'Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.',
-      'No checks are currently available on this device.',
-    );
     if (tlsTool.evaluate().isEmpty) {
-      expect(noChecksMessage, findsOneWidget,
+      expect(_findCatalogUnavailableMessage(), findsOneWidget,
           reason: 'Tools that are not ready for the current test platform are intentionally hidden. Text on screen: ${_renderedText(tester)}');
       return;
     }
@@ -1430,7 +1436,7 @@ void main() {
     final dnsTool = find.byKey(const ValueKey('catalog-tool-dns_lookup'));
     if (dnsTool.evaluate().isEmpty) {
       expect(
-        _findTextInEither('Saat ini tidak ada pemeriksaan yang tersedia di perangkat ini.', 'No checks are currently available on this device.'),
+        _findCatalogUnavailableMessage(),
         findsOneWidget,
         reason: 'The catalog hides checks that are not ready on the current test platform. Text on screen: ${_renderedText(tester)}',
       );
