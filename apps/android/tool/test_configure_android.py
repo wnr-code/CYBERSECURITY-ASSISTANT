@@ -390,7 +390,7 @@ class ConfigureAndroidTests(unittest.TestCase):
             self.assertIn('"qwen2.5-1.5b-instruct-q4_k_m.gguf"', bridge_source)
             self.assertIn("1_117_320_736L", bridge_source)
             self.assertIn("6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e", bridge_source)
-            self.assertIn("dd26da440ef0330c47919d1ecae0966d24022222", bridge_source)
+            self.assertIn("91cad51170dc346986eccefdc2dd33a9da36ead9", bridge_source)
             generated_jni = (app / "src/main/cpp/llama_jni.cpp").read_text(encoding="utf-8")
             self.assertIn('FindClass("org/example/LocalAiInferenceBridge")', generated_jni)
             self.assertIn("LocalAiInferenceBridge.attachChannel(this, flutterEngine)", activity.read_text(encoding="utf-8"))

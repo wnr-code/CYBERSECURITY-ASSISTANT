@@ -27,14 +27,14 @@ internal object LocalAiInferenceBridge {
     @Volatile private var loadedInferenceSucceeded: Boolean = false
     @Volatile private var loadedOfflineInferenceSucceeded: Boolean = false
 
-    // Qwen's user-supplied immutable upstream pin. Runtime installation still
-    // verifies the complete file byte count and SHA-256 before JNI sees it.
+    // App-pinned immutable upstream revision. Runtime installation still
+    // verifies publisher metadata and complete file bytes before JNI sees it.
     // This digest is an identity check, not a guarantee that model content is risk-free.
     private data class ModelPin(val repository: String, val revision: String, val license: String, val size: Long, val sha256: String)
     private val trustedModels = mapOf(
         "qwen2.5-1.5b-instruct-q4_k_m.gguf" to ModelPin(
             repository = "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-            revision = "dd26da440ef0330c47919d1ecae0966d24022222",
+            revision = "91cad51170dc346986eccefdc2dd33a9da36ead9",
             license = "Apache-2.0",
             size = 1_117_320_736L,
             sha256 = "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",

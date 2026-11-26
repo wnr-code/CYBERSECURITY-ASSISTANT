@@ -56,7 +56,7 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
 
   @override
   Future<LocalAiPublisherFile> fetchPublisherMetadata(LocalAiModelManifest manifest) async {
-    final uri = Uri.parse('$_apiOrigin/api/models/${manifest.repository}/revision/${manifest.revision}?blobs=true');
+    final uri = Uri.parse('$_apiOrigin/api/models/${manifest.repository}/revision/${manifest.revision}?blobs=true&full=true');
     if (uri.scheme != 'https' || uri.host != 'huggingface.co') {
       throw const LocalAiModelInstallException('Publisher metadata URL is not the official HTTPS Hugging Face API.');
     }
@@ -117,9 +117,15 @@ class HuggingFaceLocalAiArtifactSource implements LocalAiArtifactSource {
     final file = matchingFiles.single;
     final lfs = file['lfs'];
     final objectId = lfs is Map<String, dynamic> ? lfs['oid'] : null;
+    final lfsSha256 = lfs is Map<String, dynamic> ? lfs['sha256'] : null;
     final lfsSize = lfs is Map<String, dynamic> ? lfs['size'] : null;
     final rawSize = file['size'];
-    final metadataSha = objectId is String ? objectId.replaceFirst(RegExp(r'^sha256:'), '').toLowerCase() : '';
+    final oidSha = objectId is String ? objectId.replaceFirst(RegExp(r'^sha256:'), '').toLowerCase() : null;
+    final directSha = lfsSha256 is String ? lfsSha256.toLowerCase() : null;
+    if (oidSha != null && directSha != null && oidSha != directSha) {
+      throw const LocalAiModelInstallException('Official GGUF metadata contains conflicting SHA-256 values. Installation was blocked.');
+    }
+    final metadataSha = directSha ?? oidSha ?? '';
     if (rawSize is! int || lfsSize is! int || rawSize != manifest.fileSizeBytes || lfsSize != manifest.fileSizeBytes ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(metadataSha) || metadataSha != manifest.sha256Hex) {
       throw const LocalAiModelInstallException('Official GGUF size or publisher SHA-256 does not match the app pin. Installation was blocked.');

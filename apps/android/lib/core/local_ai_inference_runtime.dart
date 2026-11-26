@@ -54,7 +54,7 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
         sha256Hex != '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e' ||
         publisherFile.repository != 'Qwen/Qwen2.5-1.5B-Instruct-GGUF' ||
         publisherFile.author != 'Qwen' ||
-        publisherFile.revision != 'dd26da440ef0330c47919d1ecae0966d24022222' ||
+        publisherFile.revision != '91cad51170dc346986eccefdc2dd33a9da36ead9' ||
         publisherFile.license.toLowerCase() != 'apache-2.0' ||
         publisherFile.fileName != fileName ||
         publisherFile.sizeBytes != 1117320736 ||

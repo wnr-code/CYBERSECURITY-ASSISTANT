@@ -255,7 +255,7 @@ hooks:
         flutter_pin += (tool_dir.parent / "lib/core/local_ai_model_installer.dart").read_text(encoding="utf-8")
         native_bridge = (tool_dir / "native/LocalAiInferenceBridge.kt").read_text(encoding="utf-8")
         for token in (
-            "dd26da440ef0330c47919d1ecae0966d24022222",
+            "91cad51170dc346986eccefdc2dd33a9da36ead9",
             "qwen2.5-1.5b-instruct-q4_k_m.gguf",
             "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
             "1_117_320_736",

@@ -65,7 +65,7 @@ void main() {
     const qwen = LocalAiModelManifest.qwenQ4Km;
     expect(LocalAiModelManifest.qwenArtifactIndependentlyVerified, isFalse);
     expect(qwen.repository, 'Qwen/Qwen2.5-1.5B-Instruct-GGUF');
-    expect(qwen.revision, 'dd26da440ef0330c47919d1ecae0966d24022222');
+    expect(qwen.revision, '91cad51170dc346986eccefdc2dd33a9da36ead9');
     expect(qwen.fileName, 'qwen2.5-1.5b-instruct-q4_k_m.gguf');
     expect(qwen.license, 'Apache-2.0');
     expect(qwen.fileSizeBytes, 1117320736);
@@ -97,7 +97,7 @@ void main() {
         {
           'rfilename': manifest.fileName,
           'size': manifest.fileSizeBytes,
-          'lfs': {'size': manifest.fileSizeBytes, 'oid': 'sha256:$modelDigest'},
+          'lfs': {'size': manifest.fileSizeBytes, 'sha256': modelDigest},
         },
       ],
     };
@@ -112,6 +112,30 @@ void main() {
     final wrongRevision = Map<String, Object?>.from(valid)..['sha'] = List.filled(40, 'b').join();
     expect(
       () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(wrongRevision), manifest),
+      throwsA(isA<LocalAiModelInstallException>()),
+    );
+
+    final missingLicense = Map<String, dynamic>.from(jsonDecode(jsonEncode(valid)) as Map<String, dynamic>)
+      ..remove('cardData');
+    expect(
+      () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(missingLicense), manifest),
+      throwsA(isA<LocalAiModelInstallException>()),
+      reason: 'License verification must fail closed when the Hub response omits full model-card metadata.',
+    );
+
+    final legacyOid = Map<String, dynamic>.from(jsonDecode(jsonEncode(valid)) as Map<String, dynamic>);
+    final legacySibling = (legacyOid['siblings'] as List).single as Map<String, dynamic>;
+    legacySibling['lfs'] = {'size': manifest.fileSizeBytes, 'oid': 'sha256:$modelDigest'};
+    expect(
+      HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(legacyOid), manifest).sha256Hex,
+      modelDigest,
+    );
+
+    final conflictingSha = Map<String, dynamic>.from(jsonDecode(jsonEncode(valid)) as Map<String, dynamic>);
+    final conflictingSibling = (conflictingSha['siblings'] as List).single as Map<String, dynamic>;
+    conflictingSibling['lfs']['oid'] = 'sha256:${List.filled(64, '0').join()}';
+    expect(
+      () => HuggingFaceLocalAiArtifactSource.parsePublisherMetadataJson(jsonEncode(conflictingSha), manifest),
       throwsA(isA<LocalAiModelInstallException>()),
     );
   });

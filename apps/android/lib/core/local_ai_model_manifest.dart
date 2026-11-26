@@ -19,12 +19,12 @@ class LocalAiModelManifest {
 
   static const qwenQ4Km = LocalAiModelManifest(
     repository: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
-    revision: 'dd26da440ef0330c47919d1ecae0966d24022222',
+    revision: '91cad51170dc346986eccefdc2dd33a9da36ead9',
     fileName: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
     license: 'Apache-2.0',
     fileSizeBytes: 1_117_320_736,
     sha256Hex: '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e',
-    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    downloadUrl: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf',
   );
 
   final String repository;
