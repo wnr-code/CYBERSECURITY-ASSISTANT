@@ -1,6 +1,7 @@
 import 'package:cybersecurity_assistant/core/ai_provider_manager.dart';
 import 'package:cybersecurity_assistant/core/local_ai_inference_runtime.dart';
 import 'package:cybersecurity_assistant/core/local_ai_model_manifest.dart';
+import 'package:cybersecurity_assistant/core/local_ai_model_source.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -105,6 +106,31 @@ void main() {
       throwsA(isA<AiProviderException>().having((error) => error.message, 'message', contains('No cloud fallback'))),
     );
     expect(completeInvocations, 1, reason: 'A ready local model should use native inference and never select cloud fallback.');
+  });
+
+  test('native trust matching treats the official license identifier case-insensitively', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return true;
+    });
+    const model = LocalAiModelManifest.qwen05Q4Km;
+    final publisher = LocalAiPublisherFile(
+      repository: model.repository,
+      author: model.repository.split('/').first,
+      revision: model.revision,
+      license: 'apache-2.0',
+      fileName: model.fileName,
+      sizeBytes: model.fileSizeBytes,
+      sha256Hex: model.sha256Hex,
+      licenseRepository: model.licenseRepository,
+      licenseRevision: model.licenseRevision,
+    );
+
+    await runtime.loadVerifiedModel(model.fileName, model.sha256Hex, publisher);
+
+    expect(received?.method, 'loadVerifiedModel');
+    expect((received?.arguments as Map)['publisherLicense'], 'apache-2.0');
   });
 
   test('Chat is blocked without publisher metadata verification', () async {

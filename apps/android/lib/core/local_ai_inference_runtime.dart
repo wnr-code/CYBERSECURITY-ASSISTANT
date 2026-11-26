@@ -53,8 +53,10 @@ class AndroidLlamaCppInferenceRuntime implements LocalAiInferenceRuntime, LocalA
     final manifest = LocalAiModelManifest.candidates.where((candidate) =>
         candidate.fileName == fileName && candidate.sha256Hex == sha256Hex &&
         candidate.repository == publisherFile.repository && candidate.revision == publisherFile.revision &&
-        candidate.license == publisherFile.license && candidate.fileSizeBytes == publisherFile.sizeBytes &&
-        candidate.licenseRepository == publisherFile.licenseRepository && candidate.licenseRevision == publisherFile.licenseRevision).firstOrNull;
+        candidate.license.toLowerCase() == publisherFile.license.toLowerCase() &&
+        candidate.fileSizeBytes == publisherFile.sizeBytes &&
+        candidate.licenseRepository == publisherFile.licenseRepository &&
+        candidate.licenseRevision == publisherFile.licenseRevision).firstOrNull;
     if (manifest == null || publisherFile.author != manifest.repository.split('/').first ||
         publisherFile.fileName != fileName || publisherFile.sha256Hex != sha256Hex) {
       throw const AiProviderException('Model is not present in the app-pinned trust manifest.');
