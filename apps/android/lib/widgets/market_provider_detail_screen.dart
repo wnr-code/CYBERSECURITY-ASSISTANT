@@ -215,7 +215,7 @@ class MarketProviderDetailScreen extends StatelessWidget {
                   ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.wifi_tethering_rounded),
               label: Text(context.tr(connectLabel)),
-            )
+            ),
           if (providerId == 'cloudflare' && status == ManagedProviderStatus.connected && onOpenCloudflareDashboard != null)
             OutlinedButton.icon(
               onPressed: onOpenCloudflareDashboard,

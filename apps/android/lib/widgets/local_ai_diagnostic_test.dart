@@ -12,17 +12,20 @@ class LocalAiDiagnosticAction extends StatelessWidget {
   final ManagedProviderStatus status;
 
   @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-        key: const ValueKey('local-ai-diagnostic-test'),
-        // Intentionally independent of provider readiness: diagnostics remain
-        // available to explain exactly why Local AI is blocked.
-        onPressed: () => showDialog<void>(
-          context: context,
-          builder: (_) => const _LocalAiDiagnosticDialog(),
+  Widget build(BuildContext context) => Semantics(
+        label: '${context.tr('Diagnostic Test')} · ${context.tr(status.name)}',
+        button: true,
+        child: OutlinedButton.icon(
+          key: const ValueKey('local-ai-diagnostic-test'),
+          // Intentionally independent of provider readiness: diagnostics remain
+          // available to explain exactly why Local AI is blocked.
+          onPressed: () => showDialog<void>(
+            context: context,
+            builder: (_) => const _LocalAiDiagnosticDialog(),
+          ),
+          icon: const Icon(Icons.fact_check_outlined),
+          label: Text(context.tr('Diagnostic Test')),
         ),
-        icon: const Icon(Icons.fact_check_outlined),
-        label: Text(context.tr('Diagnostic Test')),
-        tooltip: context.tr('Current Local AI status: ${status.name}. Diagnostics do not change readiness.'),
       );
 }
 
