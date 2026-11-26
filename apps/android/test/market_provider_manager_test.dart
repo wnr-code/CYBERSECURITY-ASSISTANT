@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:cybersecurity_assistant/core/activity_timeline.dart';
 import 'package:cybersecurity_assistant/core/ai_provider_manager.dart';
 import 'package:cybersecurity_assistant/core/market_provider_manager.dart';
@@ -175,6 +176,15 @@ void main() {
   });
 
   testWidgets('provider detail screens separate configuration and accurately label unavailable Local AI actions', (tester) async {
+    const runtimeChannel = MethodChannel('org.cybersecurityassistant/local_ai_runtime');
+    const pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(runtimeChannel, (_) async => null);
+    messenger.setMockMethodCallHandler(pathProviderChannel, (call) async => Directory.systemTemp.path);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(runtimeChannel, null);
+      messenger.setMockMethodCallHandler(pathProviderChannel, null);
+    });
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(800, 1400);
     addTearDown(tester.view.resetPhysicalSize);
